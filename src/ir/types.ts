@@ -60,6 +60,12 @@ export interface ResourceDef {
   dataType?: DataType;
   structType?: StructMember[]; // For custom layout buffers
 
+  // For textures
+  sampler?: {
+    filter: 'nearest' | 'linear';
+    wrap: 'clamp' | 'repeat' | 'mirror';
+  };
+
   // Sizing
   size: ResourceSize;
 
