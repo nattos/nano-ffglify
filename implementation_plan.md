@@ -1,41 +1,42 @@
-# Implementation Plan - IR Scaffolding
+# Implementation Plan - Reference Interpreter
 
-We will now translate the design in `INTERMEDIATE_REPRESENTATION.md` into strict TypeScript definitions and validators.
-
-## User Review Required
-> [!IMPORTANT]
-> This plan establishes the core data structures. Any changes to the JSON schema after this point will require refactoring `types.ts` and `schema.ts`.
+We will build a CPU-side reference interpreter to "run" the IR. This will not execute actual GPU shaders but will simulate the CPU orchestration logic (dispatching commands, resizing resources, branching).
 
 ## Proposed Changes
 
-### IR Definition
-#### [NEW] [types.ts](file:///Users/nattos/Code/nano-ffglify/src/ir/types.ts)
--   Define `DataType`, `ResourceSize`, `InputDef`, `ResourceDef`, `FunctionDef`, `Node`, `Edge`.
--   Define `IRDocument` as the root type.
+### 1. Interpreter Core (`src/interpreter/`)
 
-#### [NEW] [schema.ts](file:///Users/nattos/Code/nano-ffglify/src/ir/schema.ts)
--   Implement Zod schemas matching `types.ts`.
--   **Critical**: Export a `validateIR(json: unknown): ValidationResult` function.
-    -   Must collect **ALL** errors (structural and semantic), not just the first one.
-    -   Return type: `{ success: true, data: IRDocument } | { success: false, errors: ValidationError[] }`.
-    -   `ValidationError` should contain: `path` (string array), `message` (human readable), and `code` (error code).
-    -   Include semantic checks (e.g., "Node references non-existent resource ID") beyond just basic type checking.
+#### [NEW] [context.ts](file:///Users/nattos/Code/nano-ffglify/src/interpreter/context.ts)
+-   `RuntimeValue`: Union of supported runtime types (number, vec4, etc.).
+-   `ActionLog`: A simple array to record side-effects (e.g., `{ type: 'dispatch', func: 'fn_blur' }`).
+-   `EvaluationContext`: Holds:
+    -   `ir`: The full document.
+    -   `vars`: Map of current local variables.
+    -   `resources`: Map of resource states (size, etc.).
+    -   `log`: The ActionLog.
 
-### Verification
-#### [NEW] [ir.test.ts](file:///Users/nattos/Code/nano-ffglify/src/ir/ir.test.ts)
--   Test 1: Validate a minimal IR (empty functions).
--   Test 2: Validate the "Precomputed Blur" example from the design doc (full complex case).
--   Test 3: Validate the "Recursive Factorial" example.
--   Test 4: **Validation Assertions** - Construct invalid IRs and assert on specific error messages.
-    -   Case: Missing Node ID -> Expect "Node at functions[0].nodes[2] is missing 'id'".
-    -   Case: Invalid Resource Ref -> Expect "Node 'n_sample' references unknown resource 't_missing'".
-    -   Case: Cycle detection (optional for now, but good to have).
+#### [NEW] [ops.ts](file:///Users/nattos/Code/nano-ffglify/src/interpreter/ops.ts)
+-   `OpRegistry`: A dictionary mapping OpCodes (string) to JS functions.
+-   Implement standard math ops (`math_add`, `math_div_scalar`).
+-   Implement resource ops (`resource_get_size`, `cmd_resize_resource`).
+-   **Note**: CPU flow ops (`flow_branch`, `flow_loop`) are handled by the executor, not simple ops.
 
-## Future Outlook
-> [!NOTE]
-> Once the IR and Validator are stable, the next step will be building a **Reference Interpreter** to simulate execution on the CPU. This will act as the ground truth for checking backend (Metal/HLSL) correctness.
+#### [NEW] [executor.ts](file:///Users/nattos/Code/nano-ffglify/src/interpreter/executor.ts)
+-   `executeGraph(funcId: string, context)`: The main loop.
+-   Algorithm:
+    1.  Start at nodes without execution input (or specific Entry Point).
+    2.  Traverse `execution` edges.
+    3.  For each node:
+        *   Resolve inputs (Data Edges) recursively or via cached values.
+        *   Execute Op.
+        *   Follow `flow_branch` / `flow_loop` logic.
 
-## Verification Plan
+### 2. Verification
 
-### Automated Tests
-Run `npx vitest src/ir/ir.test.ts` to confirm the Types and Zod schemas correctly handle valid and invalid IRs.
+#### [NEW] [interpreter.test.ts](file:///Users/nattos/Code/nano-ffglify/src/interpreter/interpreter.test.ts)
+-   Test: Run the "Precomputed Blur" IR.
+-   Assertions:
+    1.  `log` should show `cmd_resize_resource` was called for `b_weights`.
+    2.  `log` should show `cmd_dispatch(fn_gen_kernel)` happened first.
+    3.  `log` should show `cmd_dispatch(fn_blur)` happened second.
+    4.  Verify that `cmd_blur` dispatch dimensions were correctly calculated (Input Size / 8).
