@@ -6,7 +6,10 @@ import { IRDocument, ResourceDef, DataType, ResourceSize } from '../ir/types';
 export type ScalarValue = number | boolean | string;
 export type VectorValue = [number, number] | [number, number, number] | [number, number, number, number];
 export type MatrixValue = number[]; // Simplified for now
-export type RuntimeValue = ScalarValue | VectorValue | MatrixValue;
+export type StructValue = Record<string, RuntimeValue>;
+export type ArrayValue = RuntimeValue[];
+
+export type RuntimeValue = ScalarValue | VectorValue | MatrixValue | StructValue | ArrayValue;
 
 // ------------------------------------------------------------------
 // State
@@ -24,7 +27,8 @@ export interface ResourceState {
 export interface StackFrame {
   name: string; // Function ID or Block
   vars: Map<string, RuntimeValue>;
-  loopIndices: Map<string, number>; // LoopNodeID -> Current Index
+  loopIndices: Map<string, number>;
+  nodeResults: Map<string, RuntimeValue>;
 }
 
 export interface ActionLogEntry {
@@ -56,10 +60,23 @@ export class EvaluationContext {
 
     // Initialize Resources (default state)
     for (const res of ir.resources) {
+      let width = 1;
+      let height = 1;
+
+      if (res.size.mode === 'fixed') {
+        const val = res.size.value;
+        if (Array.isArray(val)) {
+          width = val[0];
+          height = val[1];
+        } else {
+          width = val;
+        }
+      }
+
       this.resources.set(res.id, {
         def: res,
-        width: 1, // Default, will be resized
-        height: 1,
+        width,
+        height,
         data: [] // Initialize empty data
       });
     }
@@ -88,7 +105,8 @@ export class EvaluationContext {
     this.stack.push({
       name,
       vars: new Map(),
-      loopIndices: new Map()
+      loopIndices: new Map(),
+      nodeResults: new Map()
     });
   }
 

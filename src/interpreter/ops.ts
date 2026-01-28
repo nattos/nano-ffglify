@@ -2,7 +2,18 @@ import { EvaluationContext, RuntimeValue, VectorValue } from './context';
 
 export type OpHandler = (ctx: EvaluationContext, args: Record<string, RuntimeValue>) => RuntimeValue | void;
 
+// Helper for element-wise unary operations
+const applyUnary = (val: any, fn: (x: number) => number): any => {
+  if (Array.isArray(val)) {
+    return (val as number[]).map(fn) as VectorValue;
+  }
+  return fn(val as number);
+};
+
 export const OpRegistry: Record<string, OpHandler> = {
+  // ----------------------------------------------------------------
+  // Standard Math
+  // ----------------------------------------------------------------
   // ----------------------------------------------------------------
   // Standard Math
   // ----------------------------------------------------------------
@@ -13,19 +24,53 @@ export const OpRegistry: Record<string, OpHandler> = {
   'math_mad': (ctx, args) => ((args.a as number) * (args.b as number)) + (args.c as number),
 
   'math_div_scalar': (ctx, args) => {
-    // Handling vec2 / scalar
     const val = args.val as any;
     const scalar = args.scalar as number;
-    if (Array.isArray(val)) {
-      return val.map(v => v / scalar) as VectorValue;
-    }
+    if (Array.isArray(val)) return val.map(v => v / scalar) as VectorValue;
     return val / scalar;
   },
 
-  'math_ceil': (ctx, args) => {
-    const val = args.val as any;
-    if (Array.isArray(val)) return val.map(Math.ceil) as VectorValue;
-    return Math.ceil(val);
+  // Helpers
+  'math_pi': () => Math.PI,
+  'math_e': () => Math.E,
+
+  // Unary (Supported for Scalar & Vector)
+  'math_sin': (ctx, args) => applyUnary(args.val, Math.sin),
+  'math_cos': (ctx, args) => applyUnary(args.val, Math.cos),
+  'math_tan': (ctx, args) => applyUnary(args.val, Math.tan),
+  'math_sinh': (ctx, args) => applyUnary(args.val, Math.sinh),
+  'math_cosh': (ctx, args) => applyUnary(args.val, Math.cosh),
+  'math_tanh': (ctx, args) => applyUnary(args.val, Math.tanh),
+  'math_asin': (ctx, args) => applyUnary(args.val, Math.asin),
+  'math_acos': (ctx, args) => applyUnary(args.val, Math.acos),
+  'math_atan': (ctx, args) => applyUnary(args.val, Math.atan),
+  'math_exp': (ctx, args) => applyUnary(args.val, Math.exp),
+  'math_log': (ctx, args) => applyUnary(args.val, Math.log),
+  'math_sqrt': (ctx, args) => applyUnary(args.val, Math.sqrt),
+  'math_sign': (ctx, args) => applyUnary(args.val, Math.sign),
+
+  // Existing Unaries refactored to use helper
+  'math_ceil': (ctx, args) => applyUnary(args.val, Math.ceil),
+  'math_floor': (ctx, args) => applyUnary(args.val, Math.floor),
+  'math_abs': (ctx, args) => applyUnary(args.val, Math.abs),
+
+  // Binary
+  'math_min': (ctx, args) => Math.min(args.a as number, args.b as number),
+  'math_max': (ctx, args) => Math.max(args.a as number, args.b as number),
+  'math_pow': (ctx, args) => Math.pow(args.a as number, args.b as number),
+  'math_atan2': (ctx, args) => Math.atan2(args.y as number, args.x as number), // Note: args y, x standard
+
+  'math_mod': (ctx, args) => {
+    const a = args.a as number;
+    const b = args.b as number;
+    return a % b;
+  },
+
+  'math_clamp': (ctx, args) => {
+    const val = args.val as number;
+    const min = args.min as number;
+    const max = args.max as number;
+    return Math.min(Math.max(val, min), max);
   },
 
   'math_gt': (ctx, args) => (args.a as number) > (args.b as number),
@@ -36,8 +81,46 @@ export const OpRegistry: Record<string, OpHandler> = {
     return vec[index];
   },
 
+  'vec_swizzle': (ctx, args) => {
+    const vec = args.vec as number[];
+    const channels = args.channels as string; // "x", "xy", "zyx", etc.
+    const map: Record<string, number> = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3 };
+
+    const out = channels.split('').map(c => vec[map[c]]);
+    return out.length === 1 ? out[0] : out as VectorValue;
+  },
+
+  'vec_dot': (ctx, args) => {
+    const a = args.a as number[];
+    const b = args.b as number[];
+    return a.reduce((sum, v, i) => sum + v * b[i], 0);
+  },
+
+  'vec_length': (ctx, args) => {
+    const a = args.a as number[];
+    const sqSum = a.reduce((sum, v) => sum + v * v, 0);
+    return Math.sqrt(sqSum);
+  },
+
+  'vec_normalize': (ctx, args) => {
+    const a = args.a as number[];
+    const len = Math.sqrt(a.reduce((sum, v) => sum + v * v, 0));
+    return a.map(v => v / len) as VectorValue;
+  },
+
+  'vec_mix': (ctx, args) => {
+    const a = args.a as number[];
+    const b = args.b as number[];
+    const t = args.t as number; // Scalar mix for now
+    return a.map((v, i) => v * (1 - t) + b[i] * t) as VectorValue;
+  },
+
   'vec2': (ctx, args) => {
     return [args.x, args.y] as VectorValue;
+  },
+
+  'vec3': (ctx, args) => {
+    return [args.x, args.y, args.z] as VectorValue;
   },
 
   'vec4': (ctx, args) => {
@@ -52,7 +135,11 @@ export const OpRegistry: Record<string, OpHandler> = {
     return args.val; // Pass-through
   },
   'var_get': (ctx, args) => {
-    return ctx.getVar(args.var as string);
+    const val = ctx.getVar(args.var as string);
+    if (val === undefined) {
+      throw new Error(`Runtime Error: Variable '${args.var}' is not defined (uninitialized)`);
+    }
+    return val;
   },
   'loop_index': (ctx, args) => {
     return ctx.getLoopIndex(args.loop as string);
@@ -100,6 +187,10 @@ export const OpRegistry: Record<string, OpHandler> = {
     const idx = args.index as number;
     const val = args.value;
     const res = ctx.getResource(id);
+
+    // Bounds check
+    if (idx < 0 || idx >= res.width) return; // OOB Write ignored
+
     if (!res.data) res.data = [];
     res.data[idx] = val;
   },
@@ -108,6 +199,10 @@ export const OpRegistry: Record<string, OpHandler> = {
     const id = args.buffer as string;
     const idx = args.index as number;
     const res = ctx.getResource(id);
+
+    // Bounds check
+    if (idx < 0 || idx >= res.width) return 0; // OOB Read returns 0
+
     return res.data?.[idx] ?? 0;
   },
 
@@ -165,6 +260,58 @@ export const OpRegistry: Record<string, OpHandler> = {
   // ----------------------------------------------------------------
   // Dispatch / Draw (Side Effects)
   // ----------------------------------------------------------------
+  // ----------------------------------------------------------------
+  // Structs & Arrays
+  // ----------------------------------------------------------------
+  'struct_construct': (ctx, args) => {
+    // Return a copy of args as the struct, filtering out metadata
+    const out: Record<string, RuntimeValue> = {};
+    const ignore = ['op', 'id', 'metadata', 'const_data', 'type'];
+    for (const k in args) {
+      if (!ignore.includes(k)) {
+        out[k] = args[k];
+      }
+    }
+    return out;
+  },
+
+  'struct_extract': (ctx, args) => {
+    const s = args.struct as Record<string, RuntimeValue>;
+    const field = args.field as string;
+    if (!s) throw new Error('struct_extract: struct is undefined');
+    if (s[field] === undefined) throw new Error(`struct_extract: field '${field}' not found`);
+    return s[field];
+  },
+
+  'array_construct': (ctx, args) => {
+    const len = args.length as number;
+    const fill = args.fill ?? 0;
+    return new Array(len).fill(fill) as unknown as RuntimeValue;
+  },
+
+  'array_extract': (ctx, args) => {
+    const arr = args.array as unknown as RuntimeValue[];
+    const idx = args.index as number;
+    if (!Array.isArray(arr)) throw new Error('array_extract: target is not an array');
+    if (idx < 0 || idx >= arr.length) throw new Error(`array_extract: OOB read index ${idx}`);
+    return arr[idx];
+  },
+
+  'array_set': (ctx, args) => {
+    const arr = args.array as unknown as RuntimeValue[];
+    const idx = args.index as number;
+    const val = args.value;
+    if (!Array.isArray(arr)) throw new Error('array_set: target is not an array');
+    if (idx < 0 || idx >= arr.length) throw new Error(`array_set: OOB write index ${idx}`);
+    arr[idx] = val;
+    return val;
+  },
+
+  'array_length': (ctx, args) => {
+    const arr = args.array as unknown as RuntimeValue[];
+    return Array.isArray(arr) ? arr.length : 0;
+  },
+
   'cmd_dispatch': (ctx, args) => {
     // Executor handles Logic, this is just for logging fallback if needed
   },

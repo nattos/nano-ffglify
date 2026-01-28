@@ -1,183 +1,243 @@
-import { IRDocument, FunctionDef, Node, Edge } from '../ir/types';
+import { IRDocument, Node, FunctionDef, Edge } from '../ir/types';
 import { EvaluationContext, RuntimeValue } from './context';
 import { OpRegistry } from './ops';
 
 export class CpuExecutor {
-  constructor(private context: EvaluationContext) { }
+  context: EvaluationContext;
 
-  executeEntry() {
-    this.executeFunction(this.context.ir.entryPoint);
+  constructor(context: EvaluationContext) {
+    this.context = context;
   }
 
-  executeFunction(funcId: string, args: RuntimeValue[] = []): RuntimeValue | void {
-    const func = this.context.ir.functions.find(f => f.id === funcId);
-    if (!func) throw new Error(`Function '${funcId}' not found`);
+  executeEntry() {
+    this.context.pushFrame('entry');
+    const entryFunc = this.context.ir.functions.find(f => f.id === this.context.ir.entryPoint);
+    if (!entryFunc) throw new Error('Entry point not found');
+    this.executeFunction(entryFunc);
+    this.context.popFrame();
+  }
 
-    // Only 'cpu' and 'shader' are supported.
-    // We allow executing 'shader' functions now for simulation.
+  executeFunction(func: FunctionDef): RuntimeValue | void {
+    // 1. Initialize Locals
+    for (const v of func.localVars) {
+      if (v.initialValue !== undefined) {
+        this.context.setVar(v.id, v.initialValue);
+      }
+    }
 
-    // 1. Push Scope
-    this.context.pushFrame(funcId);
-
-    // 2. Initialize Local Vars & Args
-    // Args mapping? For now assume args are handled via inputs/globals or manual set if we implemented arguments.
-    // IR v3 FunctionDef has `inputs` port defs. Logic would go here to map `args` to `localVars` or similar.
-    // For now, just init localVars definitions.
-    func.localVars.forEach(v => {
-      if (v.initialValue !== undefined) this.context.setVar(v.id, v.initialValue);
-    });
-
-    // 3. Find entry nodes
-    // Nodes with NO incoming execution edges.
+    // 2. Find entry nodes
     const entryNodes = func.nodes.filter(n => {
       const hasExecIn = func.edges.some(e => e.to === n.id && e.type === 'execution');
       return !hasExecIn && this.isExecutableNode(n);
     });
 
-    // 4. Run
-    for (const node of entryNodes) {
-      this.executeNode(node, func);
-    }
+    const executionQueue: Node[] = [...entryNodes];
 
-    // 5. Pop Scope
-    this.context.popFrame();
+    // BFS / Flow Execution
+    while (executionQueue.length > 0) {
+      const node = executionQueue.shift()!;
+
+      const result = this.executeNode(node, func);
+
+      if (node.op === 'func_return') {
+        return result;
+      }
+
+      if (node.op === 'flow_branch') {
+        this.handleBranch(node, func, executionQueue);
+      } else if (node.op === 'flow_loop') {
+        this.handleLoop(node, func, executionQueue);
+      } else {
+        this.continueFlow(node, 'exec_out', func, executionQueue);
+      }
+    }
   }
 
   private isExecutableNode(node: Node): boolean {
-    // Op-codes that potentially start chains
     return node.op.startsWith('cmd_') ||
       node.op.startsWith('flow_') ||
       node.op.startsWith('var_set') ||
       node.op.startsWith('buffer_store') ||
-      node.op.startsWith('texture_store');
+      node.op.startsWith('texture_store') ||
+      node.op === 'call_func' ||
+      node.op === 'func_return';
   }
 
-  private executeNode(node: Node, func: FunctionDef) {
-    // 1. Resolve Inputs (eagerly)
-    const args: Record<string, RuntimeValue> = {};
-    const inputEdges = func.edges.filter(e => e.to === node.id && e.type === 'data');
-    for (const edge of inputEdges) {
-      const portName = edge.portIn;
-      const sourceNode = func.nodes.find(n => n.id === edge.from);
-      if (sourceNode) {
-        args[portName] = this.resolveNodeValue(sourceNode, func, edge.portOut);
-      }
-    }
+  private executeNode(node: Node, func: FunctionDef): RuntimeValue | void {
+    const opId = node.op;
 
-    // Mixin properties
-    this.mixinNodeProperties(node, args);
+    if (opId === 'flow_branch' || opId === 'flow_loop') return;
 
-    // 2. Execute Logic
+    if (opId === 'cmd_dispatch') {
+      const targetId = node.func as string;
+      const args: Record<string, RuntimeValue> = {};
+      this.mixinNodeProperties(node, args, func);
 
-    // --- Control Flow: Branch ---
-    if (node.op === 'flow_branch') {
-      const cond = args['cond'] as boolean;
-      const branchPort = cond ? 'exec_true' : 'exec_false';
-      this.continueFlow(node, branchPort, func);
-      return;
-    }
-    // --- Control Flow: Loop ---
-    else if (node.op === 'flow_loop') {
-      const start = args['start'] as number;
-      const end = args['end'] as number;
-      for (let i = start; i < end; i++) {
-        this.context.setLoopIndex(node.id, i);
-        this.continueFlow(node, 'exec_body', func);
-      }
-      this.continueFlow(node, 'exec_completed', func);
-      return;
-    }
-    // --- Command: Dispatch (SIMULATION) ---
-    else if (node.op === 'cmd_dispatch') {
-      const funcId = args.func as string || node.func; // Can be in args or prop
-
-      let dispatch = args.dispatch as [number, number, number];
-      if (!dispatch) dispatch = node.dispatch as [number, number, number] || [1, 1, 1];
-
-      this.context.logAction('dispatch', funcId, { dispatch });
-
-      // Simulating the Loop
-      const [dx, dy, dz] = dispatch;
-      // Limit simulation for sanity?
-      const limit = dx * dy * dz;
-      if (limit > 100000) {
-        console.warn(`Simulating Dispatch ${dx}x${dy}x${dz} is too large. Truncating?`);
+      const dim: [number, number, number] = [1, 1, 1];
+      if (Array.isArray(args.dispatch)) {
+        dim[0] = args.dispatch[0] || 1;
+        dim[1] = args.dispatch[1] || 1;
+        dim[2] = args.dispatch[2] || 1;
       }
 
-      for (let z = 0; z < dz; z++) {
-        for (let y = 0; y < dy; y++) {
-          for (let x = 0; x < dx; x++) {
-            // Set Builtins
-            // GlobalInvocationID
-            this.context.builtins.set('GlobalInvocationID', [x, y, z]);
-
-            // Call Function
-            this.executeFunction(funcId);
+      const targetFunc = this.context.ir.functions.find(f => f.id === targetId);
+      if (targetFunc) {
+        for (let z = 0; z < dim[2]; z++) {
+          for (let y = 0; y < dim[1]; y++) {
+            for (let x = 0; x < dim[0]; x++) {
+              this.context.builtins.set('GlobalInvocationID', [x, y, z]);
+              this.context.pushFrame(targetId);
+              this.executeFunction(targetFunc);
+              this.context.popFrame();
+            }
           }
         }
       }
+      return;
     }
-    // --- Standard Ops ---
-    else {
-      const handler = OpRegistry[node.op];
-      if (handler) {
-        handler(this.context, args);
+
+    if (opId === 'call_func') {
+      const targetId = node.func as string;
+      const targetFunc = this.context.ir.functions.find(f => f.id === targetId);
+      if (!targetFunc) throw new Error(`Function '${targetId}' not found`);
+
+      // RECURSION CHECK
+      if (this.context.stack.some(frame => frame.name === targetId)) {
+        throw new Error(`Runtime Error: Recursion detected for function '${targetId}'`);
+      }
+
+      const args: Record<string, RuntimeValue> = {};
+      this.mixinNodeProperties(node, args, func);
+
+      this.context.pushFrame(targetId);
+
+      if (targetFunc.inputs) {
+        for (const inputDef of targetFunc.inputs) {
+          const val = args[inputDef.id];
+          if (val !== undefined) {
+            this.context.setVar(inputDef.id, val);
+          }
+        }
+      }
+
+      const result = this.executeFunction(targetFunc);
+      this.context.popFrame();
+
+      if (result !== undefined) {
+        this.context.currentFrame.nodeResults.set(node.id, result);
+      }
+      return result;
+    }
+
+    // Standard Ops
+    const handler = OpRegistry[opId];
+    if (handler) {
+      const args: Record<string, RuntimeValue> = {};
+      this.mixinNodeProperties(node, args, func);
+      const result = handler(this.context, args);
+      if (result !== undefined) {
+        this.context.currentFrame.nodeResults.set(node.id, result);
+      }
+      return result;
+    }
+  }
+
+  private continueFlow(node: Node, port: string, func: FunctionDef, queue: Node[]) {
+    const nextEdges = func.edges.filter(e => e.from === node.id && e.portOut === port && e.type === 'execution');
+    for (const edge of nextEdges) {
+      const nextNode = func.nodes.find(n => n.id === edge.to);
+      if (nextNode) queue.push(nextNode);
+    }
+  }
+
+  private handleBranch(node: Node, func: FunctionDef, queue: Node[]) {
+    const args: any = {};
+    this.mixinNodeProperties(node, args, func);
+    const condVal = !!args.cond;
+
+    if (condVal) {
+      this.continueFlow(node, 'exec_true', func, queue);
+    } else {
+      this.continueFlow(node, 'exec_false', func, queue);
+    }
+  }
+
+  private handleLoop(node: Node, func: FunctionDef, queue: Node[]) {
+    const args: any = {};
+    this.mixinNodeProperties(node, args, func);
+    const start = args.start as number;
+    const end = args.end as number;
+
+    for (let i = start; i < end; i++) {
+      this.context.setLoopIndex(node.id, i);
+
+      const bodyEdges = func.edges.filter(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
+      for (const edge of bodyEdges) {
+        const bodyNode = func.nodes.find(n => n.id === edge.to);
+        if (bodyNode) {
+          this.executeChain(bodyNode, func);
+        }
       }
     }
 
-    // 3. Continue Execution Flow
-    this.continueFlow(node, 'exec_out', func);
+    this.continueFlow(node, 'exec_completed', func, queue);
   }
 
-  private continueFlow(node: Node, portOut: string, func: FunctionDef) {
-    const outEdges = func.edges.filter(e => e.from === node.id && e.portOut === portOut && e.type === 'execution');
-    for (const edge of outEdges) {
-      const nextNode = func.nodes.find(n => n.id === edge.to);
-      if (nextNode) this.executeNode(nextNode, func);
+  private executeChain(startNode: Node, func: FunctionDef) {
+    const q = [startNode];
+    while (q.length) {
+      const n = q.shift()!;
+      this.executeNode(n, func);
+
+      if (n.op === 'func_return') {
+        // Ignoring return in loop for now
+      }
+
+      if (n.op === 'flow_branch') {
+        this.handleBranch(n, func, q);
+      } else if (n.op === 'flow_loop') {
+        this.handleLoop(n, func, q);
+      } else {
+        this.continueFlow(n, 'exec_out', func, q);
+      }
     }
   }
 
-  private resolveNodeValue(node: Node, func: FunctionDef, portOut: string): RuntimeValue {
-    // Optimization: If NOT executable, we resolve it.
-    // If IS executable, it likely doesn't have output value on "data" ports?
-    // Exception: var_set outputs 'val' pass-through.
+  private resolveNodeValue(node: Node | string, func: FunctionDef): RuntimeValue {
+    if (typeof node === 'string') {
+      const v = this.context.getVar(node);
+      if (v !== undefined) return v;
+      try { return this.context.getInput(node); } catch { return 0; }
+    }
 
-    // Resolve Inputs recursively
+    if (this.context.currentFrame.nodeResults.has(node.id)) {
+      return this.context.currentFrame.nodeResults.get(node.id)!;
+    }
+
     const args: Record<string, RuntimeValue> = {};
-    const inputEdges = func.edges.filter(e => e.to === node.id && e.type === 'data');
-    for (const edge of inputEdges) {
-      const src = func.nodes.find(n => n.id === edge.from);
-      if (src) args[edge.portIn] = this.resolveNodeValue(src, func, edge.portOut);
-    }
-    this.mixinNodeProperties(node, args);
+    this.mixinNodeProperties(node, args, func);
 
     const handler = OpRegistry[node.op];
     if (handler) {
-      const res = handler(this.context, args);
-      if (res !== undefined) return res;
+      return handler(this.context, args) ?? 0;
     }
-
-    // Fallback?
-    if (Object.keys(args).length === 1 && args['value'] !== undefined) return args['value'];
-
-    return 0; // Default fallback
+    return 0;
   }
 
-  private mixinNodeProperties(node: Node, args: Record<string, RuntimeValue>) {
-    const SKIP_RESOLUTION = ['var', 'func', 'resource', 'buffer', 'tex'];
+  private mixinNodeProperties(node: Node, args: Record<string, RuntimeValue>, func: FunctionDef) {
+    const SKIP_RESOLUTION = ['var', 'func', 'resource', 'buffer', 'tex', 'loop'];
 
+    // 1. Resolve Props
     for (const key of Object.keys(node)) {
       if (['id', 'op', 'metadata', 'const_data'].includes(key)) continue;
       if (args[key] === undefined) {
         let val = node[key];
 
-        // Skip identifier properties
         if (SKIP_RESOLUTION.includes(key)) {
           args[key] = val;
           continue;
         }
 
-        // Dynamic Resolution
         if (typeof val === 'string') {
           const varVal = this.context.getVar(val);
           if (varVal !== undefined) {
@@ -189,6 +249,15 @@ export class CpuExecutor {
           }
         }
         args[key] = val;
+      }
+    }
+
+    // 2. Resolve Edges
+    const incomingEdges = func.edges.filter(e => e.to === node.id && e.type === 'data');
+    for (const edge of incomingEdges) {
+      const sourceNode = func.nodes.find(n => n.id === edge.from);
+      if (sourceNode) {
+        args[edge.portIn] = this.resolveNodeValue(sourceNode, func);
       }
     }
   }

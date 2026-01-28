@@ -1,0 +1,195 @@
+import { describe, it, expect } from 'vitest';
+import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
+import { CpuExecutor } from '../../interpreter/executor';
+import { IRDocument } from '../../ir/types';
+
+describe('Compliance: Functions', () => {
+
+  const bufferDef = {
+    id: 'b_result',
+    type: 'buffer',
+    size: { mode: 'fixed', value: 1 },
+    persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
+  };
+
+  it('should execute Function Call and Return Value', () => {
+    const ir: IRDocument = {
+      version: '3.0.0',
+      meta: { name: 'Function Call' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      structs: [],
+      resources: [bufferDef] as any,
+      functions: [
+        {
+          id: 'fn_main',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'c1', op: 'call_func', func: 'fn_square', arg_x: 5 }, // Call square(5)
+            { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'c1' } // Store result
+          ],
+          edges: [
+            // Logic: c1 -> store (Execution)
+            // Data: c1 (val) -> store (value)
+            { from: 'c1', portOut: 'exec_out', to: 'store', portIn: 'exec_in', type: 'execution' },
+            { from: 'c1', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }
+          ]
+        },
+        {
+          id: 'fn_square',
+          type: 'cpu', // or shader, logic is same for interpreter
+          inputs: [{ id: 'arg_x', type: 'float' }],
+          outputs: [{ id: 'val', type: 'float' }],
+          localVars: [],
+          nodes: [
+            { id: 'in', op: 'var_get', var: 'arg_x' },
+            { id: 'sq', op: 'math_mul', a: 'in', b: 'in' },
+            { id: 'ret', op: 'func_return', val: 'sq' }
+          ],
+          edges: [
+            { from: 'in', portOut: 'val', to: 'sq', portIn: 'a', type: 'data' },
+            { from: 'in', portOut: 'val', to: 'sq', portIn: 'b', type: 'data' },
+            { from: 'sq', portOut: 'val', to: 'ret', portIn: 'val', type: 'data' },
+            // Execution Flow:
+            // 'func_return' (ret) is an Executable Node.
+            // It has NO incoming execution edges, so it acts as the Entry Point.
+            // When 'ret' runs, it pulls data from 'sq', which pulls from 'in'.
+            // Pure nodes (var_get, math_mul) are demand-driven.
+          ]
+        }
+      ]
+    };
+
+    const ctx = new EvaluationContext(ir, new Map());
+    const exec = new CpuExecutor(ctx);
+    exec.executeEntry();
+
+    const res = ctx.getResource('b_result');
+    expect(res.data?.[0]).toBe(25);
+  });
+
+  it('should execute Conditional Return (Flow Control)', () => {
+    // Implement abs(x) using branch and two returns
+    const ir: IRDocument = {
+      version: '3.0.0',
+      meta: { name: 'Conditional Return' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      structs: [],
+      resources: [bufferDef] as any,
+      functions: [
+        {
+          id: 'fn_main',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'c1', op: 'call_func', func: 'fn_abs', arg: -10 },
+            { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'c1' }
+          ],
+          edges: [
+            { from: 'c1', portOut: 'exec_out', to: 'store', portIn: 'exec_in', type: 'execution' },
+            { from: 'c1', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }
+          ]
+        },
+        {
+          id: 'fn_abs',
+          type: 'cpu',
+          inputs: [{ id: 'arg', type: 'float' }],
+          outputs: [{ id: 'val', type: 'float' }],
+          localVars: [],
+          nodes: [
+            { id: 'in', op: 'var_get', var: 'arg' },
+            { id: 'zero', op: 'const_data', value: 0 }, // Implicit 0
+            { id: 'cond', op: 'math_gt', a: 'in', b: 0 },
+
+            { id: 'branch', op: 'flow_branch', cond: 'cond' },
+
+            // True Path: Return arg
+            { id: 'ret_pos', op: 'func_return', val: 'in' },
+
+            // False Path: Return -arg
+            { id: 'neg', op: 'math_mul', a: 'in', b: -1 },
+            { id: 'ret_neg', op: 'func_return', val: 'neg' }
+          ],
+          edges: [
+            // Data
+            { from: 'in', portOut: 'val', to: 'cond', portIn: 'a', type: 'data' },
+            // b=0 implicit or explicit const? Using literal in math_gt for simplicity?
+            // The node `cond` can use literal `b: 0`.
+
+            { from: 'cond', portOut: 'val', to: 'branch', portIn: 'cond', type: 'data' },
+
+            { from: 'in', portOut: 'val', to: 'ret_pos', portIn: 'val', type: 'data' },
+
+            { from: 'in', portOut: 'val', to: 'neg', portIn: 'a', type: 'data' },
+            { from: 'neg', portOut: 'val', to: 'ret_neg', portIn: 'val', type: 'data' },
+
+            // Execution Flow:
+            // 'flow_branch' (branch) is the Entry Point (Executable, no incoming Exec Edges).
+            // It runs first, evaluates 'cond', then triggers the appropriate execution path.
+
+            { from: 'branch', portOut: 'exec_true', to: 'ret_pos', portIn: 'exec_in', type: 'execution' },
+            { from: 'branch', portOut: 'exec_false', to: 'ret_neg', portIn: 'exec_in', type: 'execution' }
+          ]
+        }
+      ]
+    };
+
+    const ctx = new EvaluationContext(ir, new Map());
+    const exec = new CpuExecutor(ctx);
+    exec.executeEntry();
+
+    expect(ctx.getResource('b_result').data?.[0]).toBe(10);
+  });
+
+  it('should throw Error on Recursion', () => {
+    const ir: IRDocument = {
+      version: '3.0.0',
+      meta: { name: 'Recursion Test' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      structs: [],
+      resources: [],
+      functions: [
+        {
+          id: 'fn_main',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [{ id: 'c1', op: 'call_func', func: 'fn_A' }],
+          edges: []
+        },
+        {
+          id: 'fn_A',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [{ id: 'c2', op: 'call_func', func: 'fn_B' }],
+          edges: []
+        },
+        {
+          id: 'fn_B',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [{ id: 'c3', op: 'call_func', func: 'fn_A' }], // Recursion back to A
+          edges: []
+        }
+      ]
+    };
+
+    const ctx = new EvaluationContext(ir, new Map());
+    const exec = new CpuExecutor(ctx);
+
+    expect(() => exec.executeEntry()).toThrow(/Recursion detected/);
+  });
+
+});
