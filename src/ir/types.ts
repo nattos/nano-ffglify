@@ -226,6 +226,10 @@ export type BuiltinOp =
   | 'vec_length' | 'vec_normalize' | 'vec_dot' | 'vec_mix' | 'color_mix'
   | 'vec_swizzle' | 'vec_get_element'
 
+  // Matrix
+  | 'mat3' | 'mat4'
+  | 'mat_identity' | 'mat_mul' | 'mat_transpose' | 'mat_inverse'
+
   // Variables & Data
   | 'var_get' | 'var_set' | 'const_get' | 'loop_index'
   | 'struct_construct' | 'struct_extract'
