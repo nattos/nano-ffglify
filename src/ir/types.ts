@@ -230,6 +230,12 @@ export type BuiltinOp =
   | 'math_and' | 'math_or' | 'math_xor' | 'math_not'
   | 'math_pi' | 'math_e'
 
+  // Advanced Math
+  | 'math_fract' | 'math_trunc'
+  | 'math_is_nan' | 'math_is_inf' | 'math_is_finite'
+  | 'math_flush_subnormal'
+  | 'math_mantissa' | 'math_exponent'
+
   // Scalar Casts
   | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
 

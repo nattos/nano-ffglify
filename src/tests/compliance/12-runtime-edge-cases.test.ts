@@ -118,4 +118,33 @@ describe('Compliance: Runtime Edge Cases', () => {
     { id: 'sink', op: 'var_set', var: 'res', val: 'call' }
   ], 'Recursion detected');
 
+  // ----------------------------------------------------------------
+  // NaN & Infinity
+  // ----------------------------------------------------------------
+  runTest('NaN != NaN (Identity)', [
+    { id: 'n', op: 'math_sqrt', val: -1.0 },
+    { id: 'eq', op: 'math_eq', a: 'n', b: 'n' }, // NaN == NaN is false
+    { id: 'res_int', op: 'static_cast_int', val: 'eq' },
+    { id: 'sink', op: 'var_set', var: 'res', val: 'res_int' } // 0 (false)
+  ], 'res', 0.0); // Converted to number logic for test, but bool is false
+
+  runTest('Inf == Inf', [
+    { id: 'inf', op: 'math_div', a: 1.0, b: 0.0 },
+    { id: 'eq', op: 'math_eq', a: 'inf', b: 'inf' },
+    { id: 'res_int', op: 'static_cast_int', val: 'eq' },
+    { id: 'sink', op: 'var_set', var: 'res', val: 'res_int' }
+  ], 'res', 1.0); // true
+
+  // ----------------------------------------------------------------
+  // 32-Bit Integer Wrapping
+  // ----------------------------------------------------------------
+  // 2^31 = 2147483648. Max int32 is 2147483647.
+  // Casting 2147483648 should wrap to -2147483648 via | 0
+  runTest('Int32 Overflow Wrap', [
+    { id: 'huge', op: 'math_pow', a: 2.0, b: 31.0 }, // 2147483648
+    { id: 'casted', op: 'static_cast_int', val: 'huge' },
+    { id: 'back', op: 'static_cast_float', val: 'casted' },
+    { id: 'sink', op: 'var_set', var: 'res', val: 'back' }
+  ], 'res', -2147483648);
+
 });

@@ -54,7 +54,7 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
 - **What if...** `mat_mul` operands are swapped? -> **Logic Error** (Engine executes valid math, user logic issue)
 
 ### Integer & Bitwise
-- **What if...** integer overflow? -> **JS Double Precision** (Safe up to 2^53)
+- [RUNTIME CHECKED] **What if...** integer overflow? -> **Wrap** (Enforced 32-bit via `static_cast_int`)
 - **What if...** negative shift? -> **JS Semantics** (Wrap/Mask)
 
 ## 3. Resources & Memory

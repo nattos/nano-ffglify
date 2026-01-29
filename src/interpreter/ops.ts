@@ -109,6 +109,45 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     return Math.min(Math.max(val, min), max);
   },
 
+  // Advanced Math
+  'math_fract': (ctx, args) => applyUnary(args.val, x => x - Math.floor(x)),
+  'math_trunc': (ctx, args) => applyUnary(args.val, Math.trunc),
+
+  // Classification
+  'math_is_nan': (ctx, args) => applyUnary(args.val, x => Number.isNaN(x) ? 1 : 0) !== 0, // Returns boolean
+  'math_is_inf': (ctx, args) => applyUnary(args.val, x => !Number.isFinite(x) && !Number.isNaN(x) ? 1 : 0) !== 0,
+  'math_is_finite': (ctx, args) => applyUnary(args.val, x => Number.isFinite(x) ? 1 : 0) !== 0,
+
+  'math_flush_subnormal': (ctx, args) => applyUnary(args.val, x => {
+    if (x === 0) return 0;
+    // Common min float32 ~1.175e-38 (normalized)
+    // Smallest subnormal ~1.4e-45
+    // If abs(x) < 1.17549435e-38, flush to 0.
+    return Math.abs(x) < 1.17549435e-38 ? 0 : x;
+  }),
+
+  'math_mantissa': (ctx, args) => applyUnary(args.val, x => {
+    if (x === 0 || !Number.isFinite(x)) return x;
+    const buf = new ArrayBuffer(8);
+    const view = new DataView(buf);
+    view.setFloat64(0, x);
+    const hi = view.getUint32(0);
+    const expBits = (hi >> 20) & 0x7FF;
+    const exp = expBits - 1023 + 1; // frexp exponent
+    return x * Math.pow(2, -exp); // Returns range [0.5, 1)
+  }),
+
+  'math_exponent': (ctx, args) => applyUnary(args.val, x => {
+    if (x === 0) return 0;
+    if (!Number.isFinite(x)) return x;
+    const buf = new ArrayBuffer(8);
+    const view = new DataView(buf);
+    view.setFloat64(0, x);
+    const hi = view.getUint32(0);
+    const expBits = (hi >> 20) & 0x7FF;
+    return expBits - 1023 + 1;
+  }),
+
   'math_gt': (ctx, args) => (validateArg(args, 'a', 'number') as number) > (validateArg(args, 'b', 'number') as number),
   'math_lt': (ctx, args) => (validateArg(args, 'a', 'number') as number) < (validateArg(args, 'b', 'number') as number),
   'math_ge': (ctx, args) => (validateArg(args, 'a', 'number') as number) >= (validateArg(args, 'b', 'number') as number),
@@ -126,7 +165,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'static_cast_int': (ctx, args) => {
     const val = args.val;
     if (typeof val === 'boolean') return val ? 1 : 0;
-    if (typeof val === 'number') return Math.trunc(val);
+    if (typeof val === 'number') return val | 0; // Enforce 32-bit integer
     return 0;
   },
   'static_cast_float': (ctx, args) => {

@@ -31,6 +31,17 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
 
   'math_clamp': [{ inputs: { val: 'number', min: 'number', max: 'number' }, output: 'number' }],
 
+  // Advanced Math
+  'math_fract': [{ inputs: { val: 'number' }, output: 'number' }],
+  'math_trunc': [{ inputs: { val: 'number' }, output: 'number' }],
+  'math_flush_subnormal': [{ inputs: { val: 'number' }, output: 'number' }],
+  'math_mantissa': [{ inputs: { val: 'number' }, output: 'number' }],
+  'math_exponent': [{ inputs: { val: 'number' }, output: 'number' }],
+
+  'math_is_nan': [{ inputs: { val: 'number' }, output: 'boolean' }],
+  'math_is_inf': [{ inputs: { val: 'number' }, output: 'boolean' }],
+  'math_is_finite': [{ inputs: { val: 'number' }, output: 'boolean' }],
+
   // ----------------------------------------------------------------
   // Logic
   // ----------------------------------------------------------------
