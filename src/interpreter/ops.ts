@@ -296,8 +296,114 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
 
   // ----------------------------------------------------------------
-  // Variables & Flow State
+  // Quaternion Operations (xyzw)
   // ----------------------------------------------------------------
+  'quat': (ctx, args) => {
+    return [args.x, args.y, args.z, args.w] as VectorValue;
+  },
+
+  'quat_identity': () => {
+    return [0, 0, 0, 1] as VectorValue;
+  },
+
+  'quat_mul': (ctx, args) => {
+    // Hamilton Product
+    // q1 * q2
+    const a = args.a as number[]; // [x1, y1, z1, w1]
+    const b = args.b as number[]; // [x2, y2, z2, w2]
+
+    const x1 = a[0], y1 = a[1], z1 = a[2], w1 = a[3];
+    const x2 = b[0], y2 = b[1], z2 = b[2], w2 = b[3];
+
+    return [
+      w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+      w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+      w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+      w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+    ] as VectorValue;
+  },
+
+  'quat_slerp': (ctx, args) => {
+    const a = args.a as number[];
+    const b = args.b as number[];
+    const t = args.t as number;
+
+    let ax = a[0], ay = a[1], az = a[2], aw = a[3];
+    let bx = b[0], by = b[1], bz = b[2], bw = b[3];
+
+    let cosHalfTheta = ax * bx + ay * by + az * bz + aw * bw;
+
+    // If q1=q2 or opposite, handle
+    if (Math.abs(cosHalfTheta) >= 1.0) {
+      return a as VectorValue;
+    }
+
+    // Shortest path
+    if (cosHalfTheta < 0) {
+      bx = -bx; by = -by; bz = -bz; bw = -bw;
+      cosHalfTheta = -cosHalfTheta;
+    }
+
+    const sinHalfTheta = Math.sqrt(1.0 - cosHalfTheta * cosHalfTheta);
+
+    // Linear fallback for small angles
+    if (Math.abs(sinHalfTheta) < 0.001) {
+      return [
+        (1 - t) * ax + t * bx,
+        (1 - t) * ay + t * by,
+        (1 - t) * az + t * bz,
+        (1 - t) * aw + t * bw
+      ] as VectorValue;
+    }
+
+    const halfTheta = Math.acos(cosHalfTheta);
+    const ratioA = Math.sin((1 - t) * halfTheta) / sinHalfTheta;
+    const ratioB = Math.sin(t * halfTheta) / sinHalfTheta;
+
+    return [
+      ax * ratioA + bx * ratioB,
+      ay * ratioA + by * ratioB,
+      az * ratioA + bz * ratioB,
+      aw * ratioA + bw * ratioB
+    ] as VectorValue;
+  },
+
+  'quat_to_mat4': (ctx, args) => {
+    const q = args.q as number[];
+    const x = q[0], y = q[1], z = q[2], w = q[3];
+
+    // Normalized check? Assuming input is normalized for mat4 conversion usually.
+    const x2 = x + x, y2 = y + y, z2 = z + z;
+    const xx = x * x2, xy = x * y2, xz = x * z2;
+    const yy = y * y2, yz = y * z2, zz = z * z2;
+    const wx = w * x2, wy = w * y2, wz = w * z2;
+
+    return [
+      1 - (yy + zz), xy + wz, xz - wy, 0,
+      xy - wz, 1 - (xx + zz), yz + wx, 0,
+      xz + wy, yz - wx, 1 - (xx + yy), 0,
+      0, 0, 0, 1
+    ] as VectorValue;
+  },
+
+  'quat_rotate': (ctx, args) => {
+    const q = args.q as number[];
+    const v = args.v as number[]; // vec3 expected
+
+    const qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+    const vx = v[0], vy = v[1], vz = v[2];
+
+    const tx = 2 * (qy * vz - qz * vy);
+    const ty = 2 * (qz * vx - qx * vz);
+    const tz = 2 * (qx * vy - qy * vx);
+
+    const outX = vx + qw * tx + (qy * tz - qz * ty);
+    const outY = vy + qw * ty + (qz * tx - qx * tz);
+    const outZ = vz + qw * tz + (qx * ty - qy * tx);
+
+    return [outX, outY, outZ] as VectorValue;
+  },
+
   // ----------------------------------------------------------------
   // Variables & Flow State
   // ----------------------------------------------------------------

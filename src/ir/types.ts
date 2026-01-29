@@ -230,6 +230,9 @@ export type BuiltinOp =
   | 'mat3' | 'mat4'
   | 'mat_identity' | 'mat_mul' | 'mat_transpose' | 'mat_inverse'
 
+  // Quaternion
+  | 'quat' | 'quat_identity' | 'quat_mul' | 'quat_slerp' | 'quat_to_mat4' | 'quat_rotate'
+
   // Variables & Data
   | 'var_get' | 'var_set' | 'const_get' | 'loop_index'
   | 'struct_construct' | 'struct_extract'
