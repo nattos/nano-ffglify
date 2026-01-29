@@ -43,78 +43,69 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
 ## 2. Runtime Math & Numerics
 *Execution Level - nuances between JS (CPU) and GLSL/WGSL (GPU)*
 
-### Arithmetic Limits
-- **What if...** we divide by literal zero (`1.0 / 0.0`)?
-  - *CPU:* `Infinity`
-  - *GPU:* Undefined/Infinity/Zero depending on driver.
-- **What if...** we divide by a variable that happens to be zero at runtime?
-- [RUNTIME CHECKED] **What if...** we calculate `math_sqrt(-1)`? (Currently returns NaN, should error/warn?)
-- **What if...** we calculate `math_log(0)` or `math_log(-1)`?
-- **What if...** we compute `math_pow(negative, fractional)`?
+- [RUNTIME CHECKED] **What if...** we divide by literal zero (`1.0 / 0.0`)? -> **Infinity** (JS Semantics)
+- [RUNTIME CHECKED] **What if...** we divide by a variable that happens to be zero at runtime? -> **Infinity** (JS Semantics)
+- [RUNTIME CHECKED] **What if...** we calculate `math_sqrt(-1)`? -> **NaN** (JS Semantics)
+- [RUNTIME CHECKED] **What if...** we calculate `math_log(0)` or `math_log(-1)`? -> **-Infinity / NaN** (JS Semantics)
+- **What if...** we compute `math_pow(negative, fractional)`? -> **NaN** (JS Semantics)
 
 ### Matrix Algebra
-- **What if...** we call `mat_inverse` on a singular matrix (determinant is 0)?
-- **What if...** `mat_mul` operands are swapped? (A*B vs B*A - logical error, not runtime, but important)
+- [RUNTIME CHECKED] **What if...** we call `mat_inverse` on a singular matrix? -> **Fallback** (Returns input/Identity - no crash)
+- **What if...** `mat_mul` operands are swapped? -> **Logic Error** (Engine executes valid math, user logic issue)
 
 ### Integer & Bitwise
-- **What if...** an integer addition overflows 32-bit range? (Wrap vs Clamp vs JS double precision behavior)
-- **What if...** we shift bits by a negative amount or >= 32?
+- **What if...** integer overflow? -> **JS Double Precision** (Safe up to 2^53)
+- **What if...** negative shift? -> **JS Semantics** (Wrap/Mask)
 
 ## 3. Resources & Memory
 *Critical for preventing GPU hangs or browser context loss*
 
 ### Textures & Samplers
-- **What if...** we sample a texture that has size `0x0`?
-- **What if...** we sample a texture that hasn't been written to yet? (Uninitialized data)
-- **What if...** we fetch a texel (`texture_load`) with integer coordinates outside `[0, width-1]`?
+- **What if...** we sample a texture that has size `0x0`? -> **Safe** (Returns 0/Black)
+- **What if...** we sample a texture that hasn't been written to yet? -> **Safe** (Returns 0/Black due to undefined check)
+- **What if...** we fetch a texel (`texture_load`) with integer coordinates outside `[0, width-1]`? -> **Safe** (Returns 0/Black)
 - [STATIC CHECKED] **What if...** we `cmd_resize_resource` on a missing resource ID? (Verified in `09-errors.test.ts`)
 - [STATIC CHECKED] **What if...** we `cmd_resize_resource` with invalid format constant? (Verified in `09-errors.test.ts`)
-- **What if...** we `cmd_resize_resource` with negative dimensions?
+- **What if...** we `cmd_resize_resource` with negative dimensions? -> **Runtime Error** (Should be checked!)
 
 ### Buffers
 - [STATIC CHECKED] **What if...** we `buffer_store` at a negative index? (Verified in `09-errors.test.ts`)
 - [STATIC CHECKED] **What if...** we `buffer_store` at a literal index beyond fixed size? (Verified in `09-errors.test.ts`)
 - [RUNTIME CHECKED] **What if...** we `buffer_store` at a dynamic index OOB? (Verified in `03-buffers.test.ts` as Runtime Error)
-- **What if...** `buffer_load` reads an index OOB? (Returns 0 or garbage?)
-- **What if...** we write to the same buffer index multiple times in one dispatch? (Race condition)
+- **What if...** `buffer_load` reads an index OOB? -> **Safe** (Returns 0)
+- **What if...** we write to the same buffer index multiple times in one dispatch? -> **Race Condition** (Unordered)
 
 ### Lifecycle
-- **What if...** we read from a resource in the same pass that we write to it? (Read-After-Write hazard - requires ping-ponging or barriers)
-- **What if...** `clearOnResize` is true, but the resize command sets the same size? (Should it still clear?)
+- **What if...** read-after-write hazard? -> **N/A** (CPU is sync) / **GPU Race** (Requires Barriers)
+- **What if...** `clearOnResize` behavior? -> **Logic** (Clears if size/format changes or flag set)
 
 ## 4. Control Flow & Execution
 *Halting problems and logic limits*
 
 ### Loops & Branching
-- **What if...** a `flow_loop` condition never becomes false? (Infinite loop)
-- **What if...** `flow_branch` condition is not a boolean (e.g. `0.0` or `null`)?
-- **What if...** we jump to a node ID that doesn't exist?
-- **What if...** a function calls itself? (Recursion is forbidden, but does it crash the compiler?)
+- **What if...** a `flow_loop` condition never becomes false? -> **Hang** (Future: Max Ops Limit)
+- **What if...** `flow_branch` condition is not a boolean? -> **Auto-Cast** (!!val)
+- **What if...** we jump to a node ID that doesn't exist? -> **Runtime Error** (Executor fails to find node)
+- [RUNTIME CHECKED] **What if...** a function calls itself? -> **Runtime Error** (Recursion detected)
 
 ### Synchronization
-- **What if...** `atomic_counter` is incremented by 1000 threads simultaneously? is the result exact?
+- **What if...** atomics? -> **N/A** (CPU is single-threaded)
 
 ## 5. Platform & Hardware Limits (WebGPU/OpenGL Specifics)
 *Compiling to hardware often imposes strict constraints invisible to a pure CPU interpreter.*
 
 ### Feature Enforceability
-- **What if...** we request `linear` filtering on an `rgba32float` texture?
-  - *Context:* Many WebGPU implementations (and mobile GL) do not support filterable 32-bit float textures without extensions.
-  - *Expected:* Compiler Error vs Fallback to `nearest`?
-- **What if...** we use `atomic_counter` on a format that doesn't support atomics? (e.g. `rgba8`?)
+- **What if...** feature unsupported? -> **N/A** (CPU supports all) / **Compiler Error** (GPU)
+- **What if...** atomics on wrong format? -> **Compiler Error** (GPU)
 
 ### Limits & Quotas
-- **What if...** `cmd_dispatch` dimensions exceed the hardware limit? (e.g. > 65535 on some axes)
-- **What if...** the number of active textures exceeds the bind slot limit (usually 8 or 16 guaranteed)?
-- **What if...** a Uniform Buffer is larger than `maxUniformBufferBindingSize` (often just 64KB)?
-  - *Strategy:* Automatically promote to Storage Buffer? Or Error?
+- **What if...** dispatch size exceeded? -> **N/A** (CPU unlimited) / **Driver Error** (GPU)
+- **What if...** binding limits? -> **Driver Error** (GPU)
+- **What if...** buffer size limit? -> **Driver Error** (GPU)
 
 ### Memory Layout
-- **What if...** a Struct used in a Uniform Buffer violates `std140` padding rules?
-  - *Example:* A `float` followed by a `vec3`. In `std140`, `vec3` must be 16-byte aligned, causing a gap.
-  - *Risk:* CPU writes to offset 4, GPU reads from offset 16. Mismatch.
-- **What if...** we try to write to a `read_only` storage buffer from a shader?
+- **What if...** std140 padding? -> **N/A** (CPU uses packed JS objects) / **Compiler Handling** (GPU)
+- **What if...** read-only write? -> **Compiler Error** (GPU)
 
 ### Compatibility Fallbacks
-- **What if...** the device does not support `timestamp-query` for profiling?
-- **What if...** we request a texture format (`r16f`) not supported by the implementation?
+- **What if...** features missing? -> **Runtime/Driver Error**

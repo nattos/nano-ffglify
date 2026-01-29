@@ -21,7 +21,7 @@ export const PRIMITIVE_TYPES = [
 // ------------------------------------------------------------------
 export interface IRDocument {
   version: string;
-  meta: MetaData;
+  meta: Metadata;
   entryPoint: string; // ID of the root CPU function
   inputs: InputDef[];
   resources: ResourceDef[];
@@ -34,7 +34,7 @@ export interface StructDef {
   members: StructMember[];
 }
 
-export interface MetaData {
+export interface Metadata {
   name: string;
   author?: string;
   description?: string;
