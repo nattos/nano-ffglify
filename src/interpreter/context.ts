@@ -57,6 +57,9 @@ export class EvaluationContext {
   // Side Effect Log
   log: ActionLogEntry[] = [];
 
+  // Platform/Backend specific handles (e.g. GPUDevice)
+  device?: any; // GPUDevice
+
   constructor(ir: IRDocument, inputs: Map<string, RuntimeValue>) {
     this.ir = ir;
     this.inputs = inputs;

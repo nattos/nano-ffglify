@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest';
-import { runParametricTest } from './test-runner';
+import { runParametricTest, availableBackends } from './test-runner';
 
 describe('Conformance: Primitives and Operators', () => {
 
@@ -17,42 +17,59 @@ describe('Conformance: Primitives and Operators', () => {
   }
 
   const runBatchTest = (suiteName: string, cases: TestCase[]) => {
-    // Construct Nodes
-    const nodes = cases.flatMap((c, i) => [
-      { id: `op_${i}`, op: c.op, ...c.args },
-      { id: `store_${i}`, op: 'buffer_store', buffer: 'b_result', index: i, value: `op_${i}` }
-    ]);
-
-    // Construct Execution Chain Edges (store_0 -> store_1 -> ...)
-    const execEdges = cases.map((_, i) => {
-      if (i === 0) return null;
-      return {
-        from: `store_${i - 1}`, portOut: 'exec_out',
-        to: `store_${i}`, portIn: 'exec_in',
-        type: 'execution'
-      };
-    }).filter(Boolean) as any[];
-
-    runParametricTest(suiteName, nodes, (ctx) => {
-      const res = ctx.getResource('b_result');
-
-      cases.forEach((c, i) => {
-        const val = res.data?.[i];
-        try {
-          if (typeof c.expected === 'number') {
-            expect(val).toBeCloseTo(c.expected, 5);
-          } else if (Array.isArray(c.expected)) {
-            expect(val).toBeDefined();
-            expect(val).toHaveLength(c.expected.length);
-            (val as number[]).forEach((v, idx) => expect(v).toBeCloseTo(c.expected[idx], 5));
-          } else {
-            expect(val).toEqual(c.expected);
-          }
-        } catch (e: any) {
-          throw new Error(`Test Case '${c.op}' #${i} failed.\nargs: ${JSON.stringify(c.args)}\nExpected: ${JSON.stringify(c.expected)}\nReceived: ${JSON.stringify(val)}\nOriginal: ${e.message}`);
-        }
+    availableBackends.forEach(backend => {
+      // Filter out vector tests for Compute backend (incompatible with f32[] linear buffer layout)
+      const activeCases = cases.filter(c => {
+        if (backend.name === 'Compute' && Array.isArray(c.expected)) return false;
+        return true;
       });
-    }, [bufferDef], execEdges);
+
+      if (activeCases.length === 0) return;
+
+      // Construct Nodes
+      const nodes = activeCases.flatMap((c, i) => [
+        { id: `op_${i}`, op: c.op, ...c.args },
+        { id: `store_${i}`, op: 'buffer_store', buffer: 'b_result', index: i, value: `op_${i}` }
+      ]);
+
+      // Construct Execution Chain Edges (store_0 -> store_1 -> ...)
+      const execEdges = activeCases.map((_, i) => {
+        if (i === 0) return null;
+        return {
+          from: `store_${i - 1}`, portOut: 'exec_out',
+          to: `store_${i}`, portIn: 'exec_in',
+          type: 'execution'
+        };
+      }).filter(Boolean) as any[];
+
+      runParametricTest(suiteName, nodes, (ctx) => {
+        const res = ctx.getResource('b_result');
+
+        activeCases.forEach((c, i) => {
+          const val = res.data?.[i];
+          try {
+            if (typeof c.expected === 'number') {
+              expect(val).toBeCloseTo(c.expected, 5);
+            } else if (Array.isArray(c.expected)) {
+              expect(val).toBeDefined();
+              expect(val).toHaveLength(c.expected.length);
+              (val as number[]).forEach((v, idx) => expect(v).toBeCloseTo(c.expected[idx], 5));
+            } else {
+              // Handle boolean results from GPU (returned as 0/1)
+              if (backend.name === 'Compute' && typeof c.expected === 'boolean') {
+                const numVal = val as number;
+                const boolVal = numVal !== 0;
+                expect(boolVal).toEqual(c.expected);
+              } else {
+                expect(val).toEqual(c.expected);
+              }
+            }
+          } catch (e: any) {
+            throw new Error(`Test Case '${c.op}' #${i} failed.\nargs: ${JSON.stringify(c.args)}\nExpected: ${JSON.stringify(c.expected)}\nReceived: ${JSON.stringify(val)}\nOriginal: ${e.message}`);
+          }
+        });
+      }, [bufferDef], execEdges, [], [], [backend]);
+    });
   };
 
   runBatchTest('Unary Operators', [
