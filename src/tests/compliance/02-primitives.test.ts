@@ -147,6 +147,29 @@ describe('Compliance: Primitives and Operators', () => {
     { op: 'vec_mix', args: { a: [0, 0], b: [10, 10], t: 0.5 }, expected: [5, 5] },
   ]);
 
+  runParametricTest('Color Operations', [
+    // color_mix (Back, Front) -> Blended
+    // Back: Red Opaque [1, 0, 0, 1]
+    // Front: Green 50% [0, 1, 0, 0.5]
+    // Result: [0.5, 0.5, 0, 1]
+    {
+      op: 'color_mix',
+      args: { a: [1, 0, 0, 1], b: [0, 1, 0, 0.5] },
+      expected: [0.5, 0.5, 0, 1]
+    },
+    // Back: transparent [0,0,0,0]
+    // Front: Blue 50% [0, 0, 1, 0.5]
+    // Result:
+    // Alpha = 0.5 + 0 = 0.5
+    // RGB = ( [0,0,1]*0.5 + 0 ) / 0.5 = [0, 0, 1]
+    // Result: [0, 0, 1, 0.5]
+    {
+      op: 'color_mix',
+      args: { a: [0, 0, 0, 0], b: [0, 0, 1, 0.5] },
+      expected: [0, 0, 1, 0.5]
+    }
+  ]);
+
   runParametricTest('Constructors and Swizzles', [
     { op: 'vec2', args: { x: 1, y: 2 }, expected: [1, 2] },
     { op: 'vec3', args: { x: 1, y: 2, z: 3 }, expected: [1, 2, 3] },

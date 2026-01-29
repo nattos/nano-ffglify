@@ -115,6 +115,34 @@ export const OpRegistry: Record<string, OpHandler> = {
     return a.map((v, i) => v * (1 - t) + b[i] * t) as VectorValue;
   },
 
+  'color_mix': (ctx, args) => {
+    // Standard Source-Over Blending
+    // dst = background (args.a), src = foreground (args.b)
+    const dst = args.a as number[]; // [r, g, b, a]
+    const src = args.b as number[]; // [r, g, b, a]
+
+    // Default alpha to 1.0 if missing (e.g. vec3)
+    const srcA = src[3] ?? 1.0;
+    const dstA = dst[3] ?? 1.0;
+
+    // Alpha Composite: outA = srcA + dstA * (1 - srcA)
+    const outA = srcA + dstA * (1.0 - srcA);
+
+    // RGB Composite
+    // If outA is 0, result is 0.
+    if (outA < 1e-6) return [0, 0, 0, 0];
+
+    const mixCh = (d: number, s: number) =>
+      (s * srcA + d * dstA * (1.0 - srcA)) / outA;
+
+    return [
+      mixCh(dst[0], src[0]),
+      mixCh(dst[1], src[1]),
+      mixCh(dst[2], src[2]),
+      outA
+    ] as VectorValue;
+  },
+
   'vec2': (ctx, args) => {
     return [args.x, args.y] as VectorValue;
   },

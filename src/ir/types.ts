@@ -2,7 +2,6 @@ export type DataType =
   | 'float' | 'int' | 'bool'
   | 'vec2' | 'vec3' | 'vec4'
   | 'mat3' | 'mat4'
-  | 'color' // treating as vec4 in most backends
   | 'string' // logic only, usually
   | 'texture2d' // resource handle
   | 'sampler'
@@ -183,15 +182,34 @@ export interface Edge {
 // ------------------------------------------------------------------
 // Standard OpCodes (Reference)
 // ------------------------------------------------------------------
-// CPU:
-// - "cmd_dispatch" (inputs: exec_in, dispatch_xyz, func)
-// - "cmd_draw" (inputs: exec_in, vert_count, inst_count, func_vert, func_frag)
-// - "cmd_resize_resource" (inputs: exec_in, resource, size)
-// - "flow_branch", "flow_loop"
-// - "resource_get_size"
-//
-// Shared/Shader:
-// - "var_set", "var_get"
-// - "math_add", "math_sub", ...
-// - "texture_sample", "buffer_load", "buffer_store"
-// - "call_func"
+export type BuiltinOp =
+  // Math & Logic
+  | 'math_add' | 'math_sub' | 'math_mul' | 'math_div' | 'math_mad'
+  | 'math_mod' | 'math_clamp' | 'math_abs' | 'math_ceil' | 'math_floor'
+  | 'math_min' | 'math_max' | 'math_pow' | 'math_sqrt' | 'math_exp' | 'math_log'
+  | 'math_sin' | 'math_cos' | 'math_tan' | 'math_asin' | 'math_acos' | 'math_atan' | 'math_atan2'
+  | 'math_sinh' | 'math_cosh' | 'math_tanh' | 'math_sign'
+  | 'math_div_scalar' | 'math_gt'
+  | 'math_pi' | 'math_e'
+
+  // Vector & Color
+  | 'vec2' | 'vec3' | 'vec4'
+  | 'vec_length' | 'vec_normalize' | 'vec_dot' | 'vec_mix' | 'color_mix'
+  | 'vec_swizzle' | 'vec_get_element'
+
+  // Variables & Data
+  | 'var_get' | 'var_set' | 'loop_index'
+  | 'struct_construct' | 'struct_extract'
+  | 'array_construct' | 'array_extract' | 'array_set' | 'array_length'
+
+  // Flow & Functions
+  | 'flow_branch' | 'flow_loop' | 'call_func' | 'func_return'
+
+  // Resources
+  | 'buffer_load' | 'buffer_store'
+  | 'texture_sample' | 'texture_store' | 'texture_load'
+  | 'resource_get_size'
+
+  // Commands (Side Effects)
+  | 'cmd_dispatch' | 'cmd_resize_resource';
+
