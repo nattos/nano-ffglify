@@ -78,22 +78,21 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_add' } // Force execution
     ], [], 'Type Mismatch');
 
-    // Dot Product Mismatch: 'vec_dot' inputs are both 'vector'. Signature doesn't check size.
-    // So this remains a Runtime error for now (or complex static check).
-    runBadIR('Dot Product with mismatched lengths', [
+    // Dot Product Mismatch: 'vec_dot' inputs are both 'vector'. Signature checks specific types.
+    runStaticBadIR('Dot Product with mismatched lengths', [
       { id: 'v2', op: 'vec2', x: 1, y: 2 },
       { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
       { id: 'bad_dot', op: 'vec_dot', a: 'v2', b: 'v3' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_dot' }
-    ]);
+    ], [], 'Type Mismatch'); // Expected vec2, got vec3 or similar
 
-    // Mat Mul Mismatch: Inputs are vectors. Matrix size check is semantic.
-    runBadIR('Matrix Multiplication Mismatch (Mat4 x Vec3)', [
-      { id: 'm4', op: 'mat_identity', size: 4 },
+    // Mat Mul Mismatch
+    runStaticBadIR('Matrix Multiplication Mismatch (Mat4 x Vec3)', [
+      { id: 'm4', op: 'mat_identity', size: 4 }, // mat4
       { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
       { id: 'bad_mul', op: 'mat_mul', a: 'm4', b: 'v3' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_mul' }
-    ]);
+    ], [], 'Type Mismatch');
   });
 
   // ----------------------------------------------------------------
@@ -129,26 +128,17 @@ describe('Compliance: Error Handling & Negative Tests', () => {
     // var_set outputs 'any'. math_add inputs 'number'.
     // validator cannot prove 'any' is 'number'?
     // Only if we infer var_set output type from its input.
-    // var_set input 'val' is string.
-    // But var_set output is 'any' in my signature.
-    // So type check passes (any -> number might warn or pass?).
-    // validator says: "if outType != any and inType != any and outType != inType".
-    // if outType is 'any', it passes.
-    // So this remains a Runtime error unless var_set logic is smarter.
-    // Let's keep it Runtime since validator handles basic edges.
-    runBadIR('Invalid Argument Type (String for Math)', [
+    runStaticBadIR('Invalid Argument Type (String for Math)', [
       { id: 's1', op: 'var_get', var: 'some_string' },
       { id: 'set_str', op: 'var_set', var: 's', val: "not_a_number" },
       { id: 'bad_math', op: 'math_add', a: 'set_str', b: 10 },
       { id: 'sink', op: 'var_set', var: 'y', val: 'bad_math' }
-    ]);
+    ], [], 'Type Mismatch'); // var_set output is 'string', math_add expects 'number'
 
-    // Const Get Logic is specific. validator checks "name" is string.
-    // Does validator verify constant existence? No.
-    runBadIR('Const Get Invalid Name', [
+    runStaticBadIR('Const Get Invalid Name', [
       { id: 'bad_const', op: 'const_get', name: 'NON_EXISTENT_CONSTANT' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_const' }
-    ]);
+    ], [], 'Invalid constant name');
 
     runStaticBadIR('Multiple Static Errors (Accumulation)', [
       // Error 1: Missing Argument in math_add
@@ -173,16 +163,20 @@ describe('Compliance: Error Handling & Negative Tests', () => {
   // Structure & Resource Logic
   // ----------------------------------------------------------------
   describe('Structure & Logic Validation', () => {
-    runBadIR('Struct Extract from Non-Struct', [
-      { id: 'scalar', op: 'vec2', x: 1, y: 2 }, // Vector is Array, not Struct
+    runStaticBadIR('Struct Extract from Non-Struct', [
+      { id: 'scalar', op: 'vec2', x: 1, y: 2 }, // Vector, not Struct
       { id: 'bad_extract', op: 'struct_extract', struct: 'scalar', key: 'x' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_extract' }
-    ]);
+    ], [], 'Type Mismatch');
 
-    runBadIR('Buffer Store Negative Index', [
+    runStaticBadIR('Buffer Store Negative Index', [
       { id: 'bad_store', op: 'buffer_store', buffer: 'buf', index: -1, value: 10 }
-      // buffer_store is executable.
-    ], [{ id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false } }]);
+    ], [{ id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false } }], 'Invalid Negative Index');
+
+    // New: Static OOB
+    runStaticBadIR('Buffer Store Static OOB', [
+      { id: 'bad_oob', op: 'buffer_store', buffer: 'buf', index: 10, value: 99 } // Size 10, Index 10 is OOB (0-9 valid)
+    ], [{ id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false } }], 'Static OOB Access');
   });
 
   // ----------------------------------------------------------------

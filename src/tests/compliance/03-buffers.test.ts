@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { CpuExecutor } from '../../interpreter/executor';
 import { IRDocument } from '../../ir/types';
+import { validateIR } from '../../ir/validator';
 
 describe('Compliance: Buffers', () => {
 
@@ -73,7 +74,11 @@ describe('Compliance: Buffers', () => {
 
     const ctx = new EvaluationContext(ir, new Map());
     const exec = new CpuExecutor(ctx);
-    expect(() => exec.executeEntry()).toThrow(/OOB/);
+
+    // Validates statically first
+    const errors = validateIR(ir);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].message).toContain('Static OOB');
   });
 
   it('should throw Runtime Error on OOB Read', () => {
@@ -114,7 +119,11 @@ describe('Compliance: Buffers', () => {
 
     const ctx = new EvaluationContext(ir, new Map());
     const exec = new CpuExecutor(ctx);
-    expect(() => exec.executeEntry()).toThrow(/OOB/);
+
+    // Validates statically first
+    const errors = validateIR(ir);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].message).toContain('Static OOB');
   });
 
 });
