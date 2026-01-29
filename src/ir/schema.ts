@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { IRDocument, DataType } from './types.js';
+import { IRDocument, DataType, PRIMITIVE_TYPES } from './types.js';
 import { validateStaticLogic } from './validator.js';
 
 // ------------------------------------------------------------------
@@ -21,13 +21,9 @@ export type ValidationResult =
 // ------------------------------------------------------------------
 
 // Enums
-const DataTypeSchema = z.enum([
-  'float', 'int', 'bool',
-  'vec2', 'vec3', 'vec4',
-  'mat3', 'mat4',
-  'color', 'string',
-  'texture2d', 'sampler'
-]);
+// We allow string so custom structs are valid Zod-wise.
+// Semantic validation checks if it's a valid primitive or defined struct.
+const DataTypeSchema = z.string();
 
 const ResourceTypeSchema = z.enum(['texture2d', 'buffer', 'atomic_counter']);
 const FunctionTypeSchema = z.enum(['cpu', 'shader']);
@@ -119,6 +115,16 @@ const FunctionDefSchema = z.object({
   edges: z.array(EdgeSchema),
 });
 
+const StructMemberSchema = z.object({
+  name: z.string(),
+  type: DataTypeSchema, // Can be another struct type ID, dynamic validation handles that
+});
+
+const StructDefSchema = z.object({
+  id: z.string(),
+  members: z.array(StructMemberSchema),
+});
+
 // Root
 export const IRDocumentSchema = z.object({
   version: z.string(),
@@ -126,7 +132,7 @@ export const IRDocumentSchema = z.object({
   entryPoint: z.string(),
   inputs: z.array(InputDefSchema),
   resources: z.array(ResourceDefSchema),
-  structs: z.array(z.any()).optional(), // Placeholder for structs if not strictly defined in Zod yet
+  structs: z.array(StructDefSchema).optional(),
   functions: z.array(FunctionDefSchema),
 });
 
@@ -215,6 +221,21 @@ export function validateIR(json: unknown): ValidationResult {
   }
 
   // B. Iterate Functions
+  const structIds = new Set<string>();
+  if (doc.structs) {
+    doc.structs.forEach((s, idx) => {
+      if (structIds.has(s.id)) {
+        semanticErrors.push({
+          path: ['structs', idx.toString(), 'id'],
+          message: `Duplicate Struct ID '${s.id}'.`,
+          code: 'semantic_error'
+        });
+      }
+      structIds.add(s.id);
+    });
+  }
+
+  // Iterate Functions
   doc.functions.forEach((func, fIdx) => {
     const nodeIds = new Set<string>();
 
@@ -292,6 +313,35 @@ export function validateIR(json: unknown): ValidationResult {
   });
 
   // 3. Static Logic Validation (Types, Swizzling, Arity, Struct recursion)
+  // Ensure all types are valid (Primitive or Struct)
+  const validTypes = new Set<string>(PRIMITIVE_TYPES);
+  doc.structs?.forEach(s => validTypes.add(s.id));
+
+  const checkType = (type: string, path: string[]) => {
+    if (!validTypes.has(type)) {
+      semanticErrors.push({
+        path: path,
+        message: `Unknown type '${type}'.`,
+        code: 'semantic_error'
+      });
+    }
+  };
+
+  // Check inputs
+  doc.inputs.forEach((i, idx) => checkType(i.type, ['inputs', idx.toString(), 'type']));
+  // Check struct members
+  doc.structs?.forEach((s, sIdx) => {
+    s.members.forEach((m, mIdx) => {
+      checkType(m.type, ['structs', sIdx.toString(), 'members', mIdx.toString(), 'type']);
+    });
+  });
+  // Check function inputs/outputs/locals
+  doc.functions.forEach((f, fIdx) => {
+    f.inputs.forEach((p, pIdx) => checkType(p.type, ['functions', fIdx.toString(), 'inputs', pIdx.toString(), 'type']));
+    f.outputs.forEach((p, pIdx) => checkType(p.type, ['functions', fIdx.toString(), 'outputs', pIdx.toString(), 'type']));
+    f.localVars.forEach((v, vIdx) => checkType(v.type, ['functions', fIdx.toString(), 'localVars', vIdx.toString(), 'type']));
+  });
+
   const logicErrors = validateStaticLogic(doc);
   if (logicErrors.length > 0) {
     logicErrors.forEach(err => {

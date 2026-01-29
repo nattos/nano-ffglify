@@ -7,6 +7,15 @@ export type DataType =
   | 'sampler'
   | string; // Allow custom Struct IDs
 
+export const PRIMITIVE_TYPES = [
+  'float', 'int', 'bool',
+  'vec2', 'vec3', 'vec4',
+  'mat3', 'mat4',
+  'string',
+  'texture2d',
+  'sampler'
+] as const;
+
 // ------------------------------------------------------------------
 // Core Document
 // ------------------------------------------------------------------

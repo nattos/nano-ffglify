@@ -26,8 +26,8 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
 - [STATIC CHECKED] **What if...** we use `mat_mul` on mismatched dimensions (Mat4 x Vec3)? (Verified in `09-errors.test.ts`)
 
 ### Structs & Composition
-- **What if...** we define a struct that recursively contains itself? (Infinite size)
-- **What if...** two structs share the same `id` but have different member definitions?
+- [STATIC CHECKED] Recursive struct definition -> **Static Error** `Recursive struct definition detected`
+- [STATIC CHECKED] Duplicate Struct IDs -> **Static Error** `Duplicate Struct ID '...'`
 - [STATIC CHECKED] **What if...** we use `struct_extract` on a key that doesn't exist (or on a non-struct)? (Verified in `09-errors.test.ts`)
 - [STATIC CHECKED] **What if...** we `struct_construct` with missing fields? -> **Static Error** `Missing required field`
 

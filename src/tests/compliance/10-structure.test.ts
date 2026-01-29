@@ -147,6 +147,18 @@ describe('Compliance: Structural Logic Validation', () => {
       const result = validateIR(ir);
       expect(result.success).toBe(true);
     });
+
+    it('should detect duplicate struct IDs', () => {
+      const ir = makeIR([], [
+        { id: 'MyStruct', members: [{ name: 'a', type: 'float' }] },
+        { id: 'MyStruct', members: [{ name: 'b', type: 'vec2' }] }
+      ]);
+      const result = validateIR(ir);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].message).toContain("Duplicate Struct ID 'MyStruct'");
+      }
+    });
   });
 
 });
