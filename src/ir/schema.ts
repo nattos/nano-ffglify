@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IRDocument, DataType } from './types.js';
+import { validateStaticLogic } from './validator.js';
 
 // ------------------------------------------------------------------
 // Validation Types
@@ -86,6 +87,7 @@ const VariableDefSchema = z.object({
 const PortDefSchema = z.object({
   id: z.string(),
   type: DataTypeSchema,
+  // description: z.string().optional(),
 });
 
 const NodeSchema = z.object({
@@ -124,6 +126,7 @@ export const IRDocumentSchema = z.object({
   entryPoint: z.string(),
   inputs: z.array(InputDefSchema),
   resources: z.array(ResourceDefSchema),
+  structs: z.array(z.any()).optional(), // Placeholder for structs if not strictly defined in Zod yet
   functions: z.array(FunctionDefSchema),
 });
 
@@ -146,8 +149,6 @@ export function validateIR(json: unknown): ValidationResult {
 
   const doc = result.data as IRDocument;
   const semanticErrors: ValidationError[] = [];
-
-  // 2. Semantic Validation
 
   // 2. Semantic Validation
 
@@ -229,15 +230,12 @@ export function validateIR(json: unknown): ValidationResult {
       nodeIds.add(node.id);
 
       // C. Check Resource References in Nodes
-      // Heuristic: Check common fields 'resource', 'buffer', 'tex', 'texture'
       const potentialRefFields = ['resource', 'buffer', 'tex', 'texture'];
 
       for (const field of potentialRefFields) {
         if (typeof node[field] === 'string') {
           const refId = node[field];
           if (!allGlobalIds.has(refId)) {
-            // Exceptions: local variables? No, variables are accessed via 'var_get' using 'var' field usually.
-            // But let's check if it matches a valid resource/input
             semanticErrors.push({
               path: ['functions', fIdx.toString(), 'nodes', nIdx.toString(), field],
               message: `Node '${node.id}' references unknown resource '${refId}' in field '${field}'.`,
@@ -292,6 +290,32 @@ export function validateIR(json: unknown): ValidationResult {
     });
 
   });
+
+  // 3. Static Logic Validation (Types, Swizzling, Arity, Struct recursion)
+  const logicErrors = validateStaticLogic(doc);
+  if (logicErrors.length > 0) {
+    logicErrors.forEach(err => {
+      // Map NodeId to Path
+      let path: string[] = ['global'];
+      if (err.nodeId) {
+        // Find function and node index
+        for (let fIdx = 0; fIdx < doc.functions.length; fIdx++) {
+          const func = doc.functions[fIdx];
+          const nIdx = func.nodes.findIndex(n => n.id === err.nodeId);
+          if (nIdx !== -1) {
+            path = ['functions', fIdx.toString(), 'nodes', nIdx.toString(), 'op'];
+            break;
+          }
+        }
+      }
+
+      semanticErrors.push({
+        path: path,
+        message: err.message,
+        code: 'static_logic_error'
+      });
+    });
+  }
 
   if (semanticErrors.length > 0) {
     return { success: false, errors: semanticErrors };

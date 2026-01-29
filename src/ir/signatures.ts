@@ -60,6 +60,11 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { vec: 'vec3', index: 'int' }, output: 'number' },
     { inputs: { vec: 'vec4', index: 'int' }, output: 'number' }
   ],
+  'vec_swizzle': [
+    { inputs: { val: 'vec2', mask: 'string' }, output: 'any' },
+    { inputs: { val: 'vec3', mask: 'string' }, output: 'any' },
+    { inputs: { val: 'vec4', mask: 'string' }, output: 'any' }
+  ],
 
   // ----------------------------------------------------------------
   // Vector Math (Strict Overloads)

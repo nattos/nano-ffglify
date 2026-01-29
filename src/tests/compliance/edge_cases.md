@@ -5,10 +5,20 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
 ## 1. Type System & Static Structure
 *Compiler/Validation Level*
 
-### Dimensionality & Swizzling
-- **What if...** we request a swizzle mask longer than the output type? (e.g., `vec3` result from `vec4.xyzw`)
-- **What if...** we swizzle components that don't exist? (e.g., `vec2.z`)
-- **What if...** we try to `vec_mix` vectors of different lengths? (e.g., `vec3` and `vec4`)
+### Dimensionality
+### 9. Swizzling
+- [STATIC CHECKED] `vec2.z` (accessing component out of bounds) -> **Static Error** `Swizzle component 'z' out of bounds for vec2`
+- [STATIC CHECKED] `vec4.xyzwq` (too many components) -> **Static Error** `Invalid swizzle mask length`
+- [STATIC CHECKED] `vec3.x` (scalar output type inference) -> Works (returns `number`), downstream type check catches if used incorrectly.
+- [STATIC CHECKED] `vec2.xy` (vector output) -> Works (returns `vec2`).
+
+### 10. Constructors
+- [STATIC CHECKED] `vec2(1)` (missing arg) -> **Static Error** `Missing required argument 'y'`
+- [STATIC CHECKED] `vec2(1, 2, 3)` (extra arg) -> **Static Error** `Unknown argument(s) 'z'`
+
+### 11. Structs
+- [STATIC CHECKED] Recursive struct (A contains B, B contains A) -> **Static Error** `Recursive struct definition detected`
+- [STATIC CHECKED] `struct_extract` on non-struct type -> **Static Error** `Type Mismatch`
 - **What if...** a matrix constructor (`mat4`) is provided with too few or too many arguments?
 - **What if...** we access a matrix column index that is out of bounds (e.g., `col[4]` on `mat4`)?
 - [STATIC CHECKED] **What if...** we attempt math operations on incompatible types (Scalar vs Vector)? (Verified in `09-errors.test.ts`)

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { CpuExecutor } from '../../interpreter/executor';
 import { IRDocument } from '../../ir/types';
-import { validateIR, ValidationError } from '../../ir/validator';
+import { validateIR, ValidationError } from '../../ir/schema';
 
 describe('Compliance: Error Handling & Negative Tests', () => {
 
@@ -54,12 +54,12 @@ describe('Compliance: Error Handling & Negative Tests', () => {
   const runStaticBadIR = (name: string, nodes: any[], resources: any[] = [], expectedErrorSnippet?: string) => {
     it(`[Static] ${name}`, () => {
       const ir = buildIR(name, nodes, resources);
-      const errors = validateIR(ir);
+      const result = validateIR(ir);
 
       // Assume we expect errors
-      expect(errors.length).toBeGreaterThan(0);
-      if (expectedErrorSnippet) {
-        const combined = errors.map(e => e.message).join('\n');
+      expect(result.success).toBe(false);
+      if (!result.success && expectedErrorSnippet) {
+        const combined = result.errors.map(e => e.message).join('\n');
         expect(combined).toContain(expectedErrorSnippet);
       }
     });
@@ -109,7 +109,7 @@ describe('Compliance: Error Handling & Negative Tests', () => {
     // Currently relying on Runtime check for Format Constant.
     runBadIR('Resize Texture with Invalid Format Constant', [
       { id: 'bad_resize', op: 'cmd_resize_resource', resource: 'tex', size: [10, 10], format: 99999 }
-    ], [{ id: 'tex', type: 'texture2d', size: { mode: 'fixed', value: [1, 1] }, persistence: { retain: false } }]);
+    ], [{ id: 'tex', type: 'texture2d', size: { mode: 'fixed', value: [1, 1] }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }]);
   });
 
   // ----------------------------------------------------------------
@@ -171,12 +171,12 @@ describe('Compliance: Error Handling & Negative Tests', () => {
 
     runStaticBadIR('Buffer Store Negative Index', [
       { id: 'bad_store', op: 'buffer_store', buffer: 'buf', index: -1, value: 10 }
-    ], [{ id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false } }], 'Invalid Negative Index');
+    ], [{ id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }], 'Invalid Negative Index');
 
     // New: Static OOB
     runStaticBadIR('Buffer Store Static OOB', [
       { id: 'bad_oob', op: 'buffer_store', buffer: 'buf', index: 10, value: 99 } // Size 10, Index 10 is OOB (0-9 valid)
-    ], [{ id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false } }], 'Static OOB Access');
+    ], [{ id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }], 'Static OOB Access');
   });
 
   // ----------------------------------------------------------------
