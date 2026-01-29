@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
-import { CpuExecutor } from '../../interpreter/executor';
+import { InterpretedExecutor } from '../../interpreter/executor';
 import { IRDocument, FunctionDef } from '../../ir/types';
 
 // ------------------------------------------------------------------
@@ -13,13 +13,13 @@ export interface TestBackend {
   execute: (ir: IRDocument, entryPoint: string, inputs?: Map<string, RuntimeValue>) => Promise<EvaluationContext>;
 }
 
-export const CpuBackend: TestBackend = {
-  name: 'CPU Integration',
+export const InterpreterBackend: TestBackend = {
+  name: 'Interpreter',
   createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
     return new EvaluationContext(ir, inputs);
   },
   run: async (ctx: EvaluationContext, entryPoint: string) => {
-    const exec = new CpuExecutor(ctx);
+    const exec = new InterpretedExecutor(ctx);
     const func = ctx.ir.functions.find(f => f.id === entryPoint);
     if (!func) throw new Error(`Entry point '${entryPoint}' not found`);
 
@@ -32,13 +32,13 @@ export const CpuBackend: TestBackend = {
     }
   },
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    const ctx = await CpuBackend.createContext(ir, inputs);
-    await CpuBackend.run(ctx, entryPoint);
+    const ctx = await InterpreterBackend.createContext(ir, inputs);
+    await InterpreterBackend.run(ctx, entryPoint);
     return ctx;
   }
 };
 
-export const availableBackends = [CpuBackend];
+export const availableBackends = [InterpreterBackend];
 
 // ------------------------------------------------------------------
 // Test Helpers
@@ -85,7 +85,7 @@ export const runGraphTest = (
   nodes: any[],
   varToCheck: string,
   expectedVal: any,
-  backends: TestBackend[] = [CpuBackend]
+  backends: TestBackend[] = [InterpreterBackend]
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
@@ -122,7 +122,7 @@ export const runGraphErrorTest = (
   resources: any[] = [],
   structs: any[] = [],
   localVars: any[] = [{ id: 'res', type: 'any' }],
-  backends: TestBackend[] = [CpuBackend]
+  backends: TestBackend[] = [InterpreterBackend]
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}] - Expect Error`, async () => {
@@ -145,7 +145,7 @@ export const runParametricTest = (
   extraEdges: any[] = [],
   localVars: any[] = [{ id: 'res', type: 'any' }],
   structs: any[] = [],
-  backends: TestBackend[] = [CpuBackend]
+  backends: TestBackend[] = [InterpreterBackend]
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
@@ -160,7 +160,7 @@ export const runFullGraphTest = (
   name: string,
   ir: IRDocument,
   verify: (ctx: EvaluationContext) => void | Promise<void>,
-  backends: TestBackend[] = [CpuBackend]
+  backends: TestBackend[] = [InterpreterBackend]
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
@@ -174,7 +174,7 @@ export const runFullGraphErrorTest = (
   name: string,
   ir: IRDocument,
   expectedError: string | RegExp,
-  backends: TestBackend[] = [CpuBackend]
+  backends: TestBackend[] = [InterpreterBackend]
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}] - Expect Error`, async () => {

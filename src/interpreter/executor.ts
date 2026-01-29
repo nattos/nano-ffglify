@@ -2,7 +2,7 @@ import { IRDocument, Node, FunctionDef, Edge } from '../ir/types';
 import { EvaluationContext, RuntimeValue } from './context';
 import { OpRegistry } from './ops';
 
-export class CpuExecutor {
+export class InterpretedExecutor {
   context: EvaluationContext;
 
   constructor(context: EvaluationContext) {
