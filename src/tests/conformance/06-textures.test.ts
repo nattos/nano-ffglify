@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { availableBackends } from './test-runner';
 import { IRDocument } from '../../ir/types';
 
-describe('Compliance: Texture Sampling', () => {
+describe('Conformance: Texture Sampling', () => {
 
   const wrapModeIr: IRDocument = {
     version: '3.0.0',

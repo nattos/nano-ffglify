@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { runParametricTest, buildSimpleIR } from './test-runner';
 import { validateIR } from '../../ir/validator';
 
-describe('Compliance: Buffers', () => {
+describe('Conformance: Buffers', () => {
 
   runParametricTest('should handle Resize and Clear', [
     // 1. Write data

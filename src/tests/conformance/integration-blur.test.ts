@@ -3,7 +3,7 @@ import { availableBackends } from './test-runner';
 import { RuntimeValue } from '../../interpreter/context';
 import { IRDocument } from '../../ir/types';
 
-describe('Compliance: Integration - Precomputed Blur', () => {
+describe('Conformance: Integration - Precomputed Blur', () => {
 
   const ir: IRDocument = {
     version: '3.0.0',

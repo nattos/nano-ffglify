@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { validateIR } from '../../ir/schema';
 import { IRDocument } from '../../ir/types';
 
-describe('Compliance: Structural Logic Validation', () => {
+describe('Conformance: Structural Logic Validation', () => {
 
   const makeIR = (nodes: any[], structs: any[] = []): IRDocument => ({
     version: '3.0.0',

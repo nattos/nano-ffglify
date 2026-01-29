@@ -2,7 +2,7 @@ import { describe, expect } from 'vitest';
 import { runGraphTest } from './test-runner';
 import { validateIR } from '../../ir/schema';
 
-describe('Compliance: Type Conversion', () => {
+describe('Conformance: Type Conversion', () => {
 
 
   // ----------------------------------------------------------------

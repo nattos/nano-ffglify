@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { runGraphErrorTest, buildSimpleIR } from './test-runner';
 import { validateIR, ValidationError } from '../../ir/schema';
 
-describe('Compliance: Error Handling & Negative Tests', () => {
+describe('Conformance: Error Handling & Negative Tests', () => {
 
   const runStaticBadIR = (name: string, nodes: any[], resources: any[] = [], expectedErrorSnippet?: string) => {
     it(`[Static] ${name}`, () => {

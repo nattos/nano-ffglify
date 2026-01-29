@@ -1,7 +1,7 @@
 import { describe, expect } from 'vitest';
 import { runParametricTest } from './test-runner';
 
-describe('Compliance: Primitives and Operators', () => {
+describe('Conformance: Primitives and Operators', () => {
 
   const bufferDef = {
     id: 'b_result',

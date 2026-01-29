@@ -1,7 +1,7 @@
 import { describe, expect } from 'vitest';
 import { runParametricTest, runGraphErrorTest } from './test-runner';
 
-describe('Compliance: Structs and Arrays', () => {
+describe('Conformance: Structs and Arrays', () => {
 
   const bufferDef = {
     id: 'b_result',

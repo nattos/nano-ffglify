@@ -2,7 +2,7 @@ import { describe, expect } from 'vitest';
 import { runFullGraphTest, runFullGraphErrorTest } from './test-runner';
 import { IRDocument } from '../../ir/types';
 
-describe('Compliance: Functions', () => {
+describe('Conformance: Functions', () => {
 
   const bufferDef = {
     id: 'b_result',

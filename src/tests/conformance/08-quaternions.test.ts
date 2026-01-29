@@ -1,7 +1,7 @@
 import { describe } from 'vitest';
 import { runGraphTest } from './test-runner';
 
-describe('Compliance: Quaternions', () => {
+describe('Conformance: Quaternions', () => {
 
   runGraphTest('Quaternion Identity Multiplication', [
     { id: 'node_0', op: 'quat_identity' },

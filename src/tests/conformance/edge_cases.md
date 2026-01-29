@@ -1,6 +1,6 @@
 # IR Engine Edge Cases & Failure Modes
 
-A comprehensive list of potential edge cases to test for compliance, robustness, and stability across CPU and GPU environments.
+A comprehensive list of potential edge cases to test for conformance, robustness, and stability across CPU and GPU environments.
 
 ## 1. Type System & Static Structure
 *Compiler/Validation Level*

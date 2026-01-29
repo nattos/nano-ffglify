@@ -1,7 +1,7 @@
 import { describe, expect } from 'vitest';
 import { runParametricTest } from './test-runner';
 
-describe('Compliance: Control Flow', () => {
+describe('Conformance: Control Flow', () => {
 
   const commonResourcesResourceDef =
   {

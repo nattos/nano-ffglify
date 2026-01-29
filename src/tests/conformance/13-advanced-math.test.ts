@@ -1,7 +1,7 @@
 import { describe } from 'vitest';
 import { runGraphTest } from './test-runner';
 
-describe('Compliance: Advanced Math Ops', () => {
+describe('Conformance: Advanced Math Ops', () => {
 
 
   // ----------------------------------------------------------------

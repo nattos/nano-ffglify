@@ -1,7 +1,7 @@
 import { describe } from 'vitest';
 import { runGraphTest } from './test-runner';
 
-describe('Compliance: Matrices', () => {
+describe('Conformance: Matrices', () => {
 
   runGraphTest('Identity Matrix 3x3', [
     { id: 'op', op: 'mat_identity', size: 3 },

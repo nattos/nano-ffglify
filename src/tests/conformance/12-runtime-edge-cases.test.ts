@@ -1,7 +1,7 @@
 import { describe } from 'vitest';
 import { runGraphTest, runGraphErrorTest } from './test-runner';
 
-describe('Compliance: Runtime Edge Cases', () => {
+describe('Conformance: Runtime Edge Cases', () => {
 
   // ----------------------------------------------------------------
   // Math Limits
