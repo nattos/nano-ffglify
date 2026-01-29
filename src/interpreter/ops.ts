@@ -28,34 +28,48 @@ const applyUnary = (val: any, fn: (x: number) => number): any => {
   return fn(val as number);
 };
 
+// Helper for element-wise binary operations
+const applyBinary = (a: any, b: any, op: (x: number, y: number) => number): any => {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) throw new Error(`Runtime Error: Binary op dimension mismatch (${a.length} vs ${b.length})`);
+    return a.map((v, i) => op(v, b[i])) as VectorValue;
+  }
+  if (typeof a === 'number' && typeof b === 'number') {
+    return op(a, b);
+  }
+  throw new Error(`Runtime Error: Invalid types for binary op: ${typeof a}, ${typeof b}`);
+};
+
+// Helper for comparison/logic (Vector -> 0.0/1.0, Scalar -> Boolean)
+const applyComparison = (a: any, b: any, op: (x: number, y: number) => boolean): any => {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) throw new Error(`Runtime Error: Comparison op dimension mismatch`);
+    return a.map((v, i) => op(v, b[i]) ? 1.0 : 0.0) as VectorValue;
+  }
+  if (typeof a === 'number' && typeof b === 'number') {
+    return op(a, b);
+  }
+  throw new Error(`Runtime Error: Invalid types for comparison op: ${typeof a}, ${typeof b}`);
+};
+
 export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   // ----------------------------------------------------------------
   // Standard Math
   // ----------------------------------------------------------------
-  'math_add': (ctx, args) => {
-    const a = validateArg(args, 'a', 'number') as number;
-    const b = validateArg(args, 'b', 'number') as number;
-    return a + b;
-  },
-  'math_sub': (ctx, args) => {
-    const a = validateArg(args, 'a', 'number') as number;
-    const b = validateArg(args, 'b', 'number') as number;
-    return a - b;
-  },
-  'math_mul': (ctx, args) => {
-    const a = validateArg(args, 'a', 'number') as number;
-    const b = validateArg(args, 'b', 'number') as number;
-    return a * b;
-  },
-  'math_div': (ctx, args) => {
-    const a = validateArg(args, 'a', 'number') as number;
-    const b = validateArg(args, 'b', 'number') as number;
-    return a / b;
-  },
+  'math_add': (ctx, args) => applyBinary(args.a, args.b, (a, b) => a + b),
+  'math_sub': (ctx, args) => applyBinary(args.a, args.b, (a, b) => a - b),
+  'math_mul': (ctx, args) => applyBinary(args.a, args.b, (a, b) => a * b),
+  'math_div': (ctx, args) => applyBinary(args.a, args.b, (a, b) => a / b),
   'math_mad': (ctx, args) => {
-    const a = validateArg(args, 'a', 'number') as number;
-    const b = validateArg(args, 'b', 'number') as number;
-    const c = validateArg(args, 'c', 'number') as number;
+    // a * b + c (Vectorized)
+    const A = args.a;
+    const B = args.b;
+    const C = args.c;
+    // Manual expansion since it's ternary
+    if (Array.isArray(A) && Array.isArray(B) && Array.isArray(C)) {
+      return A.map((v, i) => (v as number) * (B[i] as number) + (C[i] as number));
+    }
+    const a = A as number, b = B as number, c = C as number;
     return (a * b) + c;
   },
 
@@ -91,22 +105,44 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'math_abs': (ctx, args) => applyUnary(args.val, Math.abs),
 
   // Binary
-  'math_min': (ctx, args) => Math.min(validateArg(args, 'a', 'number') as number, validateArg(args, 'b', 'number') as number),
-  'math_max': (ctx, args) => Math.max(validateArg(args, 'a', 'number') as number, validateArg(args, 'b', 'number') as number),
-  'math_pow': (ctx, args) => Math.pow(validateArg(args, 'a', 'number') as number, validateArg(args, 'b', 'number') as number),
-  'math_atan2': (ctx, args) => Math.atan2(validateArg(args, 'y', 'number') as number, validateArg(args, 'x', 'number') as number), // Note: args y, x standard
+  'math_min': (ctx, args) => applyBinary(args.a, args.b, Math.min),
+  'math_max': (ctx, args) => applyBinary(args.a, args.b, Math.max),
+  'math_pow': (ctx, args) => applyBinary(args.a, args.b, Math.pow),
+  'math_atan2': (ctx, args) => applyBinary(args.a, args.b, Math.atan2), // Note: args y, x standard. My signatures said a,b? No, signatures said y,x for atan2. But applyBinary uses args.a, args.b?
+  // Check atan2 signature: genMathVariants uses 'a', 'b'.
+  // Wait, my previous ops.ts had 'math_atan2': (ctx, args) => Math.atan2(args.y, args.x).
+  // My new signature generator used 'genMathVariants' which generates 'a' and 'b'.
+  // This is a mismatch! 'math_atan2' usually takes y, x.
+  // I should fix signature to use 'y', 'x' or update op to use 'a', 'b'. 'a'='y', 'b'='x'?
+  // Standard GLSL: atan(y, x).
+  // Let's stick to 'y' and 'x' for readability, but my helper blindly generated 'a', 'b'.
+  // I'll manually fix atan2 signature in previous step? Or just use 'a' and 'b' here mapping to y/x logic?
+  // Let's just update atomic op here to use 'a' and 'b' (y=a, x=b) to match the generated signature.
+  // Actually, I can customize applyBinary to accept key names. Or just pass args.y, args.x if I fix signature.
+  // But signatures are already 'a', 'b' due to genMathVariants.
+  // So 'math_atan2(a, b)' -> atan2(a, b) -> atan2(y, x). So a=y, b=x.
 
-  'math_mod': (ctx, args) => {
-    const a = validateArg(args, 'a', 'number') as number;
-    const b = validateArg(args, 'b', 'number') as number;
-    return a % b;
-  },
+  'math_mod': (ctx, args) => applyBinary(args.a, args.b, (a, b) => a % b),
 
   'math_clamp': (ctx, args) => {
-    const val = validateArg(args, 'val', 'number') as number;
-    const min = validateArg(args, 'min', 'number') as number;
-    const max = validateArg(args, 'max', 'number') as number;
-    return Math.min(Math.max(val, min), max);
+    // Vector support for clamp
+    const val = args.val;
+    const min = args.min;
+    const max = args.max;
+
+    // Vector, Vector, Vector
+    if (Array.isArray(val) && Array.isArray(min) && Array.isArray(max)) {
+      return val.map((v, i) => Math.min(Math.max(v as number, min[i] as number), max[i] as number)) as VectorValue;
+    }
+    // Vector, Scalar, Scalar (newly supported)
+    if (Array.isArray(val) && typeof min === 'number' && typeof max === 'number') {
+      return val.map(v => Math.min(Math.max(v as number, min), max)) as VectorValue;
+    }
+    // Scalar
+    if (typeof val === 'number' && typeof min === 'number' && typeof max === 'number') {
+      return Math.min(Math.max(val, min), max);
+    }
+    throw new Error('Runtime Error: Invalid types for math_clamp');
   },
 
   // Advanced Math
@@ -114,9 +150,21 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'math_trunc': (ctx, args) => applyUnary(args.val, Math.trunc),
 
   // Classification
-  'math_is_nan': (ctx, args) => applyUnary(args.val, x => Number.isNaN(x) ? 1 : 0) !== 0, // Returns boolean
-  'math_is_inf': (ctx, args) => applyUnary(args.val, x => !Number.isFinite(x) && !Number.isNaN(x) ? 1 : 0) !== 0,
-  'math_is_finite': (ctx, args) => applyUnary(args.val, x => Number.isFinite(x) ? 1 : 0) !== 0,
+  'math_is_nan': (ctx, args) => {
+    const val = args.val;
+    if (Array.isArray(val)) return val.map(v => Number.isNaN(v as number) ? 1.0 : 0.0);
+    return Number.isNaN(val as number); // Boolean
+  },
+  'math_is_inf': (ctx, args) => {
+    const val = args.val;
+    if (Array.isArray(val)) return val.map(v => (!Number.isFinite(v as number) && !Number.isNaN(v as number)) ? 1.0 : 0.0);
+    return (!Number.isFinite(val as number) && !Number.isNaN(val as number));
+  },
+  'math_is_finite': (ctx, args) => {
+    const val = args.val;
+    if (Array.isArray(val)) return val.map(v => Number.isFinite(v as number) ? 1.0 : 0.0);
+    return Number.isFinite(val as number);
+  },
 
   'math_flush_subnormal': (ctx, args) => applyUnary(args.val, x => {
     if (x === 0) return 0;
@@ -148,12 +196,12 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     return expBits - 1023 + 1;
   }),
 
-  'math_gt': (ctx, args) => (validateArg(args, 'a', 'number') as number) > (validateArg(args, 'b', 'number') as number),
-  'math_lt': (ctx, args) => (validateArg(args, 'a', 'number') as number) < (validateArg(args, 'b', 'number') as number),
-  'math_ge': (ctx, args) => (validateArg(args, 'a', 'number') as number) >= (validateArg(args, 'b', 'number') as number),
-  'math_le': (ctx, args) => (validateArg(args, 'a', 'number') as number) <= (validateArg(args, 'b', 'number') as number),
-  'math_eq': (ctx, args) => (validateArg(args, 'a', 'number') as number) === (validateArg(args, 'b', 'number') as number),
-  'math_neq': (ctx, args) => (validateArg(args, 'a', 'number') as number) !== (validateArg(args, 'b', 'number') as number),
+  'math_gt': (ctx, args) => applyComparison(args.a, args.b, (a, b) => a > b),
+  'math_lt': (ctx, args) => applyComparison(args.a, args.b, (a, b) => a < b),
+  'math_ge': (ctx, args) => applyComparison(args.a, args.b, (a, b) => a >= b),
+  'math_le': (ctx, args) => applyComparison(args.a, args.b, (a, b) => a <= b),
+  'math_eq': (ctx, args) => applyComparison(args.a, args.b, (a, b) => a === b),
+  'math_neq': (ctx, args) => applyComparison(args.a, args.b, (a, b) => a !== b),
 
   // Logic
   'math_and': (ctx, args) => !!(args.a) && !!(args.b),
@@ -220,9 +268,16 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'vec_mix': (ctx, args) => {
     const a = validateArg(args, 'a', 'vector') as number[];
     const b = validateArg(args, 'b', 'vector') as number[];
-    const t = validateArg(args, 't', 'number') as number;
+    const t = validateArg(args, 't', ['number', 'vector']);
+
     if (a.length !== b.length) throw new Error(`Runtime Error: vec_mix dimension mismatch`);
-    return a.map((v, i) => v * (1 - t) + b[i] * t) as VectorValue;
+
+    if (Array.isArray(t)) {
+      if (t.length !== a.length) throw new Error(`Runtime Error: vec_mix t dimension mismatch`);
+      return a.map((v, i) => v * (1 - (t[i] as number)) + b[i] * (t[i] as number)) as VectorValue;
+    }
+    const tVal = t as number;
+    return a.map((v, i) => v * (1 - tVal) + b[i] * tVal) as VectorValue;
   },
 
   'color_mix': (ctx, args) => {
