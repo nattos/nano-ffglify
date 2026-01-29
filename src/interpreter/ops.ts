@@ -1,3 +1,4 @@
+import { IRDocument, BuiltinOp, TextureFormat } from '../ir/types';
 import { EvaluationContext, RuntimeValue, VectorValue } from './context';
 
 export type OpHandler = (ctx: EvaluationContext, args: Record<string, RuntimeValue>) => RuntimeValue | void;
@@ -10,7 +11,7 @@ const applyUnary = (val: any, fn: (x: number) => number): any => {
   return fn(val as number);
 };
 
-export const OpRegistry: Record<string, OpHandler> = {
+export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   // ----------------------------------------------------------------
   // Standard Math
   // ----------------------------------------------------------------
@@ -74,12 +75,25 @@ export const OpRegistry: Record<string, OpHandler> = {
   },
 
   'math_gt': (ctx, args) => (args.a as number) > (args.b as number),
+  'math_lt': (ctx, args) => (args.a as number) < (args.b as number),
+  'math_ge': (ctx, args) => (args.a as number) >= (args.b as number),
+  'math_le': (ctx, args) => (args.a as number) <= (args.b as number),
+  'math_eq': (ctx, args) => (args.a as number) === (args.b as number),
+  'math_neq': (ctx, args) => (args.a as number) !== (args.b as number),
+
+  // Logic
+  'math_and': (ctx, args) => !!(args.a) && !!(args.b),
+  'math_or': (ctx, args) => !!(args.a) || !!(args.b),
+  'math_xor': (ctx, args) => !!(args.a) !== !!(args.b),
+  'math_not': (ctx, args) => !args.val,
 
   'vec_get_element': (ctx, args) => {
     const vec = args.vec as any;
     const index = args.index as number;
     return vec[index];
   },
+
+
 
   'vec_swizzle': (ctx, args) => {
     const vec = args.vec as number[];
@@ -173,7 +187,16 @@ export const OpRegistry: Record<string, OpHandler> = {
     return ctx.getLoopIndex(args.loop as string);
   },
   'func_return': (ctx, args) => {
-    return args.val; // TODO: Handle return flow in executor
+    return args.val; // Handled by executor, but returns value here for consistency
+  },
+  'call_func': (ctx, args) => {
+    // Handled by executor directly
+  },
+  'flow_branch': (ctx, args) => {
+    // Handled by executor directly
+  },
+  'flow_loop': (ctx, args) => {
+    // Handled by executor directly
   },
 
   // ----------------------------------------------------------------
@@ -187,10 +210,12 @@ export const OpRegistry: Record<string, OpHandler> = {
 
   'cmd_resize_resource': (ctx, args) => {
     const id = args.resource as string;
+    const sizeVal = args.size;
+    const format = args.format as number | undefined; // Expects enum value
+    const clearVal = args.clear; // Optional explicit clear value
 
     let newWidth = 1;
     let newHeight = 1;
-    const sizeVal = args.size;
 
     if (typeof sizeVal === 'number') {
       newWidth = sizeVal;
@@ -202,13 +227,30 @@ export const OpRegistry: Record<string, OpHandler> = {
     const res = ctx.getResource(id);
     res.width = newWidth;
     res.height = newHeight;
-    // Reset data on resize?
-    if (res.def.persistence.clearOnResize) {
-      res.data = [];
+
+    if (format !== undefined) {
+      res.def.format = format as any; // Update runtime format
     }
 
-    ctx.logAction('resize', id, { width: newWidth, height: newHeight });
+    const totalSize = newWidth * newHeight;
+
+    // Handle Clearing / Resizing Data
+    if (clearVal !== undefined) {
+      res.data = new Array(totalSize).fill(clearVal); // Re-init
+    } else if (res.def.persistence.clearOnResize) {
+      const defClear = res.def.persistence.clearValue ?? 0;
+      res.data = new Array(totalSize).fill(defClear);
+    }
+
+    ctx.logAction('resize', id, { width: newWidth, height: newHeight, format: res.def.format });
   },
+
+  'resource_get_format': (ctx, args) => {
+    const id = args.resource as string;
+    const res = ctx.getResource(id);
+    return res.def.format ?? TextureFormat.RGBA8;
+  },
+
 
   'buffer_store': (ctx, args) => {
     const id = args.buffer as string;

@@ -58,6 +58,16 @@ export type ResourceSize =
 
 export type ResourceType = 'texture2d' | 'buffer' | 'atomic_counter';
 
+export enum TextureFormat {
+  Unknown = 0,
+  RGBA8 = 1,
+  RGBA16F = 2,
+  RGBA32F = 3,
+  R8 = 4,
+  R16F = 5,
+  R32F = 6
+}
+
 export interface ResourceDef {
   id: string;
   type: ResourceType;
@@ -67,6 +77,7 @@ export interface ResourceDef {
   structType?: StructMember[]; // For custom layout buffers
 
   // For textures
+  format?: TextureFormat; // Default 'rgba8'
   sampler?: {
     filter: 'nearest' | 'linear';
     wrap: 'clamp' | 'repeat' | 'mirror';
@@ -189,7 +200,9 @@ export type BuiltinOp =
   | 'math_min' | 'math_max' | 'math_pow' | 'math_sqrt' | 'math_exp' | 'math_log'
   | 'math_sin' | 'math_cos' | 'math_tan' | 'math_asin' | 'math_acos' | 'math_atan' | 'math_atan2'
   | 'math_sinh' | 'math_cosh' | 'math_tanh' | 'math_sign'
-  | 'math_div_scalar' | 'math_gt'
+  | 'math_div_scalar'
+  | 'math_gt' | 'math_lt' | 'math_ge' | 'math_le' | 'math_eq' | 'math_neq'
+  | 'math_and' | 'math_or' | 'math_xor' | 'math_not'
   | 'math_pi' | 'math_e'
 
   // Vector & Color
@@ -208,7 +221,7 @@ export type BuiltinOp =
   // Resources
   | 'buffer_load' | 'buffer_store'
   | 'texture_sample' | 'texture_store' | 'texture_load'
-  | 'resource_get_size'
+  | 'resource_get_size' | 'resource_get_format'
 
   // Commands (Side Effects)
   | 'cmd_dispatch' | 'cmd_resize_resource';

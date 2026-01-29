@@ -180,4 +180,26 @@ describe('Compliance: Primitives and Operators', () => {
     { op: 'vec_get_element', args: { vec: [10, 20, 30], index: 1 }, expected: 20 },
   ]);
 
+  runParametricTest('Logic & Comparison', [
+    { op: 'math_lt', args: { a: 5, b: 10 }, expected: true },
+    { op: 'math_lt', args: { a: 10, b: 5 }, expected: false },
+    { op: 'math_le', args: { a: 5, b: 5 }, expected: true },
+    { op: 'math_le', args: { a: 5, b: 4 }, expected: false },
+    { op: 'math_ge', args: { a: 5, b: 5 }, expected: true },
+    { op: 'math_ge', args: { a: 4, b: 5 }, expected: false },
+    { op: 'math_eq', args: { a: 5, b: 5 }, expected: true },
+    { op: 'math_eq', args: { a: 5, b: 6 }, expected: false },
+    { op: 'math_neq', args: { a: 5, b: 6 }, expected: true },
+    { op: 'math_neq', args: { a: 5, b: 5 }, expected: false },
+    // Logical
+    { op: 'math_and', args: { a: 1, b: 1 }, expected: true },
+    { op: 'math_and', args: { a: 1, b: 0 }, expected: false },
+    { op: 'math_or', args: { a: 0, b: 1 }, expected: true },
+    { op: 'math_or', args: { a: 0, b: 0 }, expected: false },
+    { op: 'math_xor', args: { a: 1, b: 0 }, expected: true },
+    { op: 'math_xor', args: { a: 1, b: 1 }, expected: false },
+    { op: 'math_not', args: { val: 0 }, expected: true },
+    { op: 'math_not', args: { val: 1 }, expected: false },
+  ]);
+
 });

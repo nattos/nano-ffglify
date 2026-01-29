@@ -1,4 +1,4 @@
-import { IRDocument, ResourceDef, DataType, ResourceSize } from '../ir/types';
+import { IRDocument, ResourceDef, DataType, ResourceSize, TextureFormat } from '../ir/types';
 
 // ------------------------------------------------------------------
 // Runtime Values
@@ -74,11 +74,21 @@ export class EvaluationContext {
       }
 
       this.resources.set(res.id, {
-        def: res,
+        def: {
+          ...res,
+          format: res.format ?? TextureFormat.RGBA8 // Default texture format
+        },
         width,
         height,
-        data: [] // Initialize empty data
+        data: [] // Data initialized lazily or on resize
       });
+
+      // Apply clearVal if present
+      if (res.persistence.clearValue !== undefined) {
+        const r = this.resources.get(res.id)!;
+        const count = width * height;
+        r.data = new Array(count).fill(res.persistence.clearValue);
+      }
     }
 
     // Treat 'texture2d' Inputs as Resources
