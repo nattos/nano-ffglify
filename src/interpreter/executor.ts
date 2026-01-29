@@ -75,9 +75,10 @@ export class CpuExecutor {
 
       const dim: [number, number, number] = [1, 1, 1];
       if (Array.isArray(args.dispatch)) {
-        dim[0] = args.dispatch[0] || 1;
-        dim[1] = args.dispatch[1] || 1;
-        dim[2] = args.dispatch[2] || 1;
+        const d = args.dispatch as unknown as any[];
+        dim[0] = d[0] || 1;
+        dim[1] = d[1] || 1;
+        dim[2] = d[2] || 1;
       }
 
       const targetFunc = this.context.ir.functions.find(f => f.id === targetId);
@@ -130,7 +131,7 @@ export class CpuExecutor {
     }
 
     // Standard Ops
-    const handler = OpRegistry[opId];
+    const handler = OpRegistry[opId as keyof typeof OpRegistry];
     if (handler) {
       const args: Record<string, RuntimeValue> = {};
       this.mixinNodeProperties(node, args, func);
@@ -217,7 +218,7 @@ export class CpuExecutor {
     const args: Record<string, RuntimeValue> = {};
     this.mixinNodeProperties(node, args, func);
 
-    const handler = OpRegistry[node.op];
+    const handler = OpRegistry[node.op as keyof typeof OpRegistry];
     if (handler) {
       return handler(this.context, args) ?? 0;
     }

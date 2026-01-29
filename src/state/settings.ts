@@ -43,7 +43,7 @@ export class SettingsManager {
   constructor() {
     if (typeof indexedDB !== 'undefined' && DB_NAME) {
       this.dbPromise = openDB<AppDB>(DB_NAME, DB_VERSION, {
-        upgrade(db) {
+        upgrade(db: IDBPDatabase<AppDB>) {
           if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
             db.createObjectStore(SETTINGS_STORE);
           }

@@ -3,13 +3,16 @@ import { IRDocument, ResourceDef, DataType, ResourceSize, TextureFormat } from '
 // ------------------------------------------------------------------
 // Runtime Values
 // ------------------------------------------------------------------
-export type ScalarValue = number | boolean | string;
+// ------------------------------------------------------------------
+// Runtime Values
+// ------------------------------------------------------------------
 export type ScalarValue = number | boolean | string;
 export type VectorValue = number[]; // Supports vec2, vec3, vec4, mat3, mat4
 export type MatrixValue = number[]; // Alias for clarity
-export type StructValue = Record<string, RuntimeValue>;
-export type ArrayValue = RuntimeValue[];
+export type ArrayValue = (number | boolean | string | number[] | Record<string, any>)[];
 
+// Use an interface to break the circular alias cycle if needed, or simplied recursion
+export interface StructValue { [key: string]: RuntimeValue };
 export type RuntimeValue = ScalarValue | VectorValue | MatrixValue | StructValue | ArrayValue;
 
 // ------------------------------------------------------------------

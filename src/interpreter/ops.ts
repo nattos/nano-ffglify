@@ -76,7 +76,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'math_div_scalar': (ctx, args) => {
     const val = validateArg(args, 'val', ['number', 'vector']);
     const scalar = validateArg(args, 'scalar', 'number') as number;
-    if (Array.isArray(val)) return val.map((v: number) => v / scalar) as VectorValue;
+    if (Array.isArray(val)) return val.map((v: any) => v / scalar) as VectorValue;
     return (val as number) / scalar;
   },
 
@@ -636,8 +636,9 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     if (typeof sizeVal === 'number') {
       newWidth = sizeVal;
     } else if (Array.isArray(sizeVal)) {
-      newWidth = sizeVal[0];
-      newHeight = sizeVal[1] ?? 1;
+      const arr = sizeVal as any[]; // Cast to any array to access indices safely as numbers
+      newWidth = arr[0] as number;
+      newHeight = arr[1] as number ?? 1;
     }
 
     const res = ctx.getResource(id);
