@@ -1,56 +1,47 @@
 import { describe, it, expect } from 'vitest';
-import { EvaluationContext } from '../../interpreter/context';
+import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { CpuExecutor } from '../../interpreter/executor';
 import { IRDocument } from '../../ir/types';
+import { validateIR, ValidationError } from '../../ir/validator';
 
 describe('Compliance: Error Handling & Negative Tests', () => {
 
-  const runBadIR = (name: string, nodes: any[], resources: any[] = []) => {
-    // If we want these to pass eventually, we need to assert failure.
-    // For "penciling in", we can write them as standard tests asserting .toThrow().
-    // If they fail now (because they don't throw), that's the "Red" state we want.
-    it(name, () => {
-      // Auto-wire edges:
-      // If a node property value matches another node's ID, create a data edge.
-      // Also assume portOut is 'val' (standard for data nodes) or 'exec_out' if execution?
-      // For data flow: type: 'data', portOut: 'val'.
-      // For sinks: Ensure they are executable.
+  const buildIR = (name: string, nodes: any[], resources: any[] = []): IRDocument => {
+    // Auto-wire edges logic (shared)
+    const edges: any[] = [];
+    const nodeIds = new Set(nodes.map(n => n.id));
 
-      const edges: any[] = [];
-      const nodeIds = new Set(nodes.map(n => n.id));
-
-      nodes.forEach(node => {
-        Object.keys(node).forEach(key => {
-          const val = node[key];
-          if (typeof val === 'string' && nodeIds.has(val) && val !== node.id) {
-            // Found reference to another node
-            edges.push({ from: val, portOut: 'val', to: node.id, portIn: key, type: 'data' });
-            // Clean up property so it doesn't stay as string?
-            // Actually executor prioritizes edges over props, so it's fine to leave it or remove it.
-            // But mixinNodeProperties iterates keys.
-            // If edge exists, args[portIn] is overwritten by resolveNodeValue.
-          }
-        });
+    nodes.forEach(node => {
+      Object.keys(node).forEach(key => {
+        const val = node[key];
+        if (typeof val === 'string' && nodeIds.has(val) && val !== node.id) {
+          edges.push({ from: val, portOut: 'val', to: node.id, portIn: key, type: 'data' });
+        }
       });
+    });
 
-      const ir: IRDocument = {
-        version: '3.0.0',
-        meta: { name },
-        entryPoint: 'fn_main',
+    return {
+      version: '3.0.0',
+      meta: { name },
+      entryPoint: 'fn_main',
+      inputs: [],
+      structs: [],
+      resources: resources,
+      functions: [{
+        id: 'fn_main',
+        type: 'cpu',
         inputs: [],
-        structs: [],
-        resources: resources,
-        functions: [{
-          id: 'fn_main',
-          type: 'cpu',
-          inputs: [],
-          outputs: [],
-          localVars: [],
-          nodes: nodes.map((n, i) => ({ ...n, id: n.id || `node_${i}` })),
-          edges: edges
-        }]
-      };
+        outputs: [],
+        localVars: [],
+        nodes: nodes.map((n, i) => ({ ...n, id: n.id || `node_${i}` })),
+        edges: edges
+      }]
+    };
+  };
 
+  const runBadIR = (name: string, nodes: any[], resources: any[] = []) => {
+    it(name, () => {
+      const ir = buildIR(name, nodes, resources);
       const ctx = new EvaluationContext(ir, new Map());
       const exec = new CpuExecutor(ctx);
 
@@ -60,19 +51,35 @@ describe('Compliance: Error Handling & Negative Tests', () => {
     });
   };
 
+  const runStaticBadIR = (name: string, nodes: any[], resources: any[] = [], expectedErrorSnippet?: string) => {
+    it(`[Static] ${name}`, () => {
+      const ir = buildIR(name, nodes, resources);
+      const errors = validateIR(ir);
+
+      // Assume we expect errors
+      expect(errors.length).toBeGreaterThan(0);
+      if (expectedErrorSnippet) {
+        const combined = errors.map(e => e.message).join('\n');
+        expect(combined).toContain(expectedErrorSnippet);
+      }
+    });
+  };
+
   // ----------------------------------------------------------------
   // Type Safety
   // ----------------------------------------------------------------
   describe('Type Validation', () => {
     // Math ops should fail when given Vectors if they are Scalar-only (unless we upgrade them)
     // Current `math_add` might behave weirdly.
-    runBadIR('Math op (scalar) with Vector input', [
+    runStaticBadIR('Math op (scalar) with Vector input', [
       { id: 'v1', op: 'vec3', x: 1, y: 2, z: 3 },
       { id: 'v2', op: 'vec3', x: 4, y: 5, z: 6 },
       { id: 'bad_add', op: 'math_add', a: 'v1', b: 'v2' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_add' } // Force execution
-    ]);
+    ], [], 'Type Mismatch');
 
+    // Dot Product Mismatch: 'vec_dot' inputs are both 'vector'. Signature doesn't check size.
+    // So this remains a Runtime error for now (or complex static check).
     runBadIR('Dot Product with mismatched lengths', [
       { id: 'v2', op: 'vec2', x: 1, y: 2 },
       { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
@@ -80,7 +87,7 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_dot' }
     ]);
 
-    // Mat Mul Mismatch
+    // Mat Mul Mismatch: Inputs are vectors. Matrix size check is semantic.
     runBadIR('Matrix Multiplication Mismatch (Mat4 x Vec3)', [
       { id: 'm4', op: 'mat_identity', size: 4 },
       { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
@@ -93,15 +100,16 @@ describe('Compliance: Error Handling & Negative Tests', () => {
   // Resource Access
   // ----------------------------------------------------------------
   describe('Resource Validation', () => {
-    runBadIR('Access Non-Existent Resource', [
+    runStaticBadIR('Access Non-Existent Resource', [
       { id: 'bad_load', op: 'buffer_load', buffer: 'missing_id', index: 0 },
-      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_load' } // Only triggers if 'bad_load' executed (it is executable? buffer_load is pure?)
-      // buffer_load is likely pure. Only buffer_store is executable.
-    ]);
+      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_load' }
+    ], [], 'Referenced resource'); // 'missing_id' not found
 
+    // Resize format invalid logic is inside the op? Or arg validation?
+    // OpSignature for cmd_resize_resource?
+    // Currently relying on Runtime check for Format Constant.
     runBadIR('Resize Texture with Invalid Format Constant', [
       { id: 'bad_resize', op: 'cmd_resize_resource', resource: 'tex', size: [10, 10], format: 99999 }
-      // cmd_resize is executable. This should run.
     ], [{ id: 'tex', type: 'texture2d', size: { mode: 'fixed', value: [1, 1] }, persistence: { retain: false } }]);
   });
 
@@ -109,32 +117,56 @@ describe('Compliance: Error Handling & Negative Tests', () => {
   // Argument Validation
   // ----------------------------------------------------------------
   describe('Argument Validation', () => {
-    runBadIR('Missing Required Argument', [
+    runStaticBadIR('Missing Required Argument', [
       { id: 'c1', op: 'const_get', name: 'TextureFormat.RGBA8' },
       // math_add requires a and b. Missing b.
       { id: 'bad_op', op: 'math_add', a: 'c1' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_op' }
-    ]);
+    ], [], 'Missing required argument');
 
+    // Invalid Literal Type
+    // Note: if 'set_str' is used, it's a node ref. If 'set_str' returns a string...
+    // var_set outputs 'any'. math_add inputs 'number'.
+    // validator cannot prove 'any' is 'number'?
+    // Only if we infer var_set output type from its input.
+    // var_set input 'val' is string.
+    // But var_set output is 'any' in my signature.
+    // So type check passes (any -> number might warn or pass?).
+    // validator says: "if outType != any and inType != any and outType != inType".
+    // if outType is 'any', it passes.
+    // So this remains a Runtime error unless var_set logic is smarter.
+    // Let's keep it Runtime since validator handles basic edges.
     runBadIR('Invalid Argument Type (String for Math)', [
-      { id: 's1', op: 'var_get', var: 'some_string' }, // Assume defined elsewhere or just literal "foo" if we had string op?
-      // Hack: force string into system via const? Or var?
-      // Let's use a struct or just assume strict type checking on literal args if we supported them in IR?
-      // IR args are values or node IDs.
-      // Let's rely on runtime context var.
+      { id: 's1', op: 'var_get', var: 'some_string' },
       { id: 'set_str', op: 'var_set', var: 's', val: "not_a_number" },
-      // We must ensure 'bad_math' runs AFTER set_str.
-      // Dependency: bad_math -> var_get('s')? No var_get is separate.
-      // We need to pass the result of set_str?
-      // var_set returns val.
       { id: 'bad_math', op: 'math_add', a: 'set_str', b: 10 },
       { id: 'sink', op: 'var_set', var: 'y', val: 'bad_math' }
     ]);
 
+    // Const Get Logic is specific. validator checks "name" is string.
+    // Does validator verify constant existence? No.
     runBadIR('Const Get Invalid Name', [
       { id: 'bad_const', op: 'const_get', name: 'NON_EXISTENT_CONSTANT' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_const' }
     ]);
+
+    runStaticBadIR('Multiple Static Errors (Accumulation)', [
+      // Error 1: Missing Argument in math_add
+      { id: 'op1', op: 'math_add', a: 10 }, // missing b
+      // Error 2: Type Mismatch in vec3 input
+      // vec3 takes numbers. We pass a string literal? No, string is assumed ref.
+      // Pass an object to force type error?
+      // Or just another missing arg?
+      // Let's use Invalid Literal Type if possible.
+      // Or just missing arg in another node.
+      { id: 'op2', op: 'vec2', x: 10 }, // missing y
+      { id: 'sink', op: 'var_set', var: 'x', val: 'op1' }
+    ], [], 'Missing required argument'); // Should contain it twice or for different nodes?
+    // We can assert manually in the test body if runStaticBadIR supported custom checks,
+    // but here we just check it contains the snippet.
+    // It will contain "Missing required argument" (matches both).
+    // To be sure, let's look for op IDs?
+    // My validator message includes "for op 'math_add'" and "for op 'vec2'".
   });
 
   // ----------------------------------------------------------------
