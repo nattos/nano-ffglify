@@ -42,10 +42,16 @@ type ResourceSize =
 *   **Access**: Nodes OpCodes must reference resources by their `id` string (compile-time constant binding).
 *   `op_get_texture_size`: CPU reads dimensions of an input/resource texture.
 *   `cmd_resize_resource`: Resizes a 'cpu_driven' resource.
-    *   Inputs: `exec_in`, `resource_id`, `size` (int/float2/float3).
-    *   Outputs: `exec_out`. Functions that need to operate on different textures must be either:
-    1.  Duplicated/Templated (Compiler Job).
-    2.  Or simply written to access specific global resources.
+
+### Op Semantics & Quirks
+1.  **Buffer Flattening**: `buffer_store` treats the buffer as a flat array of scalars (`float[]` or `int[]`).
+    *   If a Vector is stored (e.g. `store(vec2(x,y), index=i)`), it is **flattened** into consecutive indices.
+    *   `buffer[i] = x`, `buffer[i+1] = y`.
+    *   Ensure your indexing logic accounts for vector widths (e.g. stride = 4 for `vec4`).
+2.  **Color Mixing**: `color_mix` performs **Porter-Duff Source Over** alpha composition.
+    *   Formula: `outA = srcA + dstA * (1 - srcA)`, `outRGB = (srcRGB*srcA + dstRGB*dstA*(1-srcA)) / outA`.
+    *   **Quirk**: It explicitly handles `outA < 1e-5` to avoid NaN, returning `vec4(0)` (transparent black).
+    *   Input/Output is non-premultiplied (Straight Alpha).
 
 ### Functions & Variables
 

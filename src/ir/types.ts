@@ -251,7 +251,10 @@ export type BuiltinOp =
 
   // Vector & Color
   | 'float2' | 'float3' | 'float4'
-  | 'vec_length' | 'vec_normalize' | 'vec_dot' | 'vec_mix' | 'color_mix'
+  | 'vec_length' | 'vec_normalize' | 'vec_dot' | 'vec_mix'
+  // Performs Porter-Duff "Source Over" alpha composition.
+  // Note: Handles zero-alpha without NaN (returns 0).
+  | 'color_mix'
   | 'vec_swizzle' | 'vec_get_element'
 
   // Matrix
@@ -270,6 +273,9 @@ export type BuiltinOp =
   | 'flow_branch' | 'flow_loop' | 'call_func' | 'func_return'
 
   // Resources
+  // buffer_store/load treat the buffer as a flat array of scalars (float/int).
+  // If a vector is stored, it is FLATTENED into consecutive indices.
+  // e.g. store(vec2(x,y), index=i) writes x to i, y to i+1.
   | 'buffer_load' | 'buffer_store'
   | 'texture_sample' | 'texture_store' | 'texture_load'
   | 'resource_get_size' | 'resource_get_format'

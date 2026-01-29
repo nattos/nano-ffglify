@@ -37,6 +37,15 @@ export class WgslGenerator {
       });
     }
 
+
+    lines.push('fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {');
+    lines.push('  let srcA = src.w;');
+    lines.push('  let dstA = dst.w;');
+    lines.push('  let outA = srcA + dstA * (1.0 - srcA);');
+    lines.push('  if (outA < 1e-5) { return vec4<f32>(0.0); }');
+    lines.push('  let outRGB = (src.xyz * srcA + dst.xyz * dstA * (1.0 - srcA)) / outA;');
+    lines.push('  return vec4<f32>(outRGB, outA);');
+    lines.push('}');
     lines.push('');
 
     // Function Body
@@ -117,8 +126,41 @@ export class WgslGenerator {
       const val = this.resolveArg(node, 'value', func, options);
       const bufferId = node['buffer'];
 
-      // Ensure strictly float32 array access
-      lines.push(`${indent}b_${bufferId}.data[u32(${idx})] = ${val};`);
+      // Determine value type to handle vector flattening
+      let valType = 'float';
+      const valEdge = func.edges.find(e => e.to === node.id && e.portIn === 'value');
+      if (valEdge) {
+        const srcNode = func.nodes.find(n => n.id === valEdge.from);
+        if (srcNode && srcNode.dataType) valType = srcNode.dataType;
+      }
+
+      const isVec = (t: string) => t.startsWith('vec') || t.startsWith('float') || Array.isArray(t); // simplistic check
+      // Better: check specific types
+      const width = (t: string) => {
+        if (t === 'vec2<f32>' || t === 'float2') return 2;
+        if (t === 'vec3<f32>' || t === 'float3') return 3;
+        if (t === 'vec4<f32>' || t === 'float4') return 4;
+        return 1;
+      }
+
+      const w = width(valType);
+
+      if (w > 1) {
+        // Flatten vector to float array
+        const components = ['x', 'y', 'z', 'w'];
+        // Capture value to avoid re-evaluation if expression
+        // But we can't easily make a new var inside this block without unique naming?
+        // We are inside `emitNode`. We can make a block? `{ let v = ...; }`
+        lines.push(`${indent}{`);
+        lines.push(`${indent}  let v_store = ${val};`);
+        for (let k = 0; k < w; k++) {
+          lines.push(`${indent}  b_${bufferId}.data[u32(${idx}) + ${k}u] = v_store.${components[k]};`);
+        }
+        lines.push(`${indent}}`);
+      } else {
+        // Ensure strictly float32 array access
+        lines.push(`${indent}b_${bufferId}.data[u32(${idx})] = ${val};`);
+      }
     } else {
       lines.push(`${indent}// Op: ${node.op}`);
     }
@@ -149,8 +191,7 @@ export class WgslGenerator {
     if (node.op === 'color_mix') {
       const a = this.resolveArg(node, 'a', func, options);
       const b = this.resolveArg(node, 'b', func, options);
-      const t = this.resolveArg(node, 't', func, options);
-      return `mix(${a}, ${b}, ${t})`; // WGSL mix works for vec4/vec3 color mixing
+      return `color_mix_impl(${a}, ${b})`;
     }
     // Swizzles and Element Access
     if (node.op === 'vec_swizzle') {
