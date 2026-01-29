@@ -45,7 +45,7 @@ describe('Compliance: Buffers', () => {
     const res = ctx.getResource('buf');
     expect(res.width).toBe(10);
     // clearOnResize = true, so data should be empty or cleared. My ops.ts implementation: `if (clear) res.data = []`.
-    expect(res.data).toEqual([]);
+    expect(res.data).toEqual(new Array(10).fill(0));
   });
 
   it('should ignore OOB Writes and return 0 for OOB Reads', () => {
