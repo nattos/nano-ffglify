@@ -38,7 +38,15 @@ export const InterpreterBackend: TestBackend = {
   }
 };
 
-export const availableBackends = [InterpreterBackend];
+const backends = [InterpreterBackend];
+
+export const availableBackends = process.env.TEST_BACKEND
+  ? backends.filter(b => b.name === process.env.TEST_BACKEND)
+  : backends;
+
+if (process.env.TEST_BACKEND && availableBackends.length === 0) {
+  console.warn(`[TestRunner] Warning: No backend found matching TEST_BACKEND='${process.env.TEST_BACKEND}'. Available: ${backends.map(b => b.name).join(', ')}`);
+}
 
 // ------------------------------------------------------------------
 // Test Helpers
@@ -85,7 +93,7 @@ export const runGraphTest = (
   nodes: any[],
   varToCheck: string,
   expectedVal: any,
-  backends: TestBackend[] = [InterpreterBackend]
+  backends: TestBackend[] = availableBackends
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
@@ -122,7 +130,7 @@ export const runGraphErrorTest = (
   resources: any[] = [],
   structs: any[] = [],
   localVars: any[] = [{ id: 'res', type: 'any' }],
-  backends: TestBackend[] = [InterpreterBackend]
+  backends: TestBackend[] = availableBackends
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}] - Expect Error`, async () => {
@@ -145,7 +153,7 @@ export const runParametricTest = (
   extraEdges: any[] = [],
   localVars: any[] = [{ id: 'res', type: 'any' }],
   structs: any[] = [],
-  backends: TestBackend[] = [InterpreterBackend]
+  backends: TestBackend[] = availableBackends
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
@@ -160,7 +168,7 @@ export const runFullGraphTest = (
   name: string,
   ir: IRDocument,
   verify: (ctx: EvaluationContext) => void | Promise<void>,
-  backends: TestBackend[] = [InterpreterBackend]
+  backends: TestBackend[] = availableBackends
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
@@ -174,7 +182,7 @@ export const runFullGraphErrorTest = (
   name: string,
   ir: IRDocument,
   expectedError: string | RegExp,
-  backends: TestBackend[] = [InterpreterBackend]
+  backends: TestBackend[] = availableBackends
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}] - Expect Error`, async () => {
