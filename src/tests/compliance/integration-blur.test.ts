@@ -9,9 +9,10 @@ describe('Compliance: Integration - Precomputed Blur', () => {
     const ir: IRDocument = {
       version: '3.0.0',
       meta: { name: 'Precomputed Blur' },
+      comment: 'This is a test pipeline demonstrating resize, generation, and blur phases.',
       entryPoint: 'fn_main_cpu',
       inputs: [
-        { id: 't_input', type: 'texture2d' },
+        { id: 't_input', type: 'texture2d', comment: 'Source image for blur' },
         { id: 'u_kernel_size', type: 'int', default: 16 }
       ],
       structs: [],
@@ -20,7 +21,8 @@ describe('Compliance: Integration - Precomputed Blur', () => {
           id: 't_output',
           type: 'texture2d',
           size: { mode: 'reference', ref: 't_input' },
-          persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
+          persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false },
+          comment: 'Blurred result texture'
         },
         {
           id: 'b_weights',
@@ -34,6 +36,7 @@ describe('Compliance: Integration - Precomputed Blur', () => {
         {
           id: 'fn_main_cpu',
           type: 'cpu',
+          comment: 'Main CPU Orchestrator',
           inputs: [],
           outputs: [],
           localVars: [],
@@ -42,14 +45,14 @@ describe('Compliance: Integration - Precomputed Blur', () => {
             { id: 'resize_w', op: 'cmd_resize_resource', resource: 'b_weights', size: 'u_kernel_size' },
 
             // 2. Dispatch Gen (4 Threads)
-            { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [4, 1, 1] },
+            { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [4, 1, 1], comment: 'Generate weights in parallel' },
 
             // 3. Dispatch Blur (1 Thread for test)
             { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1] }
           ],
           edges: [
             { from: 'resize_w', portOut: 'exec_out', to: 'cmd_gen', portIn: 'exec_in', type: 'execution' },
-            { from: 'cmd_gen', portOut: 'exec_out', to: 'cmd_blur', portIn: 'exec_in', type: 'execution' }
+            { from: 'cmd_gen', portOut: 'exec_out', to: 'cmd_blur', portIn: 'exec_in', type: 'execution', comment: 'Wait for Gen to finish' }
           ]
         },
         {

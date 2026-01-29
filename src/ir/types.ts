@@ -27,11 +27,13 @@ export interface IRDocument {
   resources: ResourceDef[];
   structs: StructDef[]; // Shared struct type definitions
   functions: FunctionDef[];
+  comment?: string;
 }
 
 export interface StructDef {
   id: string; // Type Name, e.g. "Particle"
   members: StructMember[];
+  comment?: string;
 }
 
 export interface Metadata {
@@ -48,6 +50,7 @@ export interface InputDef {
   id: string;
   type: DataType;
   label?: string;
+  comment?: string;
   default?: any;
   ui?: {
     min?: number;
@@ -96,6 +99,7 @@ export const TextureFormatFromId: Record<number, TextureFormat> = Object.entries
 export interface ResourceDef {
   id: string;
   type: ResourceType;
+  comment?: string;
 
   // For buffers
   dataType?: DataType;
@@ -124,6 +128,7 @@ export interface ResourceDef {
 export interface StructMember {
   name: string;
   type: DataType;
+  comment?: string;
 }
 
 // ------------------------------------------------------------------
@@ -158,6 +163,7 @@ export type FunctionType = 'cpu' | 'shader';
 export interface FunctionDef {
   id: string;
   type: FunctionType;
+  comment?: string;
 
   // Arguments & Return values
   // NOTE: For 'shader' functions, these are mostly for internal calls or stage-io.
@@ -175,12 +181,14 @@ export interface FunctionDef {
 export interface PortDef {
   id: string;
   type: DataType;
+  comment?: string;
 }
 
 export interface VariableDef {
   id: string;
   type: DataType; // Must be POD (scalar/vector/matrix)
   initialValue?: any;
+  comment?: string;
 }
 
 // ------------------------------------------------------------------
@@ -190,6 +198,7 @@ export interface Node {
   id: string;
   op: string;
   // e.g. "math_add", "cmd_dispatch", "flow_branch", "var_set"
+  comment?: string;
 
   // Static configuration/literals (not inputs)
   const_data?: any;
@@ -213,6 +222,7 @@ export interface Edge {
   to: string;      // Node ID
   portIn: string;  // "exec_in", "a", "b", etc.
   type: EdgeType;
+  comment?: string;
 }
 
 // ------------------------------------------------------------------

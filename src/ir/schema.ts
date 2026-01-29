@@ -42,6 +42,7 @@ const InputDefSchema = z.object({
   id: z.string(),
   type: DataTypeSchema,
   label: z.string().optional(),
+  comment: z.string().optional(),
   default: z.any().optional(),
   ui: z.object({
     min: z.number().optional(),
@@ -61,6 +62,7 @@ const ResourceSizeSchema = z.union([
 const ResourceDefSchema = z.object({
   id: z.string(),
   type: ResourceTypeSchema,
+  comment: z.string().optional(),
   dataType: DataTypeSchema.optional(),
   structType: z.array(z.object({ name: z.string(), type: DataTypeSchema })).optional(),
   size: ResourceSizeSchema,
@@ -78,17 +80,20 @@ const VariableDefSchema = z.object({
   id: z.string(),
   type: DataTypeSchema,
   initialValue: z.any().optional(),
+  comment: z.string().optional(),
 });
 
 const PortDefSchema = z.object({
   id: z.string(),
   type: DataTypeSchema,
+  comment: z.string().optional(),
   // description: z.string().optional(),
 });
 
 const NodeSchema = z.object({
   id: z.string(),
   op: z.string(),
+  comment: z.string().optional(),
   const_data: z.any().optional(),
   metadata: z.object({
     x: z.number(),
@@ -103,11 +108,13 @@ const EdgeSchema = z.object({
   to: z.string(),
   portIn: z.string(),
   type: EdgeTypeSchema,
+  comment: z.string().optional(),
 });
 
 const FunctionDefSchema = z.object({
   id: z.string(),
   type: FunctionTypeSchema,
+  comment: z.string().optional(),
   inputs: z.array(PortDefSchema),
   outputs: z.array(PortDefSchema),
   localVars: z.array(VariableDefSchema),
@@ -118,11 +125,13 @@ const FunctionDefSchema = z.object({
 const StructMemberSchema = z.object({
   name: z.string(),
   type: DataTypeSchema, // Can be another struct type ID, dynamic validation handles that
+  comment: z.string().optional(),
 });
 
 const StructDefSchema = z.object({
   id: z.string(),
   members: z.array(StructMemberSchema),
+  comment: z.string().optional(),
 });
 
 // Root
@@ -134,6 +143,7 @@ export const IRDocumentSchema = z.object({
   resources: z.array(ResourceDefSchema),
   structs: z.array(StructDefSchema).optional(),
   functions: z.array(FunctionDefSchema),
+  comment: z.string().optional(),
 });
 
 // ------------------------------------------------------------------
