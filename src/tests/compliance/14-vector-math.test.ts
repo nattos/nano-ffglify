@@ -1,75 +1,20 @@
-import { describe, it, expect } from 'vitest';
-import { EvaluationContext } from '../../interpreter/context';
-import { CpuExecutor } from '../../interpreter/executor';
-import { IRDocument } from '../../ir/types';
+import { describe } from 'vitest';
+import { runGraphTest } from './test-runner';
 
 describe('Compliance: Vector Math Ops', () => {
 
-  const buildIR = (name: string, nodes: any[]): IRDocument => {
-    const edges: any[] = [];
-    const nodeIds = new Set(nodes.map(n => n.id));
-    nodes.forEach(node => {
-      Object.keys(node).forEach(key => {
-        const val = node[key];
-        if (typeof val === 'string' && nodeIds.has(val) && val !== node.id) {
-          // Ensure port match for binary ops (a, b) vs old (x, y) if any
-          edges.push({ from: val, portOut: 'val', to: node.id, portIn: key, type: 'data' });
-        }
-      });
-    });
-
-    return {
-      version: '1.0.0',
-      meta: { name },
-      entryPoint: 'main',
-      inputs: [],
-      resources: [],
-      structs: [],
-      functions: [{
-        id: 'main',
-        type: 'cpu',
-        inputs: [],
-        outputs: [],
-        localVars: [{ id: 'res', type: 'any' }],
-        nodes: nodes,
-        edges: edges
-      }]
-    };
-  };
-
-  const runTest = (name: string, nodes: any[], varToCheck: string, expectedVal: any) => {
-    it(name, () => {
-      const ir = buildIR(name, nodes);
-      const ctx = new EvaluationContext(ir, new Map());
-      const exec = new CpuExecutor(ctx);
-
-      // Manually execute
-      ctx.pushFrame('test_main');
-      const func = ir.functions[0];
-      exec.executeFunction(func);
-
-      const result = ctx.getVar(varToCheck);
-
-      // Deep equal for vectors
-      if (Array.isArray(expectedVal)) {
-        expect(result).toEqual(expectedVal);
-      } else {
-        expect(result).toBeCloseTo(expectedVal as number, 5);
-      }
-    });
-  };
 
   // ----------------------------------------------------------------
   // Vector Arithmetic
   // ----------------------------------------------------------------
-  runTest('float3_add', [
+  runGraphTest('float3_add', [
     { id: 'v1', op: 'float3', x: 1, y: 2, z: 3 },
     { id: 'v2', op: 'float3', x: 4, y: 5, z: 6 },
     { id: 'op', op: 'math_add', a: 'v1', b: 'v2' },
     { id: 'sink', op: 'var_set', var: 'res', val: 'op' }
   ], 'res', [5, 7, 9]);
 
-  runTest('float2_mul', [
+  runGraphTest('float2_mul', [
     { id: 'v1', op: 'float2', x: 2, y: 3 },
     { id: 'v2', op: 'float2', x: 4, y: 5 },
     { id: 'op', op: 'math_mul', a: 'v1', b: 'v2' },
@@ -79,7 +24,7 @@ describe('Compliance: Vector Math Ops', () => {
   // ----------------------------------------------------------------
   // Vector Logic (0.0 / 1.0)
   // ----------------------------------------------------------------
-  runTest('float3_gt (Mixed Result)', [
+  runGraphTest('float3_gt (Mixed Result)', [
     { id: 'v1', op: 'float3', x: 10, y: 2, z: 5 },
     { id: 'v2', op: 'float3', x: 5, y: 2, z: 10 },
     // 10 > 5 -> 1.0
@@ -92,7 +37,7 @@ describe('Compliance: Vector Math Ops', () => {
   // ----------------------------------------------------------------
   // Vector Mix with Boolean-like Vector
   // ----------------------------------------------------------------
-  runTest('vec_mix with vec_gt', [
+  runGraphTest('vec_mix with vec_gt', [
     { id: 'red', op: 'float3', x: 1, y: 0, z: 0 },
     { id: 'blue', op: 'float3', x: 0, y: 0, z: 1 },
 
@@ -131,7 +76,7 @@ describe('Compliance: Vector Math Ops', () => {
   // ----------------------------------------------------------------
   // Vector Clamp
   // ----------------------------------------------------------------
-  runTest('float3_clamp', [
+  runGraphTest('float3_clamp', [
     { id: 'val', op: 'float3', x: -5, y: 5, z: 15 },
     { id: 'min', op: 'float3', x: 0, y: 0, z: 0 },
     { id: 'max', op: 'float3', x: 10, y: 10, z: 10 },
@@ -142,9 +87,9 @@ describe('Compliance: Vector Math Ops', () => {
   // ----------------------------------------------------------------
   // Vector IsNan
   // ----------------------------------------------------------------
-  runTest('float2_is_nan', [
+  runGraphTest('float2_is_nan', [
     { id: 'nan', op: 'math_sqrt', val: -1 }, // NaN
-    { id: 'val', op: 'float2', x: 10, y: 'nan' }, // [10, NaN] (Wait, float2 ctor with string ref? manually link?)
+    { id: 'val', op: 'float2', x: 10, y: 'nan' }, // [10, NaN] (Wait, float2 ctor with string ref? manually link?)\
     // Manual wiring needed for float2 args if not literal.
     // My buildIR assumes literals.
     // I need to use 'float2' node with inputs connected.

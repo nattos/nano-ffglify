@@ -1,7 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
-import { CpuExecutor } from '../../interpreter/executor';
-import { IRDocument } from '../../ir/types';
+import { describe, expect } from 'vitest';
+import { runParametricTest } from './test-runner';
 
 describe('Compliance: Primitives and Operators', () => {
 
@@ -18,49 +16,24 @@ describe('Compliance: Primitives and Operators', () => {
     expected: any;
   }
 
-  const runParametricTest = (suiteName: string, cases: TestCase[]) => {
-    it(suiteName, () => {
-      const nodes = cases.flatMap((c, i) => [
-        { id: `op_${i}`, op: c.op, ...c.args },
-        { id: `store_${i}`, op: 'buffer_store', buffer: 'b_result', index: i, value: `op_${i}` }
-      ]);
+  const runBatchTest = (suiteName: string, cases: TestCase[]) => {
+    // Construct Nodes
+    const nodes = cases.flatMap((c, i) => [
+      { id: `op_${i}`, op: c.op, ...c.args },
+      { id: `store_${i}`, op: 'buffer_store', buffer: 'b_result', index: i, value: `op_${i}` }
+    ]);
 
-      const edges = cases.map((c, i) => ({
-        from: `op_${i}`, portOut: 'val', to: `store_${i}`, portIn: 'value', type: 'data' as const
-      }));
-
-      // Serialize stores to ensure deterministic order (though they write to different indices)
-      const execEdges = cases.map((_, i) => {
-        if (i === 0) return null;
-        return {
-          from: `store_${i - 1}`, portOut: 'exec_out',
-          to: `store_${i}`, portIn: 'exec_in',
-          type: 'execution' as const
-        };
-      }).filter(Boolean) as any[];
-
-      const ir: IRDocument = {
-        version: '3.0.0',
-        meta: { name: suiteName },
-        entryPoint: 'fn_main',
-        inputs: [],
-        structs: [],
-        resources: [bufferDef] as any,
-        functions: [{
-          id: 'fn_main',
-          type: 'cpu',
-          inputs: [],
-          outputs: [],
-          localVars: [],
-          nodes,
-          edges: [...edges, ...execEdges]
-        }]
+    // Construct Execution Chain Edges (store_0 -> store_1 -> ...)
+    const execEdges = cases.map((_, i) => {
+      if (i === 0) return null;
+      return {
+        from: `store_${i - 1}`, portOut: 'exec_out',
+        to: `store_${i}`, portIn: 'exec_in',
+        type: 'execution'
       };
+    }).filter(Boolean) as any[];
 
-      const ctx = new EvaluationContext(ir, new Map());
-      const exec = new CpuExecutor(ctx);
-      exec.executeEntry();
-
+    runParametricTest(suiteName, nodes, (ctx) => {
       const res = ctx.getResource('b_result');
 
       cases.forEach((c, i) => {
@@ -75,14 +48,14 @@ describe('Compliance: Primitives and Operators', () => {
           } else {
             expect(val).toEqual(c.expected);
           }
-        } catch (e) {
-          throw new Error(`Test Case '${c.op}' #${i} failed.\nargs: ${JSON.stringify(c.args)}\nExpected: ${JSON.stringify(c.expected)}\nReceived: ${JSON.stringify(val)}`);
+        } catch (e: any) {
+          throw new Error(`Test Case '${c.op}' #${i} failed.\nargs: ${JSON.stringify(c.args)}\nExpected: ${JSON.stringify(c.expected)}\nReceived: ${JSON.stringify(val)}\nOriginal: ${e.message}`);
         }
       });
-    });
+    }, [bufferDef], execEdges);
   };
 
-  runParametricTest('Unary Operators', [
+  runBatchTest('Unary Operators', [
     { op: 'math_abs', args: { val: -5 }, expected: 5 },
     { op: 'math_abs', args: { val: 5 }, expected: 5 },
     { op: 'math_floor', args: { val: 5.9 }, expected: 5 },
@@ -96,7 +69,7 @@ describe('Compliance: Primitives and Operators', () => {
     { op: 'vec_normalize', args: { a: [3, 4] }, expected: [0.6, 0.8] },
   ]);
 
-  runParametricTest('Binary Operators', [
+  runBatchTest('Binary Operators', [
     { op: 'math_add', args: { a: 10, b: 20 }, expected: 30 },
     { op: 'math_sub', args: { a: 10, b: 20 }, expected: -10 },
     { op: 'math_mul', args: { a: 6, b: 7 }, expected: 42 },
@@ -110,12 +83,11 @@ describe('Compliance: Primitives and Operators', () => {
     { op: 'math_pow', args: { a: 2, b: 3 }, expected: 8 },
     { op: 'math_atan2', args: { a: 10, b: 0 }, expected: Math.PI / 2 },
     // Vector
-    // Vector
     { op: 'vec_dot', args: { a: [1, 0, 0], b: [0, 1, 0] }, expected: 0 },
     { op: 'vec_dot', args: { a: [1, 2], b: [3, 4] }, expected: 11 },
   ]);
 
-  runParametricTest('Transcendental & Constants', [
+  runBatchTest('Transcendental & Constants', [
     // Constants
     { op: 'math_pi', args: {}, expected: Math.PI },
     { op: 'math_e', args: {}, expected: Math.E },
@@ -126,7 +98,7 @@ describe('Compliance: Primitives and Operators', () => {
     { op: 'math_cos', args: { val: Math.PI }, expected: -1 },
     { op: 'math_tan', args: { val: 0 }, expected: 0 },
     // Hyperbolic
-    { op: 'math_tanh', args: { val: 0 }, expected: 0 }, // Squash function!
+    { op: 'math_tanh', args: { val: 0 }, expected: 0 }, // Squash function
     { op: 'math_tanh', args: { val: 100 }, expected: 1 },
     // Exponential / Log / Sqrt
     { op: 'math_exp', args: { val: 1 }, expected: Math.E },
@@ -141,7 +113,7 @@ describe('Compliance: Primitives and Operators', () => {
     { op: 'math_sin', args: { val: [0, Math.PI / 2] }, expected: [0, 1] }
   ]);
 
-  runParametricTest('Ternary Operators', [
+  runBatchTest('Ternary Operators', [
     { op: 'math_clamp', args: { val: 10, min: 0, max: 5 }, expected: 5 },
     { op: 'math_clamp', args: { val: -10, min: 0, max: 5 }, expected: 0 },
     { op: 'math_clamp', args: { val: 3, min: 0, max: 5 }, expected: 3 },
@@ -149,22 +121,12 @@ describe('Compliance: Primitives and Operators', () => {
     { op: 'vec_mix', args: { a: [0, 0], b: [10, 10], t: 0.5 }, expected: [5, 5] },
   ]);
 
-  runParametricTest('Color Operations', [
-    // color_mix (Back, Front) -> Blended
-    // Back: Red Opaque [1, 0, 0, 1]
-    // Front: Green 50% [0, 1, 0, 0.5]
-    // Result: [0.5, 0.5, 0, 1]
+  runBatchTest('Color Operations', [
     {
       op: 'color_mix',
       args: { a: [1, 0, 0, 1], b: [0, 1, 0, 0.5] },
       expected: [0.5, 0.5, 0, 1]
     },
-    // Back: transparent [0,0,0,0]
-    // Front: Blue 50% [0, 0, 1, 0.5]
-    // Result:
-    // Alpha = 0.5 + 0 = 0.5
-    // RGB = ( [0,0,1]*0.5 + 0 ) / 0.5 = [0, 0, 1]
-    // Result: [0, 0, 1, 0.5]
     {
       op: 'color_mix',
       args: { a: [0, 0, 0, 0], b: [0, 0, 1, 0.5] },
@@ -172,7 +134,7 @@ describe('Compliance: Primitives and Operators', () => {
     }
   ]);
 
-  runParametricTest('Constructors and Swizzles', [
+  runBatchTest('Constructors and Swizzles', [
     { op: 'float2', args: { x: 1, y: 2 }, expected: [1, 2] },
     { op: 'float3', args: { x: 1, y: 2, z: 3 }, expected: [1, 2, 3] },
     { op: 'float4', args: { x: 1, y: 2, z: 3, w: 4 }, expected: [1, 2, 3, 4] },
@@ -182,7 +144,7 @@ describe('Compliance: Primitives and Operators', () => {
     { op: 'vec_get_element', args: { vec: [10, 20, 30], index: 1 }, expected: 20 },
   ]);
 
-  runParametricTest('Logic & Comparison', [
+  runBatchTest('Logic & Comparison', [
     { op: 'math_lt', args: { a: 5, b: 10 }, expected: true },
     { op: 'math_lt', args: { a: 10, b: 5 }, expected: false },
     { op: 'math_le', args: { a: 5, b: 5 }, expected: true },

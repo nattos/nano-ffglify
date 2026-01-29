@@ -1,59 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
-import { CpuExecutor } from '../../interpreter/executor';
-import { IRDocument } from '../../ir/types';
+import { runGraphErrorTest, buildSimpleIR } from './test-runner';
 import { validateIR, ValidationError } from '../../ir/schema';
 
 describe('Compliance: Error Handling & Negative Tests', () => {
 
-  const buildIR = (name: string, nodes: any[], resources: any[] = []): IRDocument => {
-    // Auto-wire edges logic (shared)
-    const edges: any[] = [];
-    const nodeIds = new Set(nodes.map(n => n.id));
-
-    nodes.forEach(node => {
-      Object.keys(node).forEach(key => {
-        const val = node[key];
-        if (typeof val === 'string' && nodeIds.has(val) && val !== node.id) {
-          edges.push({ from: val, portOut: 'val', to: node.id, portIn: key, type: 'data' });
-        }
-      });
-    });
-
-    return {
-      version: '3.0.0',
-      meta: { name },
-      entryPoint: 'fn_main',
-      inputs: [],
-      structs: [],
-      resources: resources,
-      functions: [{
-        id: 'fn_main',
-        type: 'cpu',
-        inputs: [],
-        outputs: [],
-        localVars: [],
-        nodes: nodes.map((n, i) => ({ ...n, id: n.id || `node_${i}` })),
-        edges: edges
-      }]
-    };
-  };
-
-  const runBadIR = (name: string, nodes: any[], resources: any[] = []) => {
-    it(name, () => {
-      const ir = buildIR(name, nodes, resources);
-      const ctx = new EvaluationContext(ir, new Map());
-      const exec = new CpuExecutor(ctx);
-
-      expect(() => {
-        exec.executeEntry();
-      }).toThrow();
-    });
-  };
-
   const runStaticBadIR = (name: string, nodes: any[], resources: any[] = [], expectedErrorSnippet?: string) => {
     it(`[Static] ${name}`, () => {
-      const ir = buildIR(name, nodes, resources);
+      const ir = buildSimpleIR(name, nodes, resources);
       const result = validateIR(ir);
 
       // Assume we expect errors
@@ -64,6 +17,7 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       }
     });
   };
+
 
   // ----------------------------------------------------------------
   // Type Safety
@@ -121,9 +75,10 @@ describe('Compliance: Error Handling & Negative Tests', () => {
     // Resize format invalid logic is inside the op? Or arg validation?
     // OpSignature for cmd_resize_resource?
     // Currently relying on Runtime check for Format Constant.
-    runBadIR('Resize Texture with Invalid Format Constant', [
+    runGraphErrorTest('Resize Texture with Invalid Format Constant', [
       { id: 'bad_resize', op: 'cmd_resize_resource', resource: 'tex', size: [10, 10], format: 99999 }
-    ], [{ id: 'tex', type: 'texture2d', size: { mode: 'fixed', value: [1, 1] }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }]);
+    ], /./, // Any throws is fine
+      [{ id: 'tex', type: 'texture2d', size: { mode: 'fixed', value: [1, 1] }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }]);
   });
 
   // ----------------------------------------------------------------
@@ -207,10 +162,10 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       { id: 'loop', op: 'flow_loop', start: 0, end: 1000000 }
     ]);
 
-    runBadIR('Recursion Limit', [
-      { id: 'recurse', op: 'call_func', func: 'fn_main' },
+    runGraphErrorTest('Recursion Limit', [
+      { id: 'recurse', op: 'call_func', func: 'main' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'recurse' }
-    ]);
+    ], /Recursion/);
   });
 
 });
