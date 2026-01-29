@@ -86,7 +86,7 @@ describe('Compliance: Quaternions', () => {
       op: 'quat',
       x: 0, y: 0, z: Math.sin(Math.PI / 4), w: Math.cos(Math.PI / 4)
     },
-    { id: 'v', op: 'vec3', x: 1, y: 0, z: 0 },
+    { id: 'v', op: 'float3', x: 1, y: 0, z: 0 },
     { id: 'rot', op: 'quat_rotate', q: 'q', v: 'v' }
   ], [
     { from: 'q', portOut: 'val', to: 'rot', portIn: 'q', type: 'data' },
@@ -120,9 +120,9 @@ describe('Compliance: Quaternions', () => {
     expect(q[3]).toBeCloseTo(Math.cos(Math.PI / 8), 5);
   });
 
-  runTest('Quaternion to Mat4 (Identity)', [
+  runTest('Quaternion to float4x4 (Identity)', [
     { id: 'q', op: 'quat_identity' },
-    { id: 'm', op: 'quat_to_mat4', q: 'q' }
+    { id: 'm', op: 'quat_to_float4x4', q: 'q' }
   ], [
     { from: 'q', portOut: 'val', to: 'm', portIn: 'q', type: 'data' }
   ], (ctx) => {

@@ -42,7 +42,7 @@ type ResourceSize =
 *   **Access**: Nodes OpCodes must reference resources by their `id` string (compile-time constant binding).
 *   `op_get_texture_size`: CPU reads dimensions of an input/resource texture.
 *   `cmd_resize_resource`: Resizes a 'cpu_driven' resource.
-    *   Inputs: `exec_in`, `resource_id`, `size` (int/vec2/vec3).
+    *   Inputs: `exec_in`, `resource_id`, `size` (int/float2/float3).
     *   Outputs: `exec_out`. Functions that need to operate on different textures must be either:
     1.  Duplicated/Templated (Compiler Job).
     2.  Or simply written to access specific global resources.
@@ -55,7 +55,7 @@ type FunctionType = 'cpu' | 'shader';
 interface FunctionDef {
   id: string;
   type: FunctionType;
-  inputs: PortDef[];  // Value inputs (float, vec3, etc.) NO RESOURCES.
+  inputs: PortDef[];  // Value inputs (float, float3, etc.) NO RESOURCES.
   outputs: PortDef[]; // Value outputs.
 
   localVars: VariableDef[];
@@ -65,7 +65,7 @@ interface FunctionDef {
 
 interface VariableDef {
   id: string;
-  type: 'float'|'int'|'bool'|'vec2'|'vec3'|'vec4'|'mat4'; // POD Only
+  type: 'float'|'int'|'bool'|'float2'|'float3'|'float4'|'float4x4'; // POD Only
   initialValue?: any;
 }
 ```
@@ -132,7 +132,7 @@ interface VariableDef {
     {
       "id": "fn_blur",
       "type": "shader",
-      "localVars": [ { "id": "v_color", "type": "vec4" } ],
+      "localVars": [ { "id": "v_color", "type": "float4" } ],
       "nodes": [
         // Loop read b_weights
         { "id": "loop", "op": "flow_loop", "start": 0, "end": 16 },

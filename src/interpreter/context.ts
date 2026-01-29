@@ -7,7 +7,7 @@ import { IRDocument, ResourceDef, DataType, ResourceSize, TextureFormat } from '
 // Runtime Values
 // ------------------------------------------------------------------
 export type ScalarValue = number | boolean | string;
-export type VectorValue = number[]; // Supports vec2, vec3, vec4, mat3, mat4
+export type VectorValue = number[]; // Supports float2, float3, float4, float3x3, float4x4
 export type MatrixValue = number[]; // Alias for clarity
 export type ArrayValue = (number | boolean | string | number[] | Record<string, any>)[];
 

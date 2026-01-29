@@ -98,10 +98,10 @@ describe('Compliance: Runtime Edge Cases', () => {
     // Let's construct a singular matrix (all zeros)
     // mat_identity creates diagonal 1s
     // array_construct or manual?
-    // We don't have mat_from_array readily available as a single op except 'mat4' constructor
+    // We don't have mat_from_array readily available as a single op except 'float4x4' constructor
     // which takes 'vals' array.
     { id: 'zeros', op: 'array_construct', length: 16, fill: 0 },
-    { id: 'bad_mat', op: 'mat4', vals: 'zeros' },
+    { id: 'bad_mat', op: 'float4x4', vals: 'zeros' },
     { id: 'inv', op: 'mat_inverse', val: 'bad_mat' },
     // If fallback is 'return val', it returns zeros.
     // If fallback is Identity, it returns Identity.

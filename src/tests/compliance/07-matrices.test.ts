@@ -95,7 +95,7 @@ describe('Compliance: Matrices', () => {
     // Translate x=10, y=20, z=0
     {
       id: 'mat_trans',
-      op: 'mat4',
+      op: 'float4x4',
       vals: [
         1, 0, 0, 0,
         0, 1, 0, 0,
@@ -104,7 +104,7 @@ describe('Compliance: Matrices', () => {
       ]
     },
     // Point at Origin [0, 0, 0, 1]
-    { id: 'vec_p', op: 'vec4', x: 0, y: 0, z: 0, w: 1 },
+    { id: 'vec_p', op: 'float4', x: 0, y: 0, z: 0, w: 1 },
     // Multiply Matrix * Point
     { id: 'mul_op', op: 'mat_mul', a: 'mat_trans', b: 'vec_p' }
   ], [
@@ -129,7 +129,7 @@ describe('Compliance: Matrices', () => {
     expect(res.data?.[2]).toEqual([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
   });
 
-  runTest('Mat3 x Vec3 (Rotation Mock)', [
+  runTest('float3x3 x float3 (Rotation Mock)', [
     // 90 deg rotation around Z logic test on point [1, 0, 0] -> [0, 1, 0]
     // Rotation Matrix 3x3 Z-axis 90 deg:
     // [ 0 -1  0 ]
@@ -138,10 +138,10 @@ describe('Compliance: Matrices', () => {
     // Flattened (Col-Major): [0, 1, 0,  -1, 0, 0,  0, 0, 1]
     {
       id: 'rot_mat',
-      op: 'mat3',
+      op: 'float3x3',
       vals: [0, 1, 0, -1, 0, 0, 0, 0, 1]
     },
-    { id: 'vec_x', op: 'vec3', x: 1, y: 0, z: 0 },
+    { id: 'vec_x', op: 'float3', x: 1, y: 0, z: 0 },
     { id: 'mul_rot', op: 'mat_mul', a: 'rot_mat', b: 'vec_x' }
   ], [
     { from: 'rot_mat', portOut: 'val', to: 'mul_rot', portIn: 'a', type: 'data' },
@@ -155,12 +155,12 @@ describe('Compliance: Matrices', () => {
     expect(rotated[2]).toBeCloseTo(0, 5);
   });
 
-  runTest('Vec4 x Mat4 (Pre-multiplication)', [
+  runTest('float4 x float4x4 (Pre-multiplication)', [
     // v * M (Row vector)
     // v = [1, 2, 0, 0]
     // M = Identity
     // Result = [1, 2, 0, 0]
-    { id: 'v', op: 'vec4', x: 1, y: 2, z: 0, w: 0 },
+    { id: 'v', op: 'float4', x: 1, y: 2, z: 0, w: 0 },
     { id: 'm', op: 'mat_identity', size: 4 },
     { id: 'mul_pre', op: 'mat_mul', a: 'v', b: 'm' }
   ], [

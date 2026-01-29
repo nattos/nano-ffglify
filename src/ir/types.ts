@@ -1,7 +1,7 @@
 export type DataType =
   | 'float' | 'int' | 'bool'
-  | 'vec2' | 'vec3' | 'vec4'
-  | 'mat3' | 'mat4'
+  | 'float2' | 'float3' | 'float4'
+  | 'float3x3' | 'float4x4'
   | 'string' // logic only, usually
   | 'texture2d' // resource handle
   | 'sampler'
@@ -9,8 +9,8 @@ export type DataType =
 
 export const PRIMITIVE_TYPES = [
   'float', 'int', 'bool',
-  'vec2', 'vec3', 'vec4',
-  'mat3', 'mat4',
+  'float2', 'float3', 'float4',
+  'float3x3', 'float4x4',
   'string',
   'texture2d',
   'sampler'
@@ -240,16 +240,16 @@ export type BuiltinOp =
   | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
 
   // Vector & Color
-  | 'vec2' | 'vec3' | 'vec4'
+  | 'float2' | 'float3' | 'float4'
   | 'vec_length' | 'vec_normalize' | 'vec_dot' | 'vec_mix' | 'color_mix'
   | 'vec_swizzle' | 'vec_get_element'
 
   // Matrix
-  | 'mat3' | 'mat4'
+  | 'float3x3' | 'float4x4'
   | 'mat_identity' | 'mat_mul' | 'mat_transpose' | 'mat_inverse'
 
   // Quaternion
-  | 'quat' | 'quat_identity' | 'quat_mul' | 'quat_slerp' | 'quat_to_mat4' | 'quat_rotate'
+  | 'quat' | 'quat_identity' | 'quat_mul' | 'quat_slerp' | 'quat_to_float4x4' | 'quat_rotate'
 
   // Variables & Data
   | 'var_get' | 'var_set' | 'const_get' | 'loop_index'

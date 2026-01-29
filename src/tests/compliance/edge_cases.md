@@ -7,23 +7,23 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
 
 ### Dimensionality
 ### 9. Swizzling
-- [STATIC CHECKED] `vec2.z` (accessing component out of bounds) -> **Static Error** `Swizzle component 'z' out of bounds for vec2`
-- [STATIC CHECKED] `vec4.xyzwq` (too many components) -> **Static Error** `Invalid swizzle mask length`
-- [STATIC CHECKED] `vec3.x` (scalar output type inference) -> Works (returns `number`), downstream type check catches if used incorrectly.
-- [STATIC CHECKED] `vec2.xy` (vector output) -> Works (returns `vec2`).
+- [STATIC CHECKED] `float2.z` (accessing component out of bounds) -> **Static Error** `Swizzle component 'z' out of bounds for float2`
+- [STATIC CHECKED] `float4.xyzwq` (too many components) -> **Static Error** `Invalid swizzle mask length`
+- [STATIC CHECKED] `float3.x` (scalar output type inference) -> Works (returns `number`), downstream type check catches if used incorrectly.
+- [STATIC CHECKED] `float2.xy` (vector output) -> Works (returns `float2`).
 
 ### 10. Constructors
-- [STATIC CHECKED] `vec2(1)` (missing arg) -> **Static Error** `Missing required argument 'y'`
-- [STATIC CHECKED] `vec2(1, 2, 3)` (extra arg) -> **Static Error** `Unknown argument(s) 'z'`
+- [STATIC CHECKED] `float2(1)` (missing arg) -> **Static Error** `Missing required argument 'y'`
+- [STATIC CHECKED] `float2(1, 2, 3)` (extra arg) -> **Static Error** `Unknown argument(s) 'z'`
 
 ### 11. Structs
 - [STATIC CHECKED] Recursive struct (A contains B, B contains A) -> **Static Error** `Recursive struct definition detected`
 - [STATIC CHECKED] `struct_extract` on non-struct type -> **Static Error** `Type Mismatch`
-- **What if...** a matrix constructor (`mat4`) is provided with too few or too many arguments?
-- **What if...** we access a matrix column index that is out of bounds (e.g., `col[4]` on `mat4`)?
+- **What if...** a matrix constructor (`float4x4`) is provided with too few or too many arguments?
+- **What if...** we access a matrix column index that is out of bounds (e.g., `col[4]` on `float4x4`)?
 - [STATIC CHECKED] **What if...** we attempt math operations on incompatible types (Scalar vs Vector)? (Verified in `09-errors.test.ts`)
 - [STATIC CHECKED] **What if...** we use `vec_dot` on vectors of mismatched lengths? (Verified in `09-errors.test.ts`)
-- [STATIC CHECKED] **What if...** we use `mat_mul` on mismatched dimensions (Mat4 x Vec3)? (Verified in `09-errors.test.ts`)
+- [STATIC CHECKED] **What if...** we use `mat_mul` on mismatched dimensions (float4x4 x float3)? (Verified in `09-errors.test.ts`)
 
 ### Structs & Composition
 - [STATIC CHECKED] Recursive struct definition -> **Static Error** `Recursive struct definition detected`
@@ -35,9 +35,9 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
 - [STATIC CHECKED] **What if...** a node input arg is missing (e.g. `math_add` missing `b`)? (Verified in `09-errors.test.ts` - Undefined behavior)
 - [STATIC CHECKED] **What if...** a node input arg is of the wrong type (e.g. `string` for `math`)? (Verified in `09-errors.test.ts` - Silent fail)
 - [STATIC CHECKED] **What if...** a node input port is left unconnected with no default value? -> **Static Error** `Unconnected input port`
-- [STATIC CHECKED] **What if...** we connect a `float` output to a `vec3` input? -> **Static Error** `Type Mismatch` (No implicit broadcast). User must use `vec3(f, f, f)`.
-- [STATIC CHECKED] **What if...** we connect a `vec3` output to a `float` input? -> **Static Error** `Type Mismatch` (No implicit truncation). User must use swizzle/extract `vec3.x`.
-- [STATIC CHECKED] **What if...** we try to `vec_mix` vectors of different lengths? (e.g., `vec3` and `vec4`) -> **Static Error** `Type Mismatch`.
+- [STATIC CHECKED] **What if...** we connect a `float` output to a `float3` input? -> **Static Error** `Type Mismatch` (No implicit broadcast). User must use `float3(f, f, f)`.
+- [STATIC CHECKED] **What if...** we connect a `float3` output to a `float` input? -> **Static Error** `Type Mismatch` (No implicit truncation). User must use swizzle/extract `float3.x`.
+- [STATIC CHECKED] **What if...** we try to `vec_mix` vectors of different lengths? (e.g., `float3` and `float4`) -> **Static Error** `Type Mismatch`.
 - [STATIC CHECKED] **What if...** we try to convert `int` to `float` (or vice versa)? -> **Static Error** `Type Mismatch`. User must use `static_cast_float` or `static_cast_int`.
 
 ## 2. Runtime Math & Numerics

@@ -73,39 +73,39 @@ describe('Compliance: Error Handling & Negative Tests', () => {
     // Current `math_add` might behave weirdly.
     // Math ops should fail when given mismatched types (e.g. Vec + Scalar, if no broadcast)
     runStaticBadIR('Math op mismatch (Vec + Scalar)', [
-      { id: 'v1', op: 'vec3', x: 1, y: 2, z: 3 },
-      { id: 'bad_add', op: 'math_add', a: 'v1', b: 10 }, // signatures.ts doesn't allow (vec3, number)
+      { id: 'v1', op: 'float3', x: 1, y: 2, z: 3 },
+      { id: 'bad_add', op: 'math_add', a: 'v1', b: 10 }, // signatures.ts doesn't allow (float3, number)
     ], [], 'Type Mismatch');
 
     // Dot Product Mismatch: 'vec_dot' inputs are both 'vector'. Signature checks specific types.
     runStaticBadIR('Dot Product with mismatched lengths', [
-      { id: 'v2', op: 'vec2', x: 1, y: 2 },
-      { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
+      { id: 'v2', op: 'float2', x: 1, y: 2 },
+      { id: 'v3', op: 'float3', x: 1, y: 2, z: 3 },
       { id: 'bad_dot', op: 'vec_dot', a: 'v2', b: 'v3' },
-    ], [], 'Type Mismatch'); // Expected vec2, got vec3 or similar
+    ], [], 'Type Mismatch'); // Expected float2, got float3 or similar
 
     // Mat Mul Mismatch
-    runStaticBadIR('Matrix Multiplication Mismatch (Mat4 x Vec3)', [
-      { id: 'm4', op: 'mat_identity', size: 4 }, // mat4
-      { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
+    runStaticBadIR('Matrix Multiplication Mismatch (float4x4 x float3)', [
+      { id: 'm4', op: 'mat_identity', size: 4 }, // float4x4
+      { id: 'v3', op: 'float3', x: 1, y: 2, z: 3 },
       { id: 'bad_mul', op: 'mat_mul', a: 'm4', b: 'v3' },
     ], [], 'Type Mismatch');
 
     // Strict Coercion Tests (No Implicit Casting)
-    runStaticBadIR('Implicit Broadcast (Float -> Vec3)', [
+    runStaticBadIR('Implicit Broadcast (Float -> float3)', [
       { id: 'f1', op: 'math_add', a: 1, b: 2 }, // returns number
-      // vec_dot expects vec3, vec3. We pass a number.
+      // vec_dot expects float3, float3. We pass a number.
       // Or simply explicit casting?
-      // Let's force a connection to a vec3 input.
-      // vec3 constructor takes x,y,z (numbers).
-      // vec_dot takes vec3.
-      { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
-      { id: 'bad_dot', op: 'vec_dot', a: 'f1', b: 'v3' }, // a is number, b is vec3.
+      // Let's force a connection to a float3 input.
+      // float3 constructor takes x,y,z (numbers).
+      // vec_dot takes float3.
+      { id: 'v3', op: 'float3', x: 1, y: 2, z: 3 },
+      { id: 'bad_dot', op: 'vec_dot', a: 'f1', b: 'v3' }, // a is number, b is float3.
     ], [], 'Type Mismatch');
 
-    runStaticBadIR('Implicit Truncation (Vec3 -> Float)', [
-      { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
-      // math_add expects number. We pass vec3.
+    runStaticBadIR('Implicit Truncation (float3 -> Float)', [
+      { id: 'v3', op: 'float3', x: 1, y: 2, z: 3 },
+      // math_add expects number. We pass float3.
       { id: 'bad_add', op: 'math_add', a: 'v3', b: 10 },
     ], [], 'Type Mismatch');
   });
@@ -139,14 +139,14 @@ describe('Compliance: Error Handling & Negative Tests', () => {
 
     // Invalid Literal Type
     // Note: if 'set_str' is used, it's a node ref. If 'set_str' returns a string...
-    // var_set outputs 'any'. math_add inputs 'number'.
-    // validator cannot prove 'any' is 'number'?
+    // var_set outputs 'any'. math_add inputs 'float'.
+    // validator cannot prove 'any' is 'float'?
     // Only if we infer var_set output type from its input.
     runStaticBadIR('Invalid Argument Type (String for Math)', [
       { id: 's1', op: 'var_get', var: 'some_string' },
       { id: 'set_str', op: 'var_set', var: 's', val: "not_a_number" },
       { id: 'bad_math', op: 'math_add', a: 'set_str', b: 10 },
-    ], [], 'Type Mismatch'); // var_set output is 'string', math_add expects 'number'
+    ], [], 'Type Mismatch'); // var_set output is 'string', math_add expects 'float'
 
     runStaticBadIR('Const Get Invalid Name', [
       { id: 'bad_const', op: 'const_get', name: 'NON_EXISTENT_CONSTANT' },
@@ -155,19 +155,19 @@ describe('Compliance: Error Handling & Negative Tests', () => {
     runStaticBadIR('Multiple Static Errors (Accumulation)', [
       // Error 1: Missing Argument in math_add
       { id: 'op1', op: 'math_add', a: 10 }, // missing b
-      // Error 2: Type Mismatch in vec3 input
-      // vec3 takes numbers. We pass a string literal? No, string is assumed ref.
+      // Error 2: Type Mismatch in float3 input
+      // float3 takes numbers. We pass a string literal? No, string is assumed ref.
       // Pass an object to force type error?
       // Or just another missing arg?
       // Let's use Invalid Literal Type if possible.
       // Or just missing arg in another node.
-      { id: 'op2', op: 'vec2', x: 10 }, // missing y
+      { id: 'op2', op: 'float2', x: 10 }, // missing y
     ], [], 'Missing required argument'); // Should contain it twice or for different nodes?
     // We can assert manually in the test body if runStaticBadIR supported custom checks,
     // but here we just check it contains the snippet.
     // It will contain "Missing required argument" (matches both).
     // To be sure, let's look for op IDs?
-    // My validator message includes "for op 'math_add'" and "for op 'vec2'".
+    // My validator message includes "for op 'math_add'" and "for op 'float2'".
   });
 
   // ----------------------------------------------------------------
@@ -175,7 +175,7 @@ describe('Compliance: Error Handling & Negative Tests', () => {
   // ----------------------------------------------------------------
   describe('Structure & Logic Validation', () => {
     runStaticBadIR('Struct Extract from Non-Struct', [
-      { id: 'scalar', op: 'vec2', x: 1, y: 2 }, // Vector, not Struct
+      { id: 'scalar', op: 'float2', x: 1, y: 2 }, // Vector, not Struct
       { id: 'bad_extract', op: 'struct_extract', struct: 'scalar', key: 'x' },
     ], [], 'Type Mismatch');
 

@@ -7,7 +7,7 @@ We will build a CPU-side reference interpreter to "run" the IR. This will not ex
 ### 1. Interpreter Core (`src/interpreter/`)
 
 #### [NEW] [context.ts](file:///Users/nattos/Code/nano-ffglify/src/interpreter/context.ts)
--   `RuntimeValue`: Union of supported runtime types (number, vec4, etc.).
+-   `RuntimeValue`: Union of supported runtime types (number, float4, etc.).
 -   `ActionLog`: A simple array to record side-effects (e.g., `{ type: 'dispatch', func: 'fn_blur' }`).
 -   `EvaluationContext`: Holds:
     -   `ir`: The full document.

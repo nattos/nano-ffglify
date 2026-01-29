@@ -19,7 +19,7 @@ describe('Compliance: Structs and Arrays', () => {
       entryPoint: 'fn_main',
       inputs: [],
       structs: [
-        { id: 'Particle', members: [{ name: 'pos', type: 'vec2' }, { name: 'vel', type: 'vec2' }] }
+        { id: 'Particle', members: [{ name: 'pos', type: 'float2' }, { name: 'vel', type: 'float2' }] }
       ],
       resources: [bufferDef] as any,
       functions: [{
@@ -30,14 +30,14 @@ describe('Compliance: Structs and Arrays', () => {
         localVars: [],
         nodes: [
           // 1. Construct { pos: [1,2], vel: [0,0] }
-          { id: 'v1', op: 'vec2', x: 1, y: 2 },
-          { id: 'v2', op: 'vec2', x: 0, y: 0 },
+          { id: 'v1', op: 'float2', x: 1, y: 2 },
+          { id: 'v2', op: 'float2', x: 0, y: 0 },
           { id: 's1', op: 'struct_construct', type: 'Particle', pos: 'v1', vel: 'v2' },
 
           // 2. Extract 'pos'
           { id: 'pos', op: 'struct_extract', struct: 's1', field: 'pos' },
 
-          // 3. Extract 'x' from pos (checking vec2)
+          // 3. Extract 'x' from pos (checking float2)
           { id: 'x', op: 'vec_get_element', vec: 'pos', index: 0 },
 
           // 4. Store
@@ -130,8 +130,8 @@ describe('Compliance: Structs and Arrays', () => {
       entryPoint: 'fn_main',
       inputs: [],
       structs: [
-        { id: 'Vec2', members: [{ name: 'x', type: 'float' }, { name: 'y', type: 'float' }] },
-        { id: 'Transform', members: [{ name: 'pos', type: 'Vec2' }, { name: 'scale', type: 'Vec2' }] }
+        { id: 'float2', members: [{ name: 'x', type: 'float' }, { name: 'y', type: 'float' }] },
+        { id: 'Transform', members: [{ name: 'pos', type: 'float2' }, { name: 'scale', type: 'float2' }] }
       ],
       resources: [bufferDef] as any,
       functions: [{
@@ -142,8 +142,8 @@ describe('Compliance: Structs and Arrays', () => {
         localVars: [],
         nodes: [
           // 1. Create inner structs
-          { id: 'v_pos', op: 'struct_construct', type: 'Vec2', x: 10, y: 20 },
-          { id: 'v_scale', op: 'struct_construct', type: 'Vec2', x: 2, y: 2 },
+          { id: 'v_pos', op: 'struct_construct', type: 'float2', x: 10, y: 20 },
+          { id: 'v_scale', op: 'struct_construct', type: 'float2', x: 2, y: 2 },
 
           // 2. Create outer struct
           { id: 't1', op: 'struct_construct', type: 'Transform', pos: 'v_pos', scale: 'v_scale' },

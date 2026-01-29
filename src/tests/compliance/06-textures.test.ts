@@ -47,7 +47,7 @@ describe('Compliance: Texture Sampling', () => {
           localVars: [],
           nodes: [
             // Sample at (1.5, 0.5). With Repeat -> (0.5, 0.5) -> Index 3 (White)
-            { id: 'uv', op: 'vec2', x: 1.5, y: 0.5 },
+            { id: 'uv', op: 'float2', x: 1.5, y: 0.5 },
             { id: 'sample', op: 'texture_sample', tex: 't_src', uv: 'uv' },
             { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'sample' }
           ],
@@ -117,7 +117,7 @@ describe('Compliance: Texture Sampling', () => {
           localVars: [],
           nodes: [
             // Sample at (-0.5, 0.5) -> Clamp to (0.0, 0.5) -> Index 2 (Blue)
-            { id: 'uv', op: 'vec2', x: -0.5, y: 0.5 },
+            { id: 'uv', op: 'float2', x: -0.5, y: 0.5 },
             { id: 'sample', op: 'texture_sample', tex: 't_src', uv: 'uv' },
             { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'sample' }
           ],

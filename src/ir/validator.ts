@@ -79,14 +79,14 @@ const resolveNodeType = (
     const val = node[key];
     if (val !== undefined) {
       if (Array.isArray(val)) {
-        if (val.length === 2) inputTypes[key] = 'vec2';
-        else if (val.length === 3) inputTypes[key] = 'vec3';
-        else if (val.length === 4) inputTypes[key] = 'vec4';
-        else if (val.length === 9) inputTypes[key] = 'mat3';
-        else if (val.length === 16) inputTypes[key] = 'mat4';
+        if (val.length === 2) inputTypes[key] = 'float2';
+        else if (val.length === 3) inputTypes[key] = 'float3';
+        else if (val.length === 4) inputTypes[key] = 'float4';
+        else if (val.length === 9) inputTypes[key] = 'float3x3';
+        else if (val.length === 16) inputTypes[key] = 'float4x4';
         else inputTypes[key] = 'array';
       } else if (typeof val === 'number') {
-        inputTypes[key] = 'number';
+        inputTypes[key] = 'float';
       } else if (typeof val === 'boolean') {
         inputTypes[key] = 'boolean';
       } else if (typeof val === 'string') {
@@ -114,8 +114,8 @@ const resolveNodeType = (
       }
 
       if (argType !== 'any' && providedType !== 'any' && argType !== providedType) {
-        if ((argType === 'number' && providedType === 'int') ||
-          (argType === 'int' && providedType === 'number')) continue;
+        if ((argType === 'float' && providedType === 'int') ||
+          (argType === 'int' && providedType === 'float')) continue;
         match = false;
         break;
       }
@@ -158,9 +158,9 @@ const resolveNodeType = (
       }
 
       let maxComp = 0;
-      if (inputType === 'vec2') maxComp = 2;
-      else if (inputType === 'vec3') maxComp = 3;
-      else if (inputType === 'vec4') maxComp = 4;
+      if (inputType === 'float2') maxComp = 2;
+      else if (inputType === 'float3') maxComp = 3;
+      else if (inputType === 'float4') maxComp = 4;
 
       if (maxComp > 0) {
         for (const char of mask) {
@@ -174,7 +174,7 @@ const resolveNodeType = (
             }
           }
         }
-        const outType = mask.length === 1 ? 'number' : `vec${mask.length}` as ValidationType;
+        const outType = mask.length === 1 ? 'float' : `float${mask.length}` as ValidationType;
         cache.set(nodeId, outType);
         return outType;
       }
@@ -193,8 +193,8 @@ const resolveNodeType = (
   for (const [argName, argType] of Object.entries(refSig.inputs)) {
     const providedType = inputTypes[argName];
     if (providedType && argType !== 'any' && providedType !== 'any' && argType !== providedType) {
-      if ((argType === 'number' && providedType === 'int') ||
-        (argType === 'int' && providedType === 'number')) continue;
+      if ((argType === 'float' && providedType === 'int') ||
+        (argType === 'int' && providedType === 'float')) continue;
       errors.push({ nodeId, message: `Type Mismatch at '${argName}': expected ${argType}, got ${providedType}`, severity: 'error' });
     }
   }

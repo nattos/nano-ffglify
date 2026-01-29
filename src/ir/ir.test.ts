@@ -96,7 +96,7 @@ describe('IR Validation', () => {
           type: 'shader',
           inputs: [],
           outputs: [],
-          localVars: [{ id: 'v_color', type: 'vec4' }],
+          localVars: [{ id: 'v_color', type: 'float4' }],
           nodes: [
             { id: 'loop', op: 'flow_loop', start: 0, end: 16 },
             { id: 'idx', op: 'loop_index', loop: 'loop' },

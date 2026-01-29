@@ -25,7 +25,7 @@ describe('Compliance: Structural Logic Validation', () => {
   describe('Vector Swizzling', () => {
     it('should validate correct swizzles', () => {
       const ir = makeIR([
-        { id: 'v2', op: 'vec2', x: 1, y: 2 },
+        { id: 'v2', op: 'float2', x: 1, y: 2 },
         { id: 'swiz', op: 'vec_swizzle', val: 'v2', mask: 'yx' },
         { id: 'swiz_scalar', op: 'vec_swizzle', val: 'v2', mask: 'x' }
       ]);
@@ -35,7 +35,7 @@ describe('Compliance: Structural Logic Validation', () => {
 
     it('should fail on invalid mask length', () => {
       const ir = makeIR([
-        { id: 'v2', op: 'vec2', x: 1, y: 2 },
+        { id: 'v2', op: 'float2', x: 1, y: 2 },
         { id: 'swiz', op: 'vec_swizzle', val: 'v2', mask: 'xyzzz' } // 5 chars
       ]);
       const result = validateIR(ir);
@@ -47,7 +47,7 @@ describe('Compliance: Structural Logic Validation', () => {
 
     it('should fail on invalid mask characters', () => {
       const ir = makeIR([
-        { id: 'v2', op: 'vec2', x: 1, y: 2 },
+        { id: 'v2', op: 'float2', x: 1, y: 2 },
         { id: 'swiz', op: 'vec_swizzle', val: 'v2', mask: 'xq' } // 'q' is invalid
       ]);
       const result = validateIR(ir);
@@ -59,14 +59,14 @@ describe('Compliance: Structural Logic Validation', () => {
 
     it('should fail on out-of-bounds component access', () => {
       const ir = makeIR([
-        { id: 'v2', op: 'vec2', x: 1, y: 2 },
-        // 'z' is index 2, vec2 has size 2 (indices 0,1)
+        { id: 'v2', op: 'float2', x: 1, y: 2 },
+        // 'z' is index 2, float2 has size 2 (indices 0,1)
         { id: 'swiz', op: 'vec_swizzle', val: 'v2', mask: 'xz' }
       ]);
       const result = validateIR(ir);
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.errors[0].message).toContain("Swizzle component 'z' out of bounds for vec2");
+        expect(result.errors[0].message).toContain("Swizzle component 'z' out of bounds for float2");
       }
     });
   });
@@ -74,8 +74,8 @@ describe('Compliance: Structural Logic Validation', () => {
   describe('Constructor Arity', () => {
     it('should fail on extra/unknown arguments', () => {
       const ir = makeIR([
-        // vec2 takes x, y. 'z' is extra.
-        { id: 'v2', op: 'vec2', x: 1, y: 2, z: 3 }
+        // float2 takes x, y. 'z' is extra.
+        { id: 'v2', op: 'float2', x: 1, y: 2, z: 3 }
       ]);
       const result = validateIR(ir);
       expect(result.success).toBe(false);
@@ -86,7 +86,7 @@ describe('Compliance: Structural Logic Validation', () => {
 
     it('should fail on missing arguments', () => {
       const ir = makeIR([
-        { id: 'v2', op: 'vec2', x: 1 } // missing y
+        { id: 'v2', op: 'float2', x: 1 } // missing y
       ]);
       const result = validateIR(ir);
       expect(result.success).toBe(false);
@@ -151,7 +151,7 @@ describe('Compliance: Structural Logic Validation', () => {
     it('should detect duplicate struct IDs', () => {
       const ir = makeIR([], [
         { id: 'MyStruct', members: [{ name: 'a', type: 'float' }] },
-        { id: 'MyStruct', members: [{ name: 'b', type: 'vec2' }] }
+        { id: 'MyStruct', members: [{ name: 'b', type: 'float2' }] }
       ]);
       const result = validateIR(ir);
       expect(result.success).toBe(false);

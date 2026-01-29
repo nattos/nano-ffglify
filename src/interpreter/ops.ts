@@ -286,7 +286,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     const dst = args.a as number[]; // [r, g, b, a]
     const src = args.b as number[]; // [r, g, b, a]
 
-    // Default alpha to 1.0 if missing (e.g. vec3)
+    // Default alpha to 1.0 if missing (e.g. float3)
     const srcA = src[3] ?? 1.0;
     const dstA = dst[3] ?? 1.0;
 
@@ -308,32 +308,32 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     ] as VectorValue;
   },
 
-  'vec2': (ctx, args) => {
+  'float2': (ctx, args) => {
     return [args.x, args.y] as VectorValue;
   },
 
-  'vec3': (ctx, args) => {
+  'float3': (ctx, args) => {
     return [args.x, args.y, args.z] as VectorValue;
   },
 
-  'vec4': (ctx, args) => {
+  'float4': (ctx, args) => {
     return [args.x, args.y, args.z, args.w] as VectorValue;
   },
 
   // ----------------------------------------------------------------
   // Matrix Operations (Column Major)
   // ----------------------------------------------------------------
-  'mat3': (ctx, args) => {
+  'float3x3': (ctx, args) => {
     // 3 args (vectors) or 9 args (scalars)
-    // Simplified: expects 'cols' array of 3 vec3s or 'vals' array of 9 numbers
+    // Simplified: expects 'cols' array of 3 float3s or 'vals' array of 9 numbers
     // Fallback: 9 scalars c0r0, c0r1...
     if (Array.isArray(args.cols)) return (args.cols as any).flat();
     if (Array.isArray(args.vals)) return args.vals as VectorValue;
     return new Array(9).fill(0) as VectorValue;
   },
 
-  'mat4': (ctx, args) => {
-    // Expects 'cols' (4 vec4s) or 'vals' (16 numbers)
+  'float4x4': (ctx, args) => {
+    // Expects 'cols' (4 float4s) or 'vals' (16 numbers)
     if (Array.isArray(args.cols)) return (args.cols as any).flat();
     if (Array.isArray(args.vals)) return args.vals as VectorValue;
     return new Array(16).fill(0) as VectorValue;
@@ -384,10 +384,10 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     const a = validateArg(args, 'a', 'vector') as number[];
     const b = validateArg(args, 'b', 'vector') as number[];
 
-    const isMat4 = (v: number[]) => v.length === 16;
-    const isMat3 = (v: number[]) => v.length === 9;
-    const isVec4 = (v: number[]) => v.length === 4;
-    const isVec3 = (v: number[]) => v.length === 3;
+    const isfloat4x4 = (v: number[]) => v.length === 16;
+    const isfloat3x3 = (v: number[]) => v.length === 9;
+    const isfloat4 = (v: number[]) => v.length === 4;
+    const isfloat3 = (v: number[]) => v.length === 3;
 
     // Helper: Column-Major Matrix Multiply
     const mulMat = (A: number[], B: number[], dim: number) => {
@@ -433,15 +433,15 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     };
 
     // Dispatch
-    if (isMat4(a) && isMat4(b)) return mulMat(a, b, 4) as VectorValue;
-    if (isMat3(a) && isMat3(b)) return mulMat(a, b, 3) as VectorValue;
+    if (isfloat4x4(a) && isfloat4x4(b)) return mulMat(a, b, 4) as VectorValue;
+    if (isfloat3x3(a) && isfloat3x3(b)) return mulMat(a, b, 3) as VectorValue;
 
-    if (isMat4(a) && isVec4(b)) return mulMatVec(a, b, 4) as VectorValue;
-    if (isMat3(a) && isVec3(b)) return mulMatVec(a, b, 3) as VectorValue;
+    if (isfloat4x4(a) && isfloat4(b)) return mulMatVec(a, b, 4) as VectorValue;
+    if (isfloat3x3(a) && isfloat3(b)) return mulMatVec(a, b, 3) as VectorValue;
 
-    if (isVec4(a) && isMat4(b)) return mulVecMat(a, b, 4) as VectorValue;
-    if (isVec4(a) && isMat4(b)) return mulVecMat(a, b, 4) as VectorValue;
-    if (isVec3(a) && isMat3(b)) return mulVecMat(a, b, 3) as VectorValue;
+    if (isfloat4(a) && isfloat4x4(b)) return mulVecMat(a, b, 4) as VectorValue;
+    if (isfloat4(a) && isfloat4x4(b)) return mulVecMat(a, b, 4) as VectorValue;
+    if (isfloat3(a) && isfloat3x3(b)) return mulVecMat(a, b, 3) as VectorValue;
 
     throw new Error(`Runtime Error: mat_mul dimension mismatch or invalid types (ALen: ${a.length}, BLen: ${b.length})`);
   },
@@ -519,11 +519,11 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     ] as VectorValue;
   },
 
-  'quat_to_mat4': (ctx, args) => {
+  'quat_to_float4x4': (ctx, args) => {
     const q = args.q as number[];
     const x = q[0], y = q[1], z = q[2], w = q[3];
 
-    // Normalized check? Assuming input is normalized for mat4 conversion usually.
+    // Normalized check? Assuming input is normalized for float4x4 conversion usually.
     const x2 = x + x, y2 = y + y, z2 = z + z;
     const xx = x * x2, xy = x * y2, xz = x * z2;
     const yy = y * y2, yz = y * z2, zz = z * z2;
@@ -539,7 +539,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
 
   'quat_rotate': (ctx, args) => {
     const q = args.q as number[];
-    const v = args.v as number[]; // vec3 expected
+    const v = args.v as number[]; // float3 expected
 
     const qx = q[0], qy = q[1], qz = q[2], qw = q[3];
     const vx = v[0], vy = v[1], vz = v[2];

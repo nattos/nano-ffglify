@@ -86,10 +86,10 @@ describe('Compliance: Integration - Precomputed Blur', () => {
             { id: 'th_id', op: 'var_get', var: 'GlobalInvocationID' },
             { id: 'x', op: 'vec_get_element', vec: 'th_id', index: 0 },
             { id: 'y', op: 'vec_get_element', vec: 'th_id', index: 1 },
-            { id: 'coords', op: 'vec2', x: 'x', y: 'y' },
+            { id: 'coords', op: 'float2', x: 'x', y: 'y' },
 
             { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 2 }, // Should be 20
-            { id: 'color', op: 'vec4', x: 'w_val', y: 0, z: 0, w: 1 },
+            { id: 'color', op: 'float4', x: 'w_val', y: 0, z: 0, w: 1 },
 
             { id: 'store', op: 'texture_store', tex: 't_output', coords: 'coords', value: 'color' }
           ],

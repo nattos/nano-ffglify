@@ -173,9 +173,9 @@ describe('Compliance: Primitives and Operators', () => {
   ]);
 
   runParametricTest('Constructors and Swizzles', [
-    { op: 'vec2', args: { x: 1, y: 2 }, expected: [1, 2] },
-    { op: 'vec3', args: { x: 1, y: 2, z: 3 }, expected: [1, 2, 3] },
-    { op: 'vec4', args: { x: 1, y: 2, z: 3, w: 4 }, expected: [1, 2, 3, 4] },
+    { op: 'float2', args: { x: 1, y: 2 }, expected: [1, 2] },
+    { op: 'float3', args: { x: 1, y: 2, z: 3 }, expected: [1, 2, 3] },
+    { op: 'float4', args: { x: 1, y: 2, z: 3, w: 4 }, expected: [1, 2, 3, 4] },
     { op: 'vec_swizzle', args: { vec: [1, 2, 3, 4], channels: 'x' }, expected: 1 },
     { op: 'vec_swizzle', args: { vec: [1, 2, 3, 4], channels: 'wzyx' }, expected: [4, 3, 2, 1] },
     { op: 'vec_swizzle', args: { vec: [1, 2], channels: 'yxy' }, expected: [2, 1, 2] },
