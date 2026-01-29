@@ -11,19 +11,19 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
 - **What if...** we try to `vec_mix` vectors of different lengths? (e.g., `vec3` and `vec4`)
 - **What if...** a matrix constructor (`mat4`) is provided with too few or too many arguments?
 - **What if...** we access a matrix column index that is out of bounds (e.g., `col[4]` on `mat4`)?
-- [FAILED] **What if...** we attempt math operations on incompatible types (Scalar vs Vector)? (Verified in `09-errors.test.ts`)
-- [FAILED] **What if...** we use `vec_dot` on vectors of mismatched lengths? (Verified in `09-errors.test.ts`)
-- [FAILED] **What if...** we use `mat_mul` on mismatched dimensions (Mat4 x Vec3)? (Verified in `09-errors.test.ts`)
+- [STATIC CHECKED] **What if...** we attempt math operations on incompatible types (Scalar vs Vector)? (Verified in `09-errors.test.ts`)
+- [STATIC CHECKED] **What if...** we use `vec_dot` on vectors of mismatched lengths? (Verified in `09-errors.test.ts`)
+- [STATIC CHECKED] **What if...** we use `mat_mul` on mismatched dimensions (Mat4 x Vec3)? (Verified in `09-errors.test.ts`)
 
 ### Structs & Composition
 - **What if...** we define a struct that recursively contains itself? (Infinite size)
 - **What if...** two structs share the same `id` but have different member definitions?
-- [FAILED] **What if...** we use `struct_extract` on a key that doesn't exist (or on a non-struct)? (Verified in `09-errors.test.ts`)
+- [STATIC CHECKED] **What if...** we use `struct_extract` on a key that doesn't exist (or on a non-struct)? (Verified in `09-errors.test.ts`)
 - **What if...** we `struct_construct` with missing fields? Does it zero-init or fail?
 
 ### Functions & Signals
-- [FAILED] **What if...** a node input arg is missing (e.g. `math_add` missing `b`)? (Verified in `09-errors.test.ts` - Undefined behavior)
-- [FAILED] **What if...** a node input arg is of the wrong type (e.g. `string` for `math`)? (Verified in `09-errors.test.ts` - Silent fail)
+- [STATIC CHECKED] **What if...** a node input arg is missing (e.g. `math_add` missing `b`)? (Verified in `09-errors.test.ts` - Undefined behavior)
+- [STATIC CHECKED] **What if...** a node input arg is of the wrong type (e.g. `string` for `math`)? (Verified in `09-errors.test.ts` - Silent fail)
 - **What if...** a node input port is left unconnected with no default value?
 - **What if...** we connect a `float` output to a `vec3` input? (Implicit cast vs Error)
 - **What if...** we connect a `vec3` output to a `float` input? (Truncation vs Error)
@@ -36,7 +36,7 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
   - *CPU:* `Infinity`
   - *GPU:* Undefined/Infinity/Zero depending on driver.
 - **What if...** we divide by a variable that happens to be zero at runtime?
-- [FAILED] **What if...** we calculate `math_sqrt(-1)`? (Currently returns NaN, should error/warn?)
+- [RUNTIME CHECKED] **What if...** we calculate `math_sqrt(-1)`? (Currently returns NaN, should error/warn?)
 - **What if...** we calculate `math_log(0)` or `math_log(-1)`?
 - **What if...** we compute `math_pow(negative, fractional)`?
 
@@ -55,12 +55,14 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
 - **What if...** we sample a texture that has size `0x0`?
 - **What if...** we sample a texture that hasn't been written to yet? (Uninitialized data)
 - **What if...** we fetch a texel (`texture_load`) with integer coordinates outside `[0, width-1]`?
-- [FAILED] **What if...** we `cmd_resize_resource` on a missing resource ID? (Verified in `09-errors.test.ts`)
+- [STATIC CHECKED] **What if...** we `cmd_resize_resource` on a missing resource ID? (Verified in `09-errors.test.ts`)
+- [STATIC CHECKED] **What if...** we `cmd_resize_resource` with invalid format constant? (Verified in `09-errors.test.ts`)
 - **What if...** we `cmd_resize_resource` with negative dimensions?
 
 ### Buffers
-- [FAILED] **What if...** we `buffer_store` at a negative index? (Verified in `09-errors.test.ts` - Silent ignore/JS array prop)
-- **What if...** we `buffer_store` at an index far beyond the current size? (Sparse array on CPU? OOB write on GPU?)
+- [STATIC CHECKED] **What if...** we `buffer_store` at a negative index? (Verified in `09-errors.test.ts`)
+- [STATIC CHECKED] **What if...** we `buffer_store` at a literal index beyond fixed size? (Verified in `09-errors.test.ts`)
+- [RUNTIME CHECKED] **What if...** we `buffer_store` at a dynamic index OOB? (Verified in `03-buffers.test.ts` as Runtime Error)
 - **What if...** `buffer_load` reads an index OOB? (Returns 0 or garbage?)
 - **What if...** we write to the same buffer index multiple times in one dispatch? (Race condition)
 

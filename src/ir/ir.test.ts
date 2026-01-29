@@ -10,6 +10,7 @@ describe('IR Validation', () => {
       entryPoint: 'fn_main',
       inputs: [],
       resources: [],
+      structs: [],
       functions: [
         {
           id: 'fn_main',
@@ -57,6 +58,7 @@ describe('IR Validation', () => {
           persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
         }
       ],
+      structs: [],
       functions: [
         {
           id: 'fn_main_cpu',
@@ -136,6 +138,7 @@ describe('IR Validation', () => {
       entryPoint: 'fn_main',
       inputs: [],
       resources: [],
+      structs: [],
       functions: [
         {
           id: 'fn_main',
@@ -157,6 +160,187 @@ describe('IR Validation', () => {
     if (!result.success) {
       const error = result.errors.find(e => e.message.includes('references unknown resource \'t_missing\''));
       expect(error).toBeDefined();
+    }
+  });
+
+  it('should detect Duplicate Node IDs', () => {
+    const invalid: IRDocument = {
+      version: '3.0.0',
+      meta: { name: 'Dup Node' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      resources: [],
+      structs: [],
+      functions: [{
+        id: 'fn_main',
+        type: 'cpu',
+        inputs: [],
+        outputs: [],
+        localVars: [],
+        edges: [],
+        nodes: [
+          { id: 'n1', op: 'math_add' },
+          { id: 'n1', op: 'math_sub' } // Duplicate
+        ]
+      }]
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const err = result.errors.find(e => e.message.includes("Duplicate Node ID 'n1'"));
+      expect(err).toBeDefined();
+      expect(err?.path).toContain('nodes');
+      expect(err?.path).toContain('1'); // Index of duplicate
+    }
+  });
+
+  it('should detect Duplicate Resource IDs', () => {
+    const invalid: any = {
+      version: '3.0.0',
+      meta: { name: 'Dup Res' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      resources: [
+        { id: 'res1', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } },
+        { id: 'res1', type: 'texture2d', size: { mode: 'fixed', value: [1, 1] }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
+      ],
+      functions: [{
+        id: 'fn_main',
+        type: 'cpu',
+        inputs: [],
+        outputs: [],
+        localVars: [],
+        nodes: [],
+        edges: []
+      }]
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const err = result.errors.find(e => e.message.includes("Duplicate Resource ID 'res1'"));
+      expect(err).toBeDefined();
+      // Path check
+      expect(err?.path[0]).toBe('resources');
+      expect(err?.path[2]).toBe('id');
+    }
+  });
+
+  it('should detect Duplicate Function IDs', () => {
+    const invalid: IRDocument = {
+      version: '3.0.0',
+      meta: { name: 'Dup Func' },
+      entryPoint: 'fn_1',
+      inputs: [],
+      resources: [],
+      structs: [],
+      functions: [
+        { id: 'fn_1', type: 'cpu', inputs: [], outputs: [], localVars: [], nodes: [], edges: [] },
+        { id: 'fn_1', type: 'shader', inputs: [], outputs: [], localVars: [], nodes: [], edges: [] }
+      ]
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const err = result.errors.find(e => e.message.includes("Duplicate Function ID 'fn_1'"));
+      expect(err).toBeDefined();
+      expect(err?.path[0]).toBe('functions');
+    }
+  });
+});
+
+describe('Zod Schema Validation (Structural)', () => {
+  it('should fail on missing required fields', () => {
+    // Missing 'entryPoint'
+    const invalid: any = {
+      version: '3.0.0',
+      meta: { name: 'Missing Entry' },
+      // entryPoint missing
+      inputs: [],
+      resources: [],
+      structs: [],
+      functions: []
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const err = result.errors.find(e => e.path.includes('entryPoint') && e.code === 'invalid_type'); // distinct from custom semantic checks
+      // actually Zod reports 'required' as invalid_type usually or specific code?
+      // Zod 'required' check usually gives message "Required" and code "invalid_type".
+      expect(err).toBeDefined();
+    }
+  });
+
+  it('should fail on invalid property types', () => {
+    const invalid: any = {
+      version: 123, // Should be string
+      meta: { name: 'Bad Version' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      resources: [],
+      structs: [],
+      functions: []
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const err = result.errors.find(e => e.path.includes('version'));
+      expect(err).toBeDefined();
+      expect(err?.message.toLowerCase()).toContain('expected string');
+    }
+  });
+
+  it('should fail on invalid enum values', () => {
+    const invalid: any = {
+      version: '3.0.0',
+      meta: { name: 'Bad Enum' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      resources: [
+        {
+          id: 'res1',
+          type: 'not_a_valid_type', // Invalid Enum
+          size: { mode: 'fixed', value: 10 },
+          persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false }
+        }
+      ],
+      structs: [],
+      functions: []
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const err = result.errors.find(e => e.path.includes('resources') && e.path.includes('type'));
+      expect(err).toBeDefined();
+      expect(err?.message.toLowerCase()).toContain("expected one of"); // Zod terminology for enum
+    }
+  });
+
+  it('should fail on malformed union types (Resource Size)', () => {
+    const invalid: any = {
+      version: '3.0.0',
+      meta: { name: 'Bad Size' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      resources: [
+        {
+          id: 'res1',
+          type: 'buffer',
+          // mode 'fixed' requires 'value'
+          size: { mode: 'fixed' },
+          persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false }
+        }
+      ],
+      structs: [],
+      functions: []
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // Zod union errors are sometimes verbose, reporting issues for each union option.
+      // But typically it says "Invalid input" or specific missing field if it matches closest.
+      // Since 'mode' is 'fixed', it likely tries to match the 'fixed' object schema and fails on missing 'value'.
+      const err = result.errors.find(e => e.path.includes('resources') && e.path.includes('size'));
+      expect(err).toBeDefined();
     }
   });
 });

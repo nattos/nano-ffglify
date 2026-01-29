@@ -136,7 +136,7 @@ export function validateIR(json: unknown): ValidationResult {
 
   // 1. Structural Validation (Zod)
   if (!result.success) {
-    const errors: ValidationError[] = result.error.errors.map(err => ({
+    const errors: ValidationError[] = result.error.issues.map(err => ({
       path: err.path.map(String),
       message: err.message,
       code: err.code
@@ -149,10 +149,49 @@ export function validateIR(json: unknown): ValidationResult {
 
   // 2. Semantic Validation
 
-  // Indexing Context
-  const functionIds = new Set(doc.functions.map(f => f.id));
-  const resourceIds = new Set(doc.resources.map(r => r.id));
-  const inputIds = new Set(doc.inputs.map(i => i.id));
+  // 2. Semantic Validation
+
+  // Indexing Context & Global Duplicates Check
+  const functionIds = new Set<string>();
+  const resourceIds = new Set<string>();
+  const inputIds = new Set<string>();
+
+  // Check Duplicates: Inputs
+  doc.inputs.forEach((i, idx) => {
+    if (inputIds.has(i.id)) {
+      semanticErrors.push({
+        path: ['inputs', idx.toString(), 'id'],
+        message: `Duplicate Input ID '${i.id}'.`,
+        code: 'semantic_error'
+      });
+    }
+    inputIds.add(i.id);
+  });
+
+  // Check Duplicates: Resources
+  doc.resources.forEach((r, idx) => {
+    if (resourceIds.has(r.id)) {
+      semanticErrors.push({
+        path: ['resources', idx.toString(), 'id'],
+        message: `Duplicate Resource ID '${r.id}'.`,
+        code: 'semantic_error'
+      });
+    }
+    resourceIds.add(r.id);
+  });
+
+  // Check Duplicates: Functions
+  doc.functions.forEach((f, idx) => {
+    if (functionIds.has(f.id)) {
+      semanticErrors.push({
+        path: ['functions', idx.toString(), 'id'],
+        message: `Duplicate Function ID '${f.id}'.`,
+        code: 'semantic_error'
+      });
+    }
+    functionIds.add(f.id);
+  });
+
   const allGlobalIds = new Set([...resourceIds, ...inputIds]);
 
   // A. Check Entry Point
