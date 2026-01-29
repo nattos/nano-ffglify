@@ -1,4 +1,4 @@
-import { IRDocument, BuiltinOp, TextureFormat } from '../ir/types';
+import { IRDocument, BuiltinOp, TextureFormat, TextureFormatValues, TextureFormatFromId } from '../ir/types';
 import { EvaluationContext, RuntimeValue, VectorValue } from './context';
 
 export type OpHandler = (ctx: EvaluationContext, args: Record<string, RuntimeValue>) => RuntimeValue | void;
@@ -172,6 +172,9 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   // ----------------------------------------------------------------
   // Variables & Flow State
   // ----------------------------------------------------------------
+  // ----------------------------------------------------------------
+  // Variables & Flow State
+  // ----------------------------------------------------------------
   'var_set': (ctx, args) => {
     ctx.setVar(args.var as string, args.val);
     return args.val; // Pass-through
@@ -182,6 +185,37 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
       throw new Error(`Runtime Error: Variable '${args.var}' is not defined (uninitialized)`);
     }
     return val;
+  },
+  'const_get': (ctx, args) => {
+    const name = args.name as string;
+    // Registry of Constants
+    if (name.startsWith('TextureFormat.')) {
+      const key = name.split('.')[1] as keyof typeof TextureFormatValues;
+      // Look up in TextureFormatValues if key exists (Note: key should be the Enum Key 'RGBA8', not value 'rgba8')
+      // Wait, TextureFormat enum keys are RGBA8, values are 'rgba8'.
+      // IR types: TextureFormatValues[TextureFormat.RGBA8] = 1.
+      // So if I pass 'TextureFormat.RGBA8', I want 1.
+      // How do I lookup?
+      // const fmt = TextureFormat[key];
+      // if (fmt) return TextureFormatValues[fmt];
+
+      // Simpler: Just map generic names to IDs? Or precise names?
+      // Let's support 'TextureFormat.rgba8' (matching enum value) or 'TextureFormat.RGBA8' (matching enum key)?
+      // User said "fixed... mapping of string to runtime integer constant".
+      // Let's assume input matches the Enum Key for consistency with C++/GPU macros.
+      // Actually, my Enum Keys match the upper case names.
+      // So 'TextureFormat.RGBA8' -> TextureFormat.RGBA8 ('rgba8') -> TextureFormatValues[...] -> 1
+
+      // Let's try to find it in TextureFormatValues by traversing?
+      // Actually TextureFormatValues uses Enum Values as keys.
+      // So first map Name (RGBA8) -> Enum Value ('rgba8').
+
+      const enumVal = (TextureFormat as any)[key];
+      if (enumVal && typeof enumVal === 'string') {
+        return TextureFormatValues[enumVal as TextureFormat];
+      }
+    }
+    return 0;
   },
   'loop_index': (ctx, args) => {
     return ctx.getLoopIndex(args.loop as string);
@@ -207,12 +241,11 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     const res = ctx.getResource(id);
     return [res.width, res.height] as VectorValue;
   },
-
   'cmd_resize_resource': (ctx, args) => {
     const id = args.resource as string;
     const sizeVal = args.size;
-    const format = args.format as number | undefined; // Expects enum value
-    const clearVal = args.clear; // Optional explicit clear value
+    const formatArg = args.format; // UnTyped check
+    const clearVal = args.clear;
 
     let newWidth = 1;
     let newHeight = 1;
@@ -228,8 +261,16 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     res.width = newWidth;
     res.height = newHeight;
 
-    if (format !== undefined) {
-      res.def.format = format as any; // Update runtime format
+    // Format Handling: Hybrid String/Int
+    if (formatArg !== undefined) {
+      if (typeof formatArg === 'number') {
+        // Int -> String for Def
+        const strFmt = TextureFormatFromId[formatArg];
+        if (strFmt) res.def.format = strFmt;
+      } else if (typeof formatArg === 'string') {
+        // String -> String
+        res.def.format = formatArg as TextureFormat;
+      }
     }
 
     const totalSize = newWidth * newHeight;
@@ -248,7 +289,8 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'resource_get_format': (ctx, args) => {
     const id = args.resource as string;
     const res = ctx.getResource(id);
-    return res.def.format ?? TextureFormat.RGBA8;
+    const fmt = res.def.format ?? TextureFormat.RGBA8; // Returns string enum
+    return TextureFormatValues[fmt]; // Returns int ID
   },
 
 

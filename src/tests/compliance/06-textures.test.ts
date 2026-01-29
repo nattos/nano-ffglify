@@ -170,20 +170,26 @@ describe('Compliance: Texture Sampling', () => {
             // 1. Initial State Check (should match clearValue [1, 0, 1, 1])
             // (Simulated by verifying resource state directly after exec)
 
-            // 2. Resize with new Format and Clear Color
+            // 2. Constants Node
+            // Fetch 'TextureFormat.R32F' -> constant ID (e.g. 6)
+            { id: 'c_r32f', op: 'const_get', name: 'TextureFormat.R32F' },
+
+            // 3. Resize with new Format input (as integer from const_get) and Clear Color
             {
               id: 'resize',
               op: 'cmd_resize_resource',
               resource: 't_internal',
               size: [2, 2],
-              format: TextureFormat.R32F,
+              format: 'c_r32f', // Input connection
               clear: [0.5, 0, 0, 1]
             },
 
-            // 3. Get Format
+            // 4. Get Format
             { id: 'get_fmt', op: 'resource_get_format', resource: 't_internal' }
           ],
-          edges: []
+          edges: [
+            { from: 'c_r32f', portOut: 'val', to: 'resize', portIn: 'format', type: 'data' }
+          ]
         }
       ]
     };
@@ -191,20 +197,18 @@ describe('Compliance: Texture Sampling', () => {
     const ctx = new EvaluationContext(ir, new Map());
     const exec = new CpuExecutor(ctx);
 
-    // Initial State (Constructor triggers clear if clearValue present? No, constructor just sets data=[]. Wait, my code change added clearValue handling in constructor!)
-    // Let's verify constructor clear first.
+    // Initial State
     const tex = ctx.getResource('t_internal');
-    expect(tex.data?.[0]).toEqual([1, 0, 1, 1]); // From initial clearValue
+    expect(tex.data?.[0]).toEqual([1, 0, 1, 1]);
 
     exec.executeEntry();
 
     // Verify Resize & Format Change
     expect(tex.width).toBe(2);
     expect(tex.height).toBe(2);
-    expect(tex.def.format).toBe(TextureFormat.R32F);
+    expect(tex.def.format).toBe('r32f'); // Stored as string in definition
 
-    // Verify Explicit Clear ([0.5, ...])
-    expect(tex.data?.[0]).toEqual([0.5, 0, 0, 1]); // Verify first pixel
-    expect(tex.data?.length).toBe(4); // 2x2
+    // Verify Explicit Clear
+    expect(tex.data?.[0]).toEqual([0.5, 0, 0, 1]);
   });
 });

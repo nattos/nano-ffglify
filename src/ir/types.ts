@@ -59,14 +59,30 @@ export type ResourceSize =
 export type ResourceType = 'texture2d' | 'buffer' | 'atomic_counter';
 
 export enum TextureFormat {
-  Unknown = 0,
-  RGBA8 = 1,
-  RGBA16F = 2,
-  RGBA32F = 3,
-  R8 = 4,
-  R16F = 5,
-  R32F = 6
+  Unknown = 'unknown',
+  RGBA8 = 'rgba8',
+  RGBA16F = 'rgba16f',
+  RGBA32F = 'rgba32f',
+  R8 = 'r8',
+  R16F = 'r16f',
+  R32F = 'r32f'
 }
+
+export const TextureFormatValues: Record<TextureFormat, number> = {
+  [TextureFormat.Unknown]: 0,
+  [TextureFormat.RGBA8]: 1,
+  [TextureFormat.RGBA16F]: 2,
+  [TextureFormat.RGBA32F]: 3,
+  [TextureFormat.R8]: 4,
+  [TextureFormat.R16F]: 5,
+  [TextureFormat.R32F]: 6
+};
+
+// Reverse mapping for looking up format string from integer
+export const TextureFormatFromId: Record<number, TextureFormat> = Object.entries(TextureFormatValues).reduce((acc, [k, v]) => {
+  acc[v] = k as TextureFormat;
+  return acc;
+}, {} as Record<number, TextureFormat>);
 
 export interface ResourceDef {
   id: string;
@@ -211,7 +227,7 @@ export type BuiltinOp =
   | 'vec_swizzle' | 'vec_get_element'
 
   // Variables & Data
-  | 'var_get' | 'var_set' | 'loop_index'
+  | 'var_get' | 'var_set' | 'const_get' | 'loop_index'
   | 'struct_construct' | 'struct_extract'
   | 'array_construct' | 'array_extract' | 'array_set' | 'array_length'
 
