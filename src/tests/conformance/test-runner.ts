@@ -40,7 +40,9 @@ export const InterpreterBackend: TestBackend = {
   }
 };
 
-const backends = [InterpreterBackend, WebGpuBackend];
+import { ComputeTestBackend } from './compute-test-backend';
+
+const backends = [InterpreterBackend, WebGpuBackend, ComputeTestBackend];
 
 export const availableBackends = process.env.TEST_BACKEND
   ? backends.filter(b => b.name === process.env.TEST_BACKEND)
