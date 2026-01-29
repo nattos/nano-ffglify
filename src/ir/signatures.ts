@@ -61,7 +61,14 @@ const UNARY_OPS: BuiltinOp[] = [
 ];
 
 // Helper to merge
-const signatures: Partial<Record<BuiltinOp, OpSignature[]>> = {};
+const signatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
+  'math_div_scalar': [
+    { inputs: { val: 'number', scalar: 'number' }, output: 'number' },
+    { inputs: { val: 'vec2', scalar: 'number' }, output: 'vec2' },
+    { inputs: { val: 'vec3', scalar: 'number' }, output: 'vec3' },
+    { inputs: { val: 'vec4', scalar: 'number' }, output: 'vec4' },
+  ],
+};
 
 MATH_OPS.forEach(op => signatures[op] = genMathVariants(op, 'same'));
 LOGIC_OPS.forEach(op => signatures[op] = genMathVariants(op, 'boolean_vec'));

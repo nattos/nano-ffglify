@@ -71,11 +71,10 @@ describe('Compliance: Error Handling & Negative Tests', () => {
   describe('Type Validation', () => {
     // Math ops should fail when given Vectors if they are Scalar-only (unless we upgrade them)
     // Current `math_add` might behave weirdly.
-    runStaticBadIR('Math op (scalar) with Vector input', [
+    // Math ops should fail when given mismatched types (e.g. Vec + Scalar, if no broadcast)
+    runStaticBadIR('Math op mismatch (Vec + Scalar)', [
       { id: 'v1', op: 'vec3', x: 1, y: 2, z: 3 },
-      { id: 'v2', op: 'vec3', x: 4, y: 5, z: 6 },
-      { id: 'bad_add', op: 'math_add', a: 'v1', b: 'v2' },
-      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_add' } // Force execution
+      { id: 'bad_add', op: 'math_add', a: 'v1', b: 10 }, // signatures.ts doesn't allow (vec3, number)
     ], [], 'Type Mismatch');
 
     // Dot Product Mismatch: 'vec_dot' inputs are both 'vector'. Signature checks specific types.
@@ -83,7 +82,6 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       { id: 'v2', op: 'vec2', x: 1, y: 2 },
       { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
       { id: 'bad_dot', op: 'vec_dot', a: 'v2', b: 'v3' },
-      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_dot' }
     ], [], 'Type Mismatch'); // Expected vec2, got vec3 or similar
 
     // Mat Mul Mismatch
@@ -91,7 +89,6 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       { id: 'm4', op: 'mat_identity', size: 4 }, // mat4
       { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
       { id: 'bad_mul', op: 'mat_mul', a: 'm4', b: 'v3' },
-      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_mul' }
     ], [], 'Type Mismatch');
 
     // Strict Coercion Tests (No Implicit Casting)
@@ -104,14 +101,12 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       // vec_dot takes vec3.
       { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
       { id: 'bad_dot', op: 'vec_dot', a: 'f1', b: 'v3' }, // a is number, b is vec3.
-      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_dot' }
     ], [], 'Type Mismatch');
 
     runStaticBadIR('Implicit Truncation (Vec3 -> Float)', [
       { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
       // math_add expects number. We pass vec3.
       { id: 'bad_add', op: 'math_add', a: 'v3', b: 10 },
-      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_add' }
     ], [], 'Type Mismatch');
   });
 
@@ -121,7 +116,6 @@ describe('Compliance: Error Handling & Negative Tests', () => {
   describe('Resource Validation', () => {
     runStaticBadIR('Access Non-Existent Resource', [
       { id: 'bad_load', op: 'buffer_load', buffer: 'missing_id', index: 0 },
-      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_load' }
     ], [], 'Referenced resource'); // 'missing_id' not found
 
     // Resize format invalid logic is inside the op? Or arg validation?
@@ -152,12 +146,10 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       { id: 's1', op: 'var_get', var: 'some_string' },
       { id: 'set_str', op: 'var_set', var: 's', val: "not_a_number" },
       { id: 'bad_math', op: 'math_add', a: 'set_str', b: 10 },
-      { id: 'sink', op: 'var_set', var: 'y', val: 'bad_math' }
     ], [], 'Type Mismatch'); // var_set output is 'string', math_add expects 'number'
 
     runStaticBadIR('Const Get Invalid Name', [
       { id: 'bad_const', op: 'const_get', name: 'NON_EXISTENT_CONSTANT' },
-      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_const' }
     ], [], 'Invalid constant name');
 
     runStaticBadIR('Multiple Static Errors (Accumulation)', [
@@ -170,7 +162,6 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       // Let's use Invalid Literal Type if possible.
       // Or just missing arg in another node.
       { id: 'op2', op: 'vec2', x: 10 }, // missing y
-      { id: 'sink', op: 'var_set', var: 'x', val: 'op1' }
     ], [], 'Missing required argument'); // Should contain it twice or for different nodes?
     // We can assert manually in the test body if runStaticBadIR supported custom checks,
     // but here we just check it contains the snippet.
@@ -186,7 +177,6 @@ describe('Compliance: Error Handling & Negative Tests', () => {
     runStaticBadIR('Struct Extract from Non-Struct', [
       { id: 'scalar', op: 'vec2', x: 1, y: 2 }, // Vector, not Struct
       { id: 'bad_extract', op: 'struct_extract', struct: 'scalar', key: 'x' },
-      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_extract' }
     ], [], 'Type Mismatch');
 
     runStaticBadIR('Buffer Store Negative Index', [

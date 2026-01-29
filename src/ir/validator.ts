@@ -13,7 +13,10 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
   const errors: LogicValidationError[] = [];
 
   // Global Context for Type Resolution
-  const resourceIds = new Set(doc.resources.map(r => r.id));
+  const resourceIds = new Set([
+    ...doc.resources.map(r => r.id),
+    ...doc.inputs.map(i => i.id)
+  ]);
 
   // Check Struct Definitions
   validateStructs(doc, errors);
@@ -23,6 +26,10 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
   });
 
   return errors;
+};
+
+export const validateIR = (doc: IRDocument): LogicValidationError[] => {
+  return validateStaticLogic(doc);
 };
 
 // ------------------------------------------------------------------

@@ -70,11 +70,12 @@ describe('IR Validation', () => {
             { id: 'resize_w', op: 'cmd_resize_resource', resource: 'b_weights', size: 'u_kernel_size' },
             { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [1, 1, 1] },
             { id: 'get_size', op: 'resource_get_size', resource: 't_input' },
-            { id: 'calc_groups', op: 'math_div_scalar', val: 8 },
+            { id: 'calc_groups', op: 'math_div_scalar', scalar: 8 },
             { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur' }
           ],
           edges: [
-            { from: 'resize_w', portOut: 'exec_out', to: 'cmd_gen', portIn: 'exec_in', type: 'execution' }
+            { from: 'resize_w', portOut: 'exec_out', to: 'cmd_gen', portIn: 'exec_in', type: 'execution' },
+            { from: 'get_size', portOut: 'val', to: 'calc_groups', portIn: 'val', type: 'data' }
           ]
         },
         {
@@ -86,7 +87,7 @@ describe('IR Validation', () => {
           nodes: [
             { id: 'loop', op: 'flow_loop', start: 0, end: 16 },
             { id: 'idx', op: 'loop_index', loop: 'loop' },
-            { id: 'store', op: 'buffer_store', buffer: 'b_weights', index: 'idx' }
+            { id: 'store', op: 'buffer_store', buffer: 'b_weights', index: 'idx', value: 1.0 }
           ],
           edges: []
         },

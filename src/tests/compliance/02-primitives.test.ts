@@ -107,7 +107,9 @@ describe('Compliance: Primitives and Operators', () => {
     { op: 'math_min', args: { a: 10, b: 20 }, expected: 10 },
     { op: 'math_max', args: { a: 10, b: 20 }, expected: 20 },
     { op: 'math_pow', args: { a: 2, b: 3 }, expected: 8 },
-    { op: 'math_atan2', args: { y: 10, x: 0 }, expected: Math.PI / 2 },
+    { op: 'math_pow', args: { a: 2, b: 3 }, expected: 8 },
+    { op: 'math_atan2', args: { a: 10, b: 0 }, expected: Math.PI / 2 },
+    // Vector
     // Vector
     { op: 'vec_dot', args: { a: [1, 0, 0], b: [0, 1, 0] }, expected: 0 },
     { op: 'vec_dot', args: { a: [1, 2], b: [3, 4] }, expected: 11 },

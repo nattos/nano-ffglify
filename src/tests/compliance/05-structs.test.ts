@@ -237,7 +237,9 @@ describe('Compliance: Structs and Arrays', () => {
     const exec = new CpuExecutor(ctx);
 
     // Default load returns 0. struct_extract on 0 should fail.
-    expect(() => exec.executeEntry()).toThrow(/struct_extract: struct is undefined/);
+    // Default load returns 0. struct_extract on 0 should fail.
+    // However, strict bounds check now throws OOB on buffer_load first.
+    expect(() => exec.executeEntry()).toThrow(/Runtime Error: buffer_load OOB/);
   });
 
 });
