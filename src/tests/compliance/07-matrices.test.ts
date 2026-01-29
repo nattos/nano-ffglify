@@ -129,4 +129,46 @@ describe('Compliance: Matrices', () => {
     expect(res.data?.[2]).toEqual([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
   });
 
+  runTest('Mat3 x Vec3 (Rotation Mock)', [
+    // 90 deg rotation around Z logic test on point [1, 0, 0] -> [0, 1, 0]
+    // Rotation Matrix 3x3 Z-axis 90 deg:
+    // [ 0 -1  0 ]
+    // [ 1  0  0 ]
+    // [ 0  0  1 ]
+    // Flattened (Col-Major): [0, 1, 0,  -1, 0, 0,  0, 0, 1]
+    {
+      id: 'rot_mat',
+      op: 'mat3',
+      vals: [0, 1, 0, -1, 0, 0, 0, 0, 1]
+    },
+    { id: 'vec_x', op: 'vec3', x: 1, y: 0, z: 0 },
+    { id: 'mul_rot', op: 'mat_mul', a: 'rot_mat', b: 'vec_x' }
+  ], [
+    { from: 'rot_mat', portOut: 'val', to: 'mul_rot', portIn: 'a', type: 'data' },
+    { from: 'vec_x', portOut: 'val', to: 'mul_rot', portIn: 'b', type: 'data' }
+  ], (ctx) => {
+    const res = ctx.getResource('b_res');
+    const rotated = res.data?.[2] as number[];
+    // Expect approx [0, 1, 0]
+    expect(rotated[0]).toBeCloseTo(0, 5);
+    expect(rotated[1]).toBeCloseTo(1, 5);
+    expect(rotated[2]).toBeCloseTo(0, 5);
+  });
+
+  runTest('Vec4 x Mat4 (Pre-multiplication)', [
+    // v * M (Row vector)
+    // v = [1, 2, 0, 0]
+    // M = Identity
+    // Result = [1, 2, 0, 0]
+    { id: 'v', op: 'vec4', x: 1, y: 2, z: 0, w: 0 },
+    { id: 'm', op: 'mat_identity', size: 4 },
+    { id: 'mul_pre', op: 'mat_mul', a: 'v', b: 'm' }
+  ], [
+    { from: 'v', portOut: 'val', to: 'mul_pre', portIn: 'a', type: 'data' },
+    { from: 'm', portOut: 'val', to: 'mul_pre', portIn: 'b', type: 'data' }
+  ], (ctx) => {
+    const res = ctx.getResource('b_res');
+    expect(res.data?.[2]).toEqual([1, 2, 0, 0]);
+  });
+
 });

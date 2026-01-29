@@ -233,41 +233,66 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     const a = args.a as number[];
     const b = args.b as number[];
 
-    // Case 1: Mat4 x Mat4
-    if (a.length === 16 && b.length === 16) {
-      const out = new Array(16);
-      for (let r = 0; r < 4; r++) {
-        for (let c = 0; c < 4; c++) {
+    const isMat4 = (v: number[]) => v.length === 16;
+    const isMat3 = (v: number[]) => v.length === 9;
+    const isVec4 = (v: number[]) => v.length === 4;
+    const isVec3 = (v: number[]) => v.length === 3;
+
+    // Helper: Column-Major Matrix Multiply
+    const mulMat = (A: number[], B: number[], dim: number) => {
+      const out = new Array(dim * dim);
+      for (let r = 0; r < dim; r++) {
+        for (let c = 0; c < dim; c++) {
           let sum = 0;
-          for (let k = 0; k < 4; k++) {
-            // A[row=r, col=k] * B[row=k, col=c]
-            // Index(r,c) = c*4 + r (Column Major)
-            const aVal = a[k * 4 + r];
-            const bVal = b[c * 4 + k];
-            sum += aVal * bVal;
+          for (let k = 0; k < dim; k++) {
+            // A[r, k] * B[k, c]
+            sum += A[k * dim + r] * B[c * dim + k];
           }
-          out[c * 4 + r] = sum;
+          out[c * dim + r] = sum;
         }
       }
-      return out as VectorValue;
-    }
+      return out;
+    };
 
-    // Case 2: Mat4 x Vec4
-    if (a.length === 16 && b.length === 4) {
-      const out = [0, 0, 0, 0];
-      for (let r = 0; r < 4; r++) {
+    // Helper: Mat * Vec (Post-mul) -> v' = M * v
+    const mulMatVec = (A: number[], v: number[], dim: number) => {
+      const out = new Array(dim).fill(0);
+      for (let r = 0; r < dim; r++) {
         let sum = 0;
-        for (let c = 0; c < 4; c++) {
-          // A[row=r, col=c] * v[c]
-          // Idx = c*4 + r
-          sum += a[c * 4 + r] * b[c];
+        for (let c = 0; c < dim; c++) {
+          sum += A[c * dim + r] * v[c];
         }
         out[r] = sum;
       }
-      return out as VectorValue;
-    }
+      return out;
+    };
 
-    return a as VectorValue; // Fallback
+    // Helper: Vec * Mat (Pre-mul) -> v' = v * M (Row vector mul)
+    // v' [c] = sum(v[r] * M[r, c])
+    const mulVecMat = (v: number[], B: number[], dim: number) => {
+      const out = new Array(dim).fill(0);
+      for (let c = 0; c < dim; c++) {
+        let sum = 0;
+        for (let r = 0; r < dim; r++) {
+          sum += v[r] * B[c * dim + r];
+        }
+        out[c] = sum;
+      }
+      return out;
+    };
+
+    // Dispatch
+    if (isMat4(a) && isMat4(b)) return mulMat(a, b, 4) as VectorValue;
+    if (isMat3(a) && isMat3(b)) return mulMat(a, b, 3) as VectorValue;
+
+    if (isMat4(a) && isVec4(b)) return mulMatVec(a, b, 4) as VectorValue;
+    if (isMat3(a) && isVec3(b)) return mulMatVec(a, b, 3) as VectorValue;
+
+    if (isVec4(a) && isMat4(b)) return mulVecMat(a, b, 4) as VectorValue;
+    if (isVec3(a) && isMat3(b)) return mulVecMat(a, b, 3) as VectorValue;
+
+    // Fallback or Mismatch (return A? or Error? Standard ops usually fallback)
+    return a as VectorValue;
   },
 
   // ----------------------------------------------------------------
