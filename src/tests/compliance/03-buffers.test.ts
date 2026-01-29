@@ -48,26 +48,15 @@ describe('Compliance: Buffers', () => {
     expect(res.data).toEqual(new Array(10).fill(0));
   });
 
-  it('should ignore OOB Writes and return 0 for OOB Reads', () => {
+  it('should throw Runtime Error on OOB Write', () => {
     const ir: IRDocument = {
       version: '3.0.0',
-      meta: { name: 'Buffer OOB' },
+      meta: { name: 'Buffer OOB Write' },
       entryPoint: 'fn_main',
       inputs: [],
       structs: [],
       resources: [
-        {
-          id: 'buf',
-          type: 'buffer',
-          size: { mode: 'fixed', value: 2 }, // Size 2 [0, 1]
-          persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
-        },
-        {
-          id: 'res',
-          type: 'buffer',
-          size: { mode: 'fixed', value: 2 },
-          persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
-        }
+        { id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 2 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
       ],
       functions: [{
         id: 'fn_main',
@@ -76,46 +65,56 @@ describe('Compliance: Buffers', () => {
         outputs: [],
         localVars: [],
         nodes: [
-          // Write 100 to index 5 (OOB)
-          { id: 'store_oob', op: 'buffer_store', buffer: 'buf', index: 5, value: 100 },
-          // Write 200 to index 0 (Valid)
-          { id: 'store_ok', op: 'buffer_store', buffer: 'buf', index: 0, value: 200 },
+          { id: 'store_oob', op: 'buffer_store', buffer: 'buf', index: 5, value: 100 }
+        ],
+        edges: []
+      }]
+    };
 
-          // Read index 5 (OOB), should be 0
+    const ctx = new EvaluationContext(ir, new Map());
+    const exec = new CpuExecutor(ctx);
+    expect(() => exec.executeEntry()).toThrow(/OOB/);
+  });
+
+  it('should throw Runtime Error on OOB Read', () => {
+    const ir: IRDocument = {
+      version: '3.0.0',
+      meta: { name: 'Buffer OOB Read' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      structs: [],
+      resources: [
+        { id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 2 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
+      ],
+      functions: [{
+        id: 'fn_main',
+        type: 'cpu',
+        inputs: [],
+        outputs: [],
+        localVars: [],
+        nodes: [
           { id: 'read_oob', op: 'buffer_load', buffer: 'buf', index: 5 },
-          // Read index 0, should be 200
-          { id: 'read_ok', op: 'buffer_load', buffer: 'buf', index: 0 },
-
-          { id: 'save_oob', op: 'buffer_store', buffer: 'res', index: 0, value: 'read_oob' },
-          { id: 'save_ok', op: 'buffer_store', buffer: 'res', index: 1, value: 'read_ok' }
+          { id: 'sink', op: 'var_set', var: 'x', val: 'read_oob' } // Ensure execution
         ],
         edges: [
-          { from: 'store_oob', portOut: 'exec_out', to: 'store_ok', portIn: 'exec_in', type: 'execution' },
-          { from: 'store_ok', portOut: 'exec_out', to: 'save_oob', portIn: 'exec_in', type: 'execution' },
-          { from: 'save_oob', portOut: 'exec_out', to: 'save_ok', portIn: 'exec_in', type: 'execution' },
-
-          { from: 'read_oob', portOut: 'val', to: 'save_oob', portIn: 'value', type: 'data' },
-          { from: 'read_ok', portOut: 'val', to: 'save_ok', portIn: 'value', type: 'data' }
+          // Need edge to pass data? No, buffer_load uses args directly usually.
+          // Wait, previous test didn't use edges for args?
+          // buffer_store uses 'buffer' (string ID) and 'index' (number).
+          // If index is literal, no edge needed.
+          // buffer_load return value needs to be used.
+          // sink uses 'val': 'read_oob'.
+          // Without edge, sink.val='read_oob' (string).
+          // var_set sets 'x' = "read_oob".
+          // read_oob is NOT executed!
+          // I MUST add edge to force execution of read_oob!
+          { from: 'read_oob', portOut: 'val', to: 'sink', portIn: 'val', type: 'data' }
         ]
       }]
     };
 
     const ctx = new EvaluationContext(ir, new Map());
-
-
-
     const exec = new CpuExecutor(ctx);
-    exec.executeEntry();
-
-    const buf = ctx.getResource('buf');
-    // Verify OOB Store ignored
-    expect(buf.data?.[5]).toBeUndefined();
-    expect(buf.data?.[0]).toBe(200);
-
-    const res = ctx.getResource('res');
-    // Verify Read OOB was 0
-    expect(res.data?.[0]).toBe(0);
-    expect(res.data?.[1]).toBe(200);
+    expect(() => exec.executeEntry()).toThrow(/OOB/);
   });
 
 });

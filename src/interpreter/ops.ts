@@ -3,11 +3,28 @@ import { EvaluationContext, RuntimeValue, VectorValue } from './context';
 
 export type OpHandler = (ctx: EvaluationContext, args: Record<string, RuntimeValue>) => RuntimeValue | void;
 
+const validateArg = (args: Record<string, RuntimeValue>, key: string, types: string | string[]) => {
+  const val = args[key];
+  if (val === undefined) throw new Error(`Runtime Error: Missing argument '${key}'`);
+
+  const typeList = Array.isArray(types) ? types : [types];
+  const actualType = Array.isArray(val) ? 'vector' : typeof val;
+
+  // Simple type mapping: 'number' -> scalar, 'vector' -> array
+  // If expecting 'number', we want scalar number.
+
+  if (!typeList.includes(actualType)) {
+    throw new Error(`Runtime Error: Argument '${key}' expected one of [${typeList.join(', ')}], got ${actualType}`);
+  }
+  return val;
+};
+
 // Helper for element-wise unary operations
 const applyUnary = (val: any, fn: (x: number) => number): any => {
   if (Array.isArray(val)) {
     return (val as number[]).map(fn) as VectorValue;
   }
+  if (typeof val !== 'number') throw new Error(`Runtime Error: Invalid type for unary op: ${typeof val}`);
   return fn(val as number);
 };
 
@@ -15,20 +32,38 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   // ----------------------------------------------------------------
   // Standard Math
   // ----------------------------------------------------------------
-  // ----------------------------------------------------------------
-  // Standard Math
-  // ----------------------------------------------------------------
-  'math_add': (ctx, args) => (args.a as number) + (args.b as number),
-  'math_sub': (ctx, args) => (args.a as number) - (args.b as number),
-  'math_mul': (ctx, args) => (args.a as number) * (args.b as number),
-  'math_div': (ctx, args) => (args.a as number) / (args.b as number),
-  'math_mad': (ctx, args) => ((args.a as number) * (args.b as number)) + (args.c as number),
+  'math_add': (ctx, args) => {
+    const a = validateArg(args, 'a', 'number') as number;
+    const b = validateArg(args, 'b', 'number') as number;
+    return a + b;
+  },
+  'math_sub': (ctx, args) => {
+    const a = validateArg(args, 'a', 'number') as number;
+    const b = validateArg(args, 'b', 'number') as number;
+    return a - b;
+  },
+  'math_mul': (ctx, args) => {
+    const a = validateArg(args, 'a', 'number') as number;
+    const b = validateArg(args, 'b', 'number') as number;
+    return a * b;
+  },
+  'math_div': (ctx, args) => {
+    const a = validateArg(args, 'a', 'number') as number;
+    const b = validateArg(args, 'b', 'number') as number;
+    return a / b;
+  },
+  'math_mad': (ctx, args) => {
+    const a = validateArg(args, 'a', 'number') as number;
+    const b = validateArg(args, 'b', 'number') as number;
+    const c = validateArg(args, 'c', 'number') as number;
+    return (a * b) + c;
+  },
 
   'math_div_scalar': (ctx, args) => {
-    const val = args.val as any;
-    const scalar = args.scalar as number;
-    if (Array.isArray(val)) return val.map(v => v / scalar) as VectorValue;
-    return val / scalar;
+    const val = validateArg(args, 'val', ['number', 'vector']);
+    const scalar = validateArg(args, 'scalar', 'number') as number;
+    if (Array.isArray(val)) return val.map((v: number) => v / scalar) as VectorValue;
+    return (val as number) / scalar;
   },
 
   // Helpers
@@ -56,30 +91,30 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'math_abs': (ctx, args) => applyUnary(args.val, Math.abs),
 
   // Binary
-  'math_min': (ctx, args) => Math.min(args.a as number, args.b as number),
-  'math_max': (ctx, args) => Math.max(args.a as number, args.b as number),
-  'math_pow': (ctx, args) => Math.pow(args.a as number, args.b as number),
-  'math_atan2': (ctx, args) => Math.atan2(args.y as number, args.x as number), // Note: args y, x standard
+  'math_min': (ctx, args) => Math.min(validateArg(args, 'a', 'number') as number, validateArg(args, 'b', 'number') as number),
+  'math_max': (ctx, args) => Math.max(validateArg(args, 'a', 'number') as number, validateArg(args, 'b', 'number') as number),
+  'math_pow': (ctx, args) => Math.pow(validateArg(args, 'a', 'number') as number, validateArg(args, 'b', 'number') as number),
+  'math_atan2': (ctx, args) => Math.atan2(validateArg(args, 'y', 'number') as number, validateArg(args, 'x', 'number') as number), // Note: args y, x standard
 
   'math_mod': (ctx, args) => {
-    const a = args.a as number;
-    const b = args.b as number;
+    const a = validateArg(args, 'a', 'number') as number;
+    const b = validateArg(args, 'b', 'number') as number;
     return a % b;
   },
 
   'math_clamp': (ctx, args) => {
-    const val = args.val as number;
-    const min = args.min as number;
-    const max = args.max as number;
+    const val = validateArg(args, 'val', 'number') as number;
+    const min = validateArg(args, 'min', 'number') as number;
+    const max = validateArg(args, 'max', 'number') as number;
     return Math.min(Math.max(val, min), max);
   },
 
-  'math_gt': (ctx, args) => (args.a as number) > (args.b as number),
-  'math_lt': (ctx, args) => (args.a as number) < (args.b as number),
-  'math_ge': (ctx, args) => (args.a as number) >= (args.b as number),
-  'math_le': (ctx, args) => (args.a as number) <= (args.b as number),
-  'math_eq': (ctx, args) => (args.a as number) === (args.b as number),
-  'math_neq': (ctx, args) => (args.a as number) !== (args.b as number),
+  'math_gt': (ctx, args) => (validateArg(args, 'a', 'number') as number) > (validateArg(args, 'b', 'number') as number),
+  'math_lt': (ctx, args) => (validateArg(args, 'a', 'number') as number) < (validateArg(args, 'b', 'number') as number),
+  'math_ge': (ctx, args) => (validateArg(args, 'a', 'number') as number) >= (validateArg(args, 'b', 'number') as number),
+  'math_le': (ctx, args) => (validateArg(args, 'a', 'number') as number) <= (validateArg(args, 'b', 'number') as number),
+  'math_eq': (ctx, args) => (validateArg(args, 'a', 'number') as number) === (validateArg(args, 'b', 'number') as number),
+  'math_neq': (ctx, args) => (validateArg(args, 'a', 'number') as number) !== (validateArg(args, 'b', 'number') as number),
 
   // Logic
   'math_and': (ctx, args) => !!(args.a) && !!(args.b),
@@ -105,8 +140,9 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
 
   'vec_dot': (ctx, args) => {
-    const a = args.a as number[];
-    const b = args.b as number[];
+    const a = validateArg(args, 'a', 'vector') as number[];
+    const b = validateArg(args, 'b', 'vector') as number[];
+    if (a.length !== b.length) throw new Error(`Runtime Error: vec_dot dimension mismatch (${a.length} vs ${b.length})`);
     return a.reduce((sum, v, i) => sum + v * b[i], 0);
   },
 
@@ -123,9 +159,10 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
 
   'vec_mix': (ctx, args) => {
-    const a = args.a as number[];
-    const b = args.b as number[];
-    const t = args.t as number; // Scalar mix for now
+    const a = validateArg(args, 'a', 'vector') as number[];
+    const b = validateArg(args, 'b', 'vector') as number[];
+    const t = validateArg(args, 't', 'number') as number;
+    if (a.length !== b.length) throw new Error(`Runtime Error: vec_mix dimension mismatch`);
     return a.map((v, i) => v * (1 - t) + b[i] * t) as VectorValue;
   },
 
@@ -230,8 +267,8 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
 
   'mat_mul': (ctx, args) => {
-    const a = args.a as number[];
-    const b = args.b as number[];
+    const a = validateArg(args, 'a', 'vector') as number[];
+    const b = validateArg(args, 'b', 'vector') as number[];
 
     const isMat4 = (v: number[]) => v.length === 16;
     const isMat3 = (v: number[]) => v.length === 9;
@@ -289,10 +326,10 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     if (isMat3(a) && isVec3(b)) return mulMatVec(a, b, 3) as VectorValue;
 
     if (isVec4(a) && isMat4(b)) return mulVecMat(a, b, 4) as VectorValue;
+    if (isVec4(a) && isMat4(b)) return mulVecMat(a, b, 4) as VectorValue;
     if (isVec3(a) && isMat3(b)) return mulVecMat(a, b, 3) as VectorValue;
 
-    // Fallback or Mismatch (return A? or Error? Standard ops usually fallback)
-    return a as VectorValue;
+    throw new Error(`Runtime Error: mat_mul dimension mismatch or invalid types (ALen: ${a.length}, BLen: ${b.length})`);
   },
 
   // ----------------------------------------------------------------
@@ -447,7 +484,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
         return TextureFormatValues[enumVal as TextureFormat];
       }
     }
-    return 0;
+    throw new Error(`Runtime Error: Unknown constant '${name}'`);
   },
   'loop_index': (ctx, args) => {
     return ctx.getLoopIndex(args.loop as string);
@@ -498,9 +535,14 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
       if (typeof formatArg === 'number') {
         // Int -> String for Def
         const strFmt = TextureFormatFromId[formatArg];
-        if (strFmt) res.def.format = strFmt;
+        if (!strFmt) throw new Error(`Runtime Error: Invalid texture format ID ${formatArg}`);
+        res.def.format = strFmt;
       } else if (typeof formatArg === 'string') {
         // String -> String
+        // Validation?
+        if (!Object.values(TextureFormat).includes(formatArg as TextureFormat)) {
+          throw new Error(`Runtime Error: Invalid texture format '${formatArg}'`);
+        }
         res.def.format = formatArg as TextureFormat;
       }
     }
@@ -533,7 +575,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     const res = ctx.getResource(id);
 
     // Bounds check
-    if (idx < 0 || idx >= res.width) return; // OOB Write ignored
+    if (idx < 0 || idx >= res.width) throw new Error(`Runtime Error: buffer_store OOB (index ${idx}, size ${res.width})`);
 
     if (!res.data) res.data = [];
     res.data[idx] = val;
@@ -545,7 +587,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     const res = ctx.getResource(id);
 
     // Bounds check
-    if (idx < 0 || idx >= res.width) return 0; // OOB Read returns 0
+    if (idx < 0 || idx >= res.width) throw new Error(`Runtime Error: buffer_load OOB (index ${idx}, size ${res.width})`);
 
     return res.data?.[idx] ?? 0;
   },
@@ -623,6 +665,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     const s = args.struct as Record<string, RuntimeValue>;
     const field = args.field as string;
     if (!s) throw new Error('struct_extract: struct is undefined');
+    if (Array.isArray(s)) throw new Error(`Runtime Error: struct_extract called on non-struct (Vector/Array)`);
     if (s[field] === undefined) throw new Error(`struct_extract: field '${field}' not found`);
     return s[field];
   },
