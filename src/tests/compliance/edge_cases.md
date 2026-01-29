@@ -29,14 +29,16 @@ A comprehensive list of potential edge cases to test for compliance, robustness,
 - **What if...** we define a struct that recursively contains itself? (Infinite size)
 - **What if...** two structs share the same `id` but have different member definitions?
 - [STATIC CHECKED] **What if...** we use `struct_extract` on a key that doesn't exist (or on a non-struct)? (Verified in `09-errors.test.ts`)
-- **What if...** we `struct_construct` with missing fields? Does it zero-init or fail?
+- [STATIC CHECKED] **What if...** we `struct_construct` with missing fields? -> **Static Error** `Missing required field`
 
 ### Functions & Signals
 - [STATIC CHECKED] **What if...** a node input arg is missing (e.g. `math_add` missing `b`)? (Verified in `09-errors.test.ts` - Undefined behavior)
 - [STATIC CHECKED] **What if...** a node input arg is of the wrong type (e.g. `string` for `math`)? (Verified in `09-errors.test.ts` - Silent fail)
-- **What if...** a node input port is left unconnected with no default value?
-- **What if...** we connect a `float` output to a `vec3` input? (Implicit cast vs Error)
-- **What if...** we connect a `vec3` output to a `float` input? (Truncation vs Error)
+- [STATIC CHECKED] **What if...** a node input port is left unconnected with no default value? -> **Static Error** `Unconnected input port`
+- [STATIC CHECKED] **What if...** we connect a `float` output to a `vec3` input? -> **Static Error** `Type Mismatch` (No implicit broadcast). User must use `vec3(f, f, f)`.
+- [STATIC CHECKED] **What if...** we connect a `vec3` output to a `float` input? -> **Static Error** `Type Mismatch` (No implicit truncation). User must use swizzle/extract `vec3.x`.
+- [STATIC CHECKED] **What if...** we try to `vec_mix` vectors of different lengths? (e.g., `vec3` and `vec4`) -> **Static Error** `Type Mismatch`.
+- [STATIC CHECKED] **What if...** we try to convert `int` to `float` (or vice versa)? -> **Static Error** `Type Mismatch`. User must use `static_cast_float` or `static_cast_int`.
 
 ## 2. Runtime Math & Numerics
 *Execution Level - nuances between JS (CPU) and GLSL/WGSL (GPU)*

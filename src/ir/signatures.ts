@@ -47,6 +47,22 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   'math_not': [{ inputs: { val: 'boolean' }, output: 'boolean' }],
 
   // ----------------------------------------------------------------
+  // Casts
+  // ----------------------------------------------------------------
+  'static_cast_int': [
+    { inputs: { val: 'number' }, output: 'int' },
+    { inputs: { val: 'boolean' }, output: 'int' }
+  ],
+  'static_cast_float': [
+    { inputs: { val: 'int' }, output: 'number' },
+    { inputs: { val: 'boolean' }, output: 'number' }
+  ],
+  'static_cast_bool': [
+    { inputs: { val: 'int' }, output: 'boolean' },
+    { inputs: { val: 'number' }, output: 'boolean' }
+  ],
+
+  // ----------------------------------------------------------------
   // Vector Constructors & Access
   // ----------------------------------------------------------------
   'vec2': [{ inputs: { x: 'number', y: 'number' }, output: 'vec2' }],

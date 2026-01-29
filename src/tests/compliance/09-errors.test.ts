@@ -93,6 +93,26 @@ describe('Compliance: Error Handling & Negative Tests', () => {
       { id: 'bad_mul', op: 'mat_mul', a: 'm4', b: 'v3' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'bad_mul' }
     ], [], 'Type Mismatch');
+
+    // Strict Coercion Tests (No Implicit Casting)
+    runStaticBadIR('Implicit Broadcast (Float -> Vec3)', [
+      { id: 'f1', op: 'math_add', a: 1, b: 2 }, // returns number
+      // vec_dot expects vec3, vec3. We pass a number.
+      // Or simply explicit casting?
+      // Let's force a connection to a vec3 input.
+      // vec3 constructor takes x,y,z (numbers).
+      // vec_dot takes vec3.
+      { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
+      { id: 'bad_dot', op: 'vec_dot', a: 'f1', b: 'v3' }, // a is number, b is vec3.
+      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_dot' }
+    ], [], 'Type Mismatch');
+
+    runStaticBadIR('Implicit Truncation (Vec3 -> Float)', [
+      { id: 'v3', op: 'vec3', x: 1, y: 2, z: 3 },
+      // math_add expects number. We pass vec3.
+      { id: 'bad_add', op: 'math_add', a: 'v3', b: 10 },
+      { id: 'sink', op: 'var_set', var: 'x', val: 'bad_add' }
+    ], [], 'Type Mismatch');
   });
 
   // ----------------------------------------------------------------

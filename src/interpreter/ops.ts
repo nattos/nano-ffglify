@@ -122,6 +122,26 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'math_xor': (ctx, args) => !!(args.a) !== !!(args.b),
   'math_not': (ctx, args) => !args.val,
 
+  // Casts
+  'static_cast_int': (ctx, args) => {
+    const val = args.val;
+    if (typeof val === 'boolean') return val ? 1 : 0;
+    if (typeof val === 'number') return Math.trunc(val);
+    return 0;
+  },
+  'static_cast_float': (ctx, args) => {
+    const val = args.val;
+    if (typeof val === 'boolean') return val ? 1.0 : 0.0;
+    if (typeof val === 'number') return val;
+    return 0.0;
+  },
+  'static_cast_bool': (ctx, args) => {
+    const val = args.val;
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'number') return val !== 0;
+    return false;
+  },
+
   'vec_get_element': (ctx, args) => {
     const vec = args.vec as any;
     const index = args.index as number;

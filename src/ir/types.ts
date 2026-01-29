@@ -221,6 +221,9 @@ export type BuiltinOp =
   | 'math_and' | 'math_or' | 'math_xor' | 'math_not'
   | 'math_pi' | 'math_e'
 
+  // Scalar Casts
+  | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
+
   // Vector & Color
   | 'vec2' | 'vec3' | 'vec4'
   | 'vec_length' | 'vec_normalize' | 'vec_dot' | 'vec_mix' | 'color_mix'
