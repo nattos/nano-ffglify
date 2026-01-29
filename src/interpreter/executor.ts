@@ -63,7 +63,7 @@ export class InterpretedExecutor {
       node.op === 'func_return';
   }
 
-  private executeNode(node: Node, func: FunctionDef): RuntimeValue | void {
+  protected executeNode(node: Node, func: FunctionDef): RuntimeValue | void {
     const opId = node.op;
 
     if (opId === 'flow_branch' || opId === 'flow_loop') return;
@@ -204,7 +204,7 @@ export class InterpretedExecutor {
     }
   }
 
-  private resolveNodeValue(node: Node | string, func: FunctionDef): RuntimeValue {
+  protected resolveNodeValue(node: Node | string, func: FunctionDef): RuntimeValue {
     if (typeof node === 'string') {
       const v = this.context.getVar(node);
       if (v !== undefined) return v;
@@ -225,7 +225,7 @@ export class InterpretedExecutor {
     return 0;
   }
 
-  private mixinNodeProperties(node: Node, args: Record<string, RuntimeValue>, func: FunctionDef) {
+  protected mixinNodeProperties(node: Node, args: Record<string, RuntimeValue>, func: FunctionDef) {
     const SKIP_RESOLUTION = ['var', 'func', 'resource', 'buffer', 'tex', 'loop'];
 
     // 1. Resolve Props

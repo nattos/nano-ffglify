@@ -268,9 +268,13 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'vec_mix': (ctx, args) => {
     const a = validateArg(args, 'a', 'vector') as number[];
     const b = validateArg(args, 'b', 'vector') as number[];
-    const t = validateArg(args, 't', ['number', 'vector']);
+    const t = validateArg(args, 't', ['number', 'vector', 'boolean']);
 
     if (a.length !== b.length) throw new Error(`Runtime Error: vec_mix dimension mismatch`);
+
+    if (typeof t === 'boolean') {
+      return t ? b : a; // Select B if True
+    }
 
     if (Array.isArray(t)) {
       if (t.length !== a.length) throw new Error(`Runtime Error: vec_mix t dimension mismatch`);

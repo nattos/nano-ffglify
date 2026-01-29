@@ -3,6 +3,8 @@ import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { InterpretedExecutor } from '../../interpreter/executor';
 import { IRDocument, FunctionDef } from '../../ir/types';
 
+import { WebGpuBackend } from './webgpu-backend';
+
 // ------------------------------------------------------------------
 // Backend Abstraction
 // ------------------------------------------------------------------
@@ -38,7 +40,7 @@ export const InterpreterBackend: TestBackend = {
   }
 };
 
-const backends = [InterpreterBackend];
+const backends = [InterpreterBackend, WebGpuBackend];
 
 export const availableBackends = process.env.TEST_BACKEND
   ? backends.filter(b => b.name === process.env.TEST_BACKEND)

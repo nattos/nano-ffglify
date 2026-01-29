@@ -91,9 +91,7 @@ describe('Conformance: Structs and Arrays', () => {
   runGraphErrorTest('should throw Error on Uninitialized Variable Access', [
     { id: 'get', op: 'var_get', var: 'v_uninit' },
     { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'get' }
-  ], /Runtime Error: Variable 'v_uninit' is not defined/, [], [], [
-    { id: 'v_uninit', type: 'float' }
-  ]);
+  ], /Runtime Error: Variable 'v_uninit' is not defined/, [bufferDef], [], []);
 
   runGraphErrorTest('should handle Buffer Default Values (Uninitialized Slots)', [
     // Load index 10 (never written)
