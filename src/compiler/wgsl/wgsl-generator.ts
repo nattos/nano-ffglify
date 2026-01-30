@@ -52,6 +52,8 @@ export class WgslGenerator {
     finalLines.push('diagnostic(off, derivative_uniformity);');
     finalLines.push('');
 
+    const code = [...lines, ...entryPointLines].join('\n');
+
     // Globals Buffer (for ComputeTestBackend)
     if (options.globalBufferBinding !== undefined) {
       finalLines.push('struct GlobalsBuffer { data: array<f32> }');
@@ -210,24 +212,27 @@ export class WgslGenerator {
           }
         }
       } else if (options.stage === 'fragment') {
-        // Fragment Shader Entry Point
-        // Inputs: Output from VS. The first argument MUST be the stage input struct.
-        // We assume the function signature in IR matches: fn main(in: VSOut)
-        // But for entry point, we flatten args? Or expect IR to match?
-        // Let's iterate inputs and map them.
-        const args = func.inputs.map(input => {
-          // If input type is a struct, it's likely the VertexOutput.
-          // In WGSL entry point, we just declare it as arg.
-          const type = this.resolveType(input.type);
-          return `${input.id} : ${type}`;
-        }).join(', ');
+        const stageArgs: string[] = [];
+        // Map inputs
+        for (const input of func.inputs) {
+          if (input.builtin === 'frag_coord') {
+            stageArgs.push(`@builtin(frag_coord) FragCoord : vec4<f32>`);
+          } else if (input.builtin === 'front_facing') {
+            stageArgs.push(`@builtin(front_facing) FrontFacing : bool`);
+          } else if (input.builtin === 'sample_index') {
+            stageArgs.push(`@builtin(sample_index) SampleIndex : u32`);
+          } else {
+            const type = this.resolveType(input.type);
+            stageArgs.push(`${input.id} : ${type}`);
+          }
+        }
+
+        const args = stageArgs.join(', ');
 
         let retType = 'vec4<f32>';
         let retDecorators = '@location(0)';
         if (func.outputs.length > 0) {
           retType = this.resolveType(func.outputs[0].type);
-          // If return type is struct, assume decorators are defining it.
-          // If scalar/vec, default to location(0)
           if (ir.structs.some(s => s.id === func.outputs[0].type)) {
             retDecorators = '';
           }
@@ -235,10 +240,23 @@ export class WgslGenerator {
 
         lines.push(`@fragment`);
         lines.push(`fn main(${args}) -> ${retDecorators} ${retType} {`);
+
+        // Map builtins to local variables
+        for (const input of func.inputs) {
+          if (input.builtin === 'frag_coord') lines.push(`  let l_${input.id} = FragCoord;`);
+          if (input.builtin === 'front_facing') lines.push(`  let l_${input.id} = FrontFacing;`);
+          if (input.builtin === 'sample_index') lines.push(`  let l_${input.id} = i32(SampleIndex);`);
+        }
       } else {
         // Compute (Default)
         lines.push(`@compute @workgroup_size(1, 1, 1)`);
         lines.push(`fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {`);
+        // Map builtins to local variables
+        for (const input of func.inputs) {
+          if (input.builtin === 'global_invocation_id') {
+            lines.push(`  let l_${input.id} = GlobalInvocationID;`);
+          }
+        }
       }
     } else {
       // Signature

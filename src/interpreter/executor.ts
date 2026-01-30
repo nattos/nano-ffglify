@@ -1,9 +1,11 @@
-import { IRDocument, Node, FunctionDef, Edge } from '../ir/types';
+import { IRDocument, Node, FunctionDef, Edge, RenderPipelineDef } from '../ir/types';
 import { EvaluationContext, RuntimeValue } from './context';
 import { OpRegistry } from './ops';
+import { SoftwareRasterizer } from './rasterizer';
 
 export class InterpretedExecutor {
   context: EvaluationContext;
+  private rasterizer?: SoftwareRasterizer;
 
   constructor(context: EvaluationContext) {
     this.context = context;
@@ -112,6 +114,24 @@ export class InterpretedExecutor {
           }
         }
       }
+      return;
+    }
+
+    if (opId === 'cmd_draw') {
+      const args: Record<string, RuntimeValue> = {};
+      this.mixinNodeProperties(node, args, func);
+
+      const targetId = args.target as string;
+      const vertexId = args.vertex as string;
+      const fragmentId = args.fragment as string;
+      const count = args.count as number;
+      const pipeline = args.pipeline as RenderPipelineDef;
+
+      if (!this.rasterizer) {
+        this.rasterizer = new SoftwareRasterizer(this.context);
+      }
+
+      this.rasterizer.draw(targetId, vertexId, fragmentId, count, pipeline);
       return;
     }
 

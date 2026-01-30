@@ -3,8 +3,9 @@ import { runFullGraphTest, availableBackends } from './test-runner';
 import { IRDocument, FunctionDef, BuiltinOp, DataType, TextureFormat, ResourceDef } from '../../ir/types';
 
 describe('17-render-pipeline', () => {
-  // Only run on WebGPU backend for now (Interpreter Rasterizer not implemented)
-  const backends = availableBackends.filter(b => b.name === 'WebGPU');
+  // Run on available backends (Interpreter Rasterizer now implemented)
+  // Compute backend usually only supports compute shaders, not full render pipelines
+  const backends = availableBackends.filter(b => b.name !== 'Compute');
 
   // IR Definition
   // Func Main: cmd_draw -> VS, FS
@@ -105,8 +106,8 @@ describe('17-render-pipeline', () => {
       { id: 'color', type: 'float4' }
     ],
     nodes: [
-      { id: 'red', op: 'literal', val: '1.0' },
-      { id: 'col', op: 'float4', x: 'red', y: 0, z: 0, w: 1 },
+      { id: 'red', op: 'literal', val: 1.0 },
+      { id: 'col', op: 'float4', x: 'red', y: 0.0, z: 0.0, w: 1.0 },
       { id: 'ret', op: 'func_return', value: 'col' }
     ],
     edges: [
@@ -142,7 +143,7 @@ describe('17-render-pipeline', () => {
     entryPoint: mainId,
     functions: [vsFunc, fsFunc, mainFunc],
     resources: [
-      { id: targetId, type: 'texture2d', size: { mode: 'fixed', value: [64, 64] }, format: 'rgba8unorm', persistence: { clearOnResize: true, clearValue: 0 } }
+      { id: targetId, type: 'texture2d', size: { mode: 'fixed', value: [64, 64] }, format: TextureFormat.RGBA8, persistence: { clearOnResize: true, clearValue: 0 } }
     ],
     structs: [vertexOutputStruct],
     inputs: [],
@@ -156,13 +157,10 @@ describe('17-render-pipeline', () => {
 
     // Texture data is flat float array (RGBA)
     const res = ctx.getResource(targetId);
-    const data = res.data as number[];
-    const idx = (32 * 64 + 32) * 4;
+    const data = res.data as number[][];
+    const idx = (32 * 64 + 32);
 
-    const r = data[idx];
-    const g = data[idx + 1];
-    const b = data[idx + 2];
-    const a = data[idx + 3];
+    const [r, g, b, a] = data[idx];
 
     if (r !== 1 || g !== 0 || b !== 0 || a !== 1) {
       throw new Error(`Expected Red (1,0,0,1) at center, got (${r},${g},${b},${a})`);

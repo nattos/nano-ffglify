@@ -134,13 +134,15 @@ export interface ResourceDef {
   };
 }
 
+export type BuiltinName = 'position' | 'vertex_index' | 'instance_index' | 'global_invocation_id' | 'frag_coord' | 'front_facing' | 'sample_index';
+
 export interface StructMember {
   name: string;
   type: DataType;
   comment?: string;
   // Annotation for flexible shader IO (e.g. '@builtin(position)')
   // If set to 'position', the generator treats this as the clip-space position.
-  builtin?: 'position' | 'vertex_index' | 'instance_index' | 'front_facing' | 'frag_coord';
+  builtin?: BuiltinName;
   // Location index for inter-stage variables (auto-assigned if missing, but explicit is better)
   location?: number;
 }
@@ -197,7 +199,7 @@ export interface PortDef {
   type: DataType;
   comment?: string;
   // Shader IO
-  builtin?: 'position' | 'vertex_index' | 'instance_index' | 'front_facing' | 'frag_coord';
+  builtin?: BuiltinName;
   location?: number;
 }
 
@@ -299,6 +301,7 @@ export type BuiltinOp =
   | 'math_flush_subnormal' // { val: T } -> T
   // Decomposition:
   | 'math_mantissa' | 'math_exponent' // { val: T } -> T
+  | 'literal' // { val: any } -> any
 
   // ----------------------------------------------------------------
   // Scalar Casts & Constructors

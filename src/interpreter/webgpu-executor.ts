@@ -99,8 +99,12 @@ export class WebGpuExecutor {
 
     // 2. Prepare Inputs Buffer
     let bindGroup: GPUBindGroup | undefined;
-    if (func.inputs.length > 0) {
-      const bufferData = this.packArguments(func.inputs, args);
+    const nonBuiltinInputs = func.inputs.filter(i => !i.builtin);
+
+    const entries: GPUBindGroupEntry[] = [];
+
+    if (nonBuiltinInputs.length > 0) {
+      const bufferData = this.packArguments(nonBuiltinInputs, args);
       const inputBuffer = this.device.createBuffer({
         label: `${funcId}_inputs`,
         size: bufferData.byteLength,
@@ -108,27 +112,18 @@ export class WebGpuExecutor {
       });
       this.device.queue.writeBuffer(inputBuffer, 0, bufferData);
 
-      // 3. Create BindGroup
-      const entries: GPUBindGroupEntry[] = [
-        { binding: 1, resource: { buffer: inputBuffer } }
-      ];
+      entries.push({ binding: 1, resource: { buffer: inputBuffer } });
+    }
 
-      // Add resource bindings
-      this.context.ir.resources.forEach((res, idx) => {
-        // Find binding idx from generator logic (starts at 2)
-        const binding = 2 + this.context.ir.resources.indexOf(res);
-        const resource = this.context.getResource(res.id);
-        // Map to GPU resource (currently tests use CPU data, we need GPU buffers)
-        // For conformance testing, we might need to sync CPU -> GPU here.
-        // TODO: Persistent GPU buffers for resources
-      });
+    // 3. Create BindGroup with ALL resources
+    this.context.ir.resources.forEach((res, idx) => {
+      const binding = 2 + idx;
+      const state = this.context.getResource(res.id);
 
-      // Special: Conformance tests often use a single result buffer.
-      // Let's check for 'b_res' or 'b_result' and bind it if it exists.
-      this.context.ir.resources.forEach((res, idx) => {
-        const binding = 2 + idx;
-        const state = this.context.getResource(res.id);
-
+      if (res.type === 'texture2d') {
+        const tex = this.ensureTexture(res.id);
+        if (tex) entries.push({ binding, resource: tex.createView() });
+      } else {
         // Ensure GPU buffer exists
         if (!(state as any).gpuBuffer) {
           (state as any).gpuBuffer = this.device.createBuffer({
@@ -142,10 +137,11 @@ export class WebGpuExecutor {
             this.device.queue.writeBuffer((state as any).gpuBuffer, 0, new Float32Array(flat));
           }
         }
-
         entries.push({ binding, resource: { buffer: (state as any).gpuBuffer } });
-      });
+      }
+    });
 
+    if (entries.length > 0) {
       bindGroup = this.device.createBindGroup({
         layout: pipeline.getBindGroupLayout(0),
         entries
@@ -182,8 +178,18 @@ export class WebGpuExecutor {
       await staging.mapAsync(GPUMapMode.READ);
       const data = new Float32Array(staging.getMappedRange());
       const state = this.context.getResource(id);
-      // Simplified: always sync as float array
-      state.data = Array.from(data);
+      if (state) {
+        const compCount = this.getComponentCount(state.def.dataType || 'float');
+        if (compCount > 1) {
+          const reshaped = [];
+          for (let i = 0; i < data.length; i += compCount) {
+            reshaped.push(Array.from(data.slice(i, i + compCount)));
+          }
+          state.data = reshaped;
+        } else {
+          state.data = Array.from(data);
+        }
+      }
       staging.unmap();
     }));
   }
@@ -262,7 +268,13 @@ export class WebGpuExecutor {
 
     const res = this.context.getResource(targetId);
     if (res) {
-      res.data = floatData;
+      // res.data is expected to be vector-like if multi-channel (RGBA)
+      const reshaped = [];
+      const compCount = 4; // Texture readback for RGBA
+      for (let i = 0; i < floatData.length; i += compCount) {
+        reshaped.push(floatData.slice(i, i + compCount));
+      }
+      res.data = reshaped;
     }
 
     stagingBuffer.unmap();
@@ -350,18 +362,63 @@ export class WebGpuExecutor {
     if (state.def.type !== 'texture2d') return undefined; // Only textures
 
     if (!(state as any).gpuTexture) {
-      let format = 'rgba8unorm';
-      if (typeof state.def.format === 'number') {
-        format = (TextureFormatFromId as any)[state.def.format] || 'rgba8unorm';
-      } else if (typeof state.def.format === 'string') {
-        format = state.def.format;
+      let format: string = 'rgba8unorm';
+      const irFormat = state.def.format;
+      if (typeof irFormat === 'number') {
+        format = (TextureFormatFromId as any)[irFormat] || 'rgba8unorm';
+      } else if (typeof irFormat === 'string') {
+        format = irFormat;
       }
-      (state as any).gpuTexture = this.device.createTexture({
+
+      // Normalize IR format strings to WebGPU standards
+      const formatMap: Record<string, GPUTextureFormat> = {
+        'rgba8': 'rgba8unorm',
+        'rgba16f': 'rgba16float',
+        'rgba32f': 'rgba32float',
+        'r8': 'r8unorm',
+        'r16f': 'r16float',
+        'r32f': 'r32float',
+      };
+      const finalFormat = formatMap[format] || format as GPUTextureFormat;
+
+      const gpuTexture = this.device.createTexture({
         label: id,
         size: [state.width, state.height, 1],
-        format: format as GPUTextureFormat,
+        format: finalFormat,
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST
       });
+      (state as any).gpuTexture = gpuTexture;
+
+      // Sync initial data if any
+      if (state.data && state.data.length > 0) {
+        const flat = (state.data as any).flat(2) as number[];
+        const expectedBytes = state.width * state.height * (finalFormat.startsWith('r32') || finalFormat.startsWith('r8') ? 1 : 4) * (finalFormat.includes('float') || finalFormat.includes('32f') ? 4 : 1);
+
+        // If length doesn't match (e.g. only 1 channel provided for RGBA), we might need to be careful.
+        // For now, let's only sync if length is at least enough to cover the texture.
+        const currentBytes = flat.length * (finalFormat.includes('float') || finalFormat.includes('32f') ? 4 : 1);
+
+        if (currentBytes === expectedBytes) {
+          if (finalFormat.includes('8unorm')) {
+            const u8 = new Uint8Array(flat.map(v => Math.floor(v * 255)));
+            this.device.queue.writeTexture(
+              { texture: gpuTexture },
+              u8,
+              { bytesPerRow: state.width * 4 },
+              [state.width, state.height, 1]
+            );
+          } else if (finalFormat.includes('float') || finalFormat.includes('32f')) {
+            const f32 = new Float32Array(flat);
+            const bytesPerPixel = finalFormat.startsWith('r32') ? 4 : 16;
+            this.device.queue.writeTexture(
+              { texture: gpuTexture },
+              f32,
+              { bytesPerRow: state.width * bytesPerPixel },
+              [state.width, state.height, 1]
+            );
+          }
+        }
+      }
     }
     return (state as any).gpuTexture;
   }
@@ -409,11 +466,22 @@ export class WebGpuExecutor {
     });
   }
 
-  private packArguments(inputs: { id: string, type: string }[], args: Record<string, RuntimeValue>): ArrayBuffer {
+  private getComponentCount(type: string): number {
+    if (type === 'float' || type === 'int' || type === 'bool' || type === 'f32' || type === 'i32') return 1;
+    if (type === 'float2' || type === 'vec2<f32>') return 2;
+    if (type === 'float3' || type === 'vec3<f32>') return 3;
+    if (type === 'float4' || type === 'vec4<f32>' || type === 'quat') return 4;
+    if (type === 'float3x3' || type === 'mat3x3<f32>') return 9;
+    if (type === 'float4x4' || type === 'mat4x4<f32>') return 16;
+    return 1;
+  }
+
+  private packArguments(inputs: { id: string, type: string, builtin?: string }[], args: Record<string, RuntimeValue>): ArrayBuffer {
     let offset = 0;
     const packedData: { offset: number, value: RuntimeValue, type: string }[] = [];
 
     for (const input of inputs) {
+      if (input.builtin) continue;
       const align = this.getAlignment(input.type);
       const size = this.getSize(input.type);
       offset = Math.ceil(offset / align) * align;

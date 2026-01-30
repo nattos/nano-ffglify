@@ -613,10 +613,13 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     return ctx.getLoopIndex(args.loop as string);
   },
   'func_return': (ctx, args) => {
-    return args.val; // Handled by executor, but returns value here for consistency
+    return args.value !== undefined ? args.value : args.val;
   },
   'call_func': (ctx, args) => {
     // Handled by executor directly
+  },
+  'literal': (ctx, args) => {
+    return args.val;
   },
   'flow_branch': (ctx, args) => {
     // Handled by executor directly
@@ -835,7 +838,10 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
 
   'array_construct': (ctx, args) => {
-    const len = args.length as number;
+    if (args.values && Array.isArray(args.values)) {
+      return [...args.values] as unknown as RuntimeValue;
+    }
+    const len = args.length as number || 0;
     const fill = args.fill ?? 0;
     return new Array(len).fill(fill) as unknown as RuntimeValue;
   },
@@ -869,5 +875,16 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     // Pass everything minus infrastructure props as potential arguments
     const { func: _, dispatch: __, ...rest } = args;
     ctx.webGpuExec.executeShader(targetId, dim, rest);
+  },
+  'cmd_draw': (ctx, args) => {
+    // Basic draw command that delegates to the backend executor
+    const targetId = args.target as string;
+    const vertexId = args.vertex as string;
+    const fragmentId = args.fragment as string;
+    const count = args.count as number;
+    const pipeline = args.pipeline as any;
+
+    // In Phase 2, this will also trigger the SoftwareRasterizer if ctx has it.
+    ctx.webGpuExec?.executeDraw(targetId, vertexId, fragmentId, count, pipeline);
   },
 };
