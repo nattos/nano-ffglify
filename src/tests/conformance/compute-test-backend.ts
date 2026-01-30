@@ -162,21 +162,21 @@ export const ComputeTestBackend: TestBackend = {
         resourceBuffers.set(res.id, texture as any); // Hack: Store texture in resourceBuffers map (typed as GPUBuffer) - Needs refactor or cast? Map<string, GPUBuffer | GPUTexture>
         resourceBindings.set(res.id, bindingCounter++);
 
-        // Sampler
-        // Only if sampler props exist?
-        // 06-textures.test.ts has sampler: { ... }
+        /*
+        // Sampler (Currently disabled for Compute emulation, available in render stages)
         if (res.sampler) {
-          const addressMode = res.sampler.wrap === 'repeat' ? 'repeat' : 'clamp-to-edge';
-          const filter = res.sampler.filter === 'linear' ? 'linear' : 'nearest';
-          const sampler = device.createSampler({
-            addressModeU: addressMode,
-            addressModeV: addressMode,
-            magFilter: filter,
-            minFilter: filter
-          });
-          resourceBuffers.set(`${res.id}_sampler`, sampler as any);
-          resourceBindings.set(`${res.id}_sampler`, bindingCounter++);
+           const addressMode = res.sampler.wrap === 'repeat' ? 'repeat' : 'clamp-to-edge';
+           const filter = res.sampler.filter === 'linear' ? 'linear' : 'nearest';
+           const sampler = device.createSampler({
+             addressModeU: addressMode,
+             addressModeV: addressMode,
+             magFilter: filter,
+             minFilter: filter
+           });
+           resourceBuffers.set(`${res.id}_sampler`, sampler as any);
+           resourceBindings.set(`${res.id}_sampler`, bindingCounter++);
         }
+        */
       }
     }
 
@@ -216,12 +216,11 @@ export const ComputeTestBackend: TestBackend = {
     const entryFn = ir.functions.find(f => f.id === entryPoint);
     if (!entryFn) throw new Error(`Entry point '${entryPoint}' not found`);
 
-    // Split resourceBindings into resources and samplers for Generator
     const genResourceBindings = new Map<string, number>();
     const genSamplerBindings = new Map<string, number>();
 
     resourceBindings.forEach((binding, id) => {
-      if (id.endsWith('_sampler')) genSamplerBindings.set(id.replace('_sampler', ''), binding); // Generator expects resource ID key for samplers
+      if (id.endsWith('_sampler')) genSamplerBindings.set(id.replace('_sampler', ''), binding);
       else genResourceBindings.set(id, binding);
     });
 

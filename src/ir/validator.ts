@@ -235,6 +235,16 @@ export const validateResources = (doc: IRDocument, errors: LogicValidationError[
           errors.push({ message: `Texture resource '${res.id}' has invalid format '${fmt}'`, severity: 'error' });
         }
       }
+
+      const sampler = (res as any).sampler;
+      if (sampler) {
+        if (sampler.wrap && !['clamp', 'repeat', 'mirror'].includes(sampler.wrap)) {
+          errors.push({ message: `Texture resource '${res.id}' has invalid wrap mode '${sampler.wrap}'`, severity: 'error' });
+        }
+        if (sampler.filter && !['nearest', 'linear'].includes(sampler.filter)) {
+          errors.push({ message: `Texture resource '${res.id}' has invalid filter mode '${sampler.filter}'`, severity: 'error' });
+        }
+      }
     } else if (res.type === 'buffer') {
       if (!res.dataType) {
         errors.push({ message: `Buffer resource '${res.id}' missing required 'dataType' property`, severity: 'error' });

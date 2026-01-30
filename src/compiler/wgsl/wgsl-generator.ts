@@ -53,11 +53,15 @@ export class WgslGenerator {
       });
     }
 
+    /*
+    // Hardware Samplers (Currently disabled for Compute emulation, available in render stages)
     if (options.samplerBindings) {
       options.samplerBindings.forEach((bindingIdx, resId) => {
         lines.push(`@group(0) @binding(${bindingIdx}) var s_${resId} : sampler;`);
       });
+      lines.push('');
     }
+    */
 
     lines.push('fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {');
     lines.push('  let srcA = src.w;');
@@ -100,24 +104,42 @@ export class WgslGenerator {
         const filter = def.sampler?.filter || 'nearest';
 
         lines.push(`fn sample_${id}(uv: vec2<f32>) -> vec4<f32> {`);
-        if (def.sampler) {
-          lines.push(`  // Fake usage to keep sampler binding active`);
-          lines.push(`  let _unused = textureSampleLevel(${id}, s_${id}, vec2<f32>(0.0), 0.0);`);
-        }
         lines.push(`  let size = vec2<f32>(textureDimensions(${id}));`);
 
         // Wrap Logic
         if (wrap === 'repeat') {
           lines.push(`  let uv_wrap = uv - floor(uv);`);
+        } else if (wrap === 'mirror') {
+          // Mirror Repeat: 1.0 - abs(mod(uv, 2.0) - 1.0)
+          lines.push(`  let uv_mod2 = uv - 2.0 * floor(uv * 0.5);`);
+          lines.push(`  let uv_wrap = 1.0 - abs(uv_mod2 - 1.0);`);
         } else {
-          // Clamp to 0-1 (optional but safe)
           lines.push(`  let uv_wrap = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));`);
         }
 
-        // Filter Logic (Nearest only)
-        lines.push(`  let coord = vec2<i32>(floor(uv_wrap * size));`);
-        lines.push(`  let safe_coord = clamp(coord, vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));`);
-        lines.push(`  return textureLoad(${id}, safe_coord, 0);`);
+        if (filter === 'linear') {
+          // Bilinear Filtering
+          lines.push(`  let texel_pos = uv_wrap * size - 0.5;`);
+          lines.push(`  let f = fract(texel_pos);`);
+          lines.push(`  let base_coord = vec2<i32>(floor(texel_pos));`);
+
+          lines.push(`  let c00 = vec2<i32>(base_coord);`);
+          lines.push(`  let c10 = vec2<i32>(base_coord) + vec2<i32>(1, 0);`);
+          lines.push(`  let c01 = vec2<i32>(base_coord) + vec2<i32>(0, 1);`);
+          lines.push(`  let c11 = vec2<i32>(base_coord) + vec2<i32>(1, 1);`);
+
+          lines.push(`  let s00 = textureLoad(${id}, clamp(c00, vec2<i32>(0), vec2<i32>(size) - 1), 0);`);
+          lines.push(`  let s10 = textureLoad(${id}, clamp(c10, vec2<i32>(0), vec2<i32>(size) - 1), 0);`);
+          lines.push(`  let s01 = textureLoad(${id}, clamp(c01, vec2<i32>(0), vec2<i32>(size) - 1), 0);`);
+          lines.push(`  let s11 = textureLoad(${id}, clamp(c11, vec2<i32>(0), vec2<i32>(size) - 1), 0);`);
+
+          lines.push(`  return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);`);
+        } else {
+          // Nearest Neighbor
+          lines.push(`  let coord = vec2<i32>(floor(uv_wrap * size));`);
+          lines.push(`  let safe_coord = clamp(coord, vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));`);
+          lines.push(`  return textureLoad(${id}, safe_coord, 0);`);
+        }
         lines.push(`}`);
         lines.push('');
       }
@@ -344,7 +366,7 @@ export class WgslGenerator {
     }
   }
 
-  private resolveArg(node: Node, key: string, func: FunctionDef, options: WgslOptions, ir: IRDocument): string {
+  private resolveArg(node: Node, key: string, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType?: string): string {
     // Special handling for loop_index which refers to a loop node
     if (key === 'loop' && node.op === 'loop_index') {
       // Return the ID of the loop directly? No, we needed the loop var name.
@@ -387,9 +409,9 @@ export class WgslGenerator {
           return `b_globals.data[${idx}]`;
         }
       }
-      return this.formatLiteral(val, 'unknown');
+      return this.formatLiteral(val, targetType || 'unknown');
     }
-    return '0.0'; // Default?
+    return this.formatZero(targetType || 'float'); // Default?
   }
 
   private compileExpression(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument): string {
@@ -477,7 +499,7 @@ export class WgslGenerator {
 
     if (node.op === 'texture_sample') {
       const tex = node['tex'];
-      const uv = this.resolveArg(node, 'uv', func, options, ir);
+      const uv = this.resolveArg(node, 'uv', func, options, ir, 'vec2<f32>');
       return `sample_${tex}(${uv})`;
     }
 
@@ -510,7 +532,7 @@ export class WgslGenerator {
     }
     if (Array.isArray(val)) {
       // Parse type hint if it's "array<T, N>"
-      let elemType = 'float';
+      let elemType = 'f32';
       if (typeof type === 'string' && type.startsWith('array<')) {
         // Extract T
         const match = type.match(/array<(.+),/);

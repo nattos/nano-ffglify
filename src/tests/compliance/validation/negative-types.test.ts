@@ -128,4 +128,40 @@ describe('Compliance: Negative Data Type Validation', () => {
     const errors = validateIR(doc);
     expect(errors).toEqual([]); // Should be clean (ignoring logic errors like empty function)
   });
+
+  it('should explicitly reject invalid texture wrap mode', () => {
+    const doc = structuredClone(baseDoc);
+    doc.resources.push({
+      id: 'tex_invalid_wrap',
+      type: 'texture2d',
+      size: { mode: 'fixed', value: [64, 64] },
+      sampler: { wrap: 'invalid_wrap' }
+    } as any);
+
+    const errors = validateIR(doc);
+    expect(errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        message: expect.stringContaining("Texture resource 'tex_invalid_wrap' has invalid wrap mode 'invalid_wrap'"),
+        severity: 'error'
+      })
+    ]));
+  });
+
+  it('should explicitly reject invalid texture filter mode', () => {
+    const doc = structuredClone(baseDoc);
+    doc.resources.push({
+      id: 'tex_invalid_filter',
+      type: 'texture2d',
+      size: { mode: 'fixed', value: [64, 64] },
+      sampler: { filter: 'bicubic' }
+    } as any);
+
+    const errors = validateIR(doc);
+    expect(errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        message: expect.stringContaining("Texture resource 'tex_invalid_filter' has invalid filter mode 'bicubic'"),
+        severity: 'error'
+      })
+    ]));
+  });
 });
