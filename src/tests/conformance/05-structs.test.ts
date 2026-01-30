@@ -56,12 +56,12 @@ describe('Conformance: Structs and Arrays', () => {
     expect(res.data?.[0]).toBe(100);
   }, [bufferDef], [
     { from: 'mk_arr', portOut: 'val', to: 'set_var', portIn: 'val', type: 'data' },
-    { from: 'get_arr', portOut: 'val', to: 'set_elem', portIn: 'array', type: 'data' },
+    { from: 'set_elem', op: 'array_set', array: 'get_arr', index: 1, value: 100 },
     { from: 'read_arr', portOut: 'val', to: 'extract', portIn: 'array', type: 'data' },
     { from: 'extract', portOut: 'val', to: 'store', portIn: 'value', type: 'data' },
     { from: 'set_var', portOut: 'exec_out', to: 'set_elem', portIn: 'exec_in', type: 'execution' },
     { from: 'set_elem', portOut: 'exec_out', to: 'store', portIn: 'exec_in', type: 'execution' }
-  ], [{ id: 'arr', type: 'array<i32, 3>', initialValue: [] }]);
+  ], [{ id: 'arr', type: 'array<i32, 3>' }]);
 
   runParametricTest('should Construct and Extract Nested Structs', [
     // 1. Create inner structs

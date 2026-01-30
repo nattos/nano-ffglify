@@ -187,7 +187,8 @@ export interface PortDef {
 export interface VariableDef {
   id: string;
   type: DataType; // Must be POD (scalar/vector/matrix) or array<T, N>
-  // NOTE: Arrays MUST have an initialValue (e.g. []) to be valid in some backends.
+  // Initial value for the variable.
+  // If undefined, code generators will construct a standard default value (e.g. 0, false, empty primitives).
   initialValue?: any;
   comment?: string;
 }

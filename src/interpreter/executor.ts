@@ -22,6 +22,8 @@ export class InterpretedExecutor {
     for (const v of func.localVars) {
       if (v.initialValue !== undefined) {
         this.context.setVar(v.id, v.initialValue);
+      } else {
+        this.context.setVar(v.id, this.constructDefaultValue(v.type));
       }
     }
 
@@ -261,5 +263,36 @@ export class InterpretedExecutor {
         args[edge.portIn] = this.resolveNodeValue(sourceNode, func);
       }
     }
+  }
+
+  private constructDefaultValue(type: string): RuntimeValue {
+    if (type === 'float' || type === 'f32') return 0.0;
+    if (type === 'int' || type === 'i32') return 0;
+    if (type === 'bool') return false;
+    if (type === 'string') return '';
+    if (type === 'float2' || type === 'vec2<f32>') return [0, 0];
+    if (type === 'float3' || type === 'vec3<f32>') return [0, 0, 0];
+    if (type === 'float4' || type === 'vec4<f32>') return [0, 0, 0, 0];
+    if (type === 'float3x3' || type === 'mat3x3<f32>') return [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    if (type === 'float4x4' || type === 'mat4x4<f32>') return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    // Array
+    if (type.startsWith('array<')) {
+      return [];
+    }
+
+    // Structs?
+    // In strict mode we should look up the struct definition and build an object.
+    const structDef = this.context.ir.structs?.find(s => s.id === type);
+    if (structDef) {
+      const obj: any = {};
+      for (const m of structDef.members) {
+        obj[m.name] = this.constructDefaultValue(m.type);
+      }
+      return obj;
+    }
+
+    // Fallback
+    return 0;
   }
 }
