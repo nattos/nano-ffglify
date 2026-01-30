@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { runParametricTest, buildSimpleIR, availableBackends } from './test-runner';
+import { runParametricTest, buildSimpleIR, availableBackends, runFullGraphErrorTest } from './test-runner';
 import { validateIR } from '../../ir/validator';
 
 describe('Conformance: Buffers', () => {
+  // ... (previous lines)
+
+  // ...
+
 
   runParametricTest('should handle Resize and Clear', [
     // 1. Write data
@@ -84,4 +88,45 @@ describe('Conformance: Buffers', () => {
     expect(errors[0].message).toContain('Static OOB');
   });
 
+
+
+  it('should detect Type Mismatch in buffer_store', () => {
+    const ir: any = {
+      version: '3.0.0',
+      meta: { name: 'Type Mismatch Test' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      structs: [],
+      resources: [
+        { id: 'b_float', type: 'buffer', dataType: 'f32', size: { mode: 'fixed', value: 1 }, persistence: { retain: false } },
+        { id: 'b_int', type: 'buffer', dataType: 'i32', size: { mode: 'fixed', value: 1 }, persistence: { retain: false } }
+      ],
+      functions: [
+        {
+          id: 'fn_main',
+          type: 'shader',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'f_val', op: 'float', val: 1.0 },
+            { id: 'i_val', op: 'int', val: 1 },
+            // Store float into int buffer -> Error
+            { id: 'bad_store_1', op: 'buffer_store', buffer: 'b_int', index: 0, value: 'f_val' },
+            // Store int into float buffer -> Error
+            { id: 'bad_store_2', op: 'buffer_store', buffer: 'b_float', index: 0, value: 'i_val' }
+          ],
+          edges: [
+            { from: 'f_val', portOut: 'val', to: 'bad_store_1', portIn: 'value', type: 'data' },
+            { from: 'i_val', portOut: 'val', to: 'bad_store_2', portIn: 'value', type: 'data' }
+          ]
+        }
+      ]
+    };
+
+    const errors = validateIR(ir);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.find(e => e.message.includes("Buffer 'b_int' expects 'int', got 'float'"))).toBeDefined();
+    expect(errors.find(e => e.message.includes("Buffer 'b_float' expects 'float', got 'int'"))).toBeDefined();
+  });
 });

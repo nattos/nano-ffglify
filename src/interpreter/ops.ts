@@ -324,6 +324,10 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     return [args.x, args.y, args.z, args.w] as VectorValue;
   },
 
+  'float': (ctx, args) => args.val,
+  'int': (ctx, args) => args.val,
+  'bool': (ctx, args) => args.val,
+
   // ----------------------------------------------------------------
   // Matrix Operations (Column Major)
   // ----------------------------------------------------------------

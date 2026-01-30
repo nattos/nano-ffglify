@@ -294,6 +294,51 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
             }
           }
         }
+
+        // Strict Type Check for buffer_store
+        if (node.op === 'buffer_store' && resDef) {
+          const normalize = (t: string): ValidationType => {
+            if (t === 'f32' || t === 'float') return 'float';
+            if (t === 'i32' || t === 'int') return 'int';
+            if (t === 'bool' || t === 'boolean') return 'boolean';
+            if (t === 'vec2<f32>' || t === 'float2') return 'float2';
+            if (t === 'vec3<f32>' || t === 'float3') return 'float3';
+            if (t === 'vec4<f32>' || t === 'float4') return 'float4';
+            if (t === 'mat3x3<f32>' || t === 'float3x3') return 'float3x3';
+            if (t === 'mat4x4<f32>' || t === 'float4x4') return 'float4x4';
+            return 'any';
+          };
+
+          const expectedType = normalize(resDef.dataType || 'float');
+
+          // Resolve Actual Type
+          let actualType: ValidationType = 'any';
+          const edge = func.edges.find(e => e.to === node.id && e.portIn === 'value');
+          if (edge) {
+            actualType = resolveNodeType(edge.from, func, cache, resourceIds, errors);
+          } else if (node['value'] !== undefined) {
+            const v = node['value'];
+            if (typeof v === 'number') actualType = 'float';
+            else if (typeof v === 'boolean') actualType = 'boolean';
+            else if (Array.isArray(v)) {
+              if (v.length === 2) actualType = 'float2';
+              else if (v.length === 3) actualType = 'float3';
+              else if (v.length === 4) actualType = 'float4';
+              else if (v.length === 9) actualType = 'float3x3';
+              else if (v.length === 16) actualType = 'float4x4';
+            }
+          }
+
+          if (actualType !== 'any' && expectedType !== 'any' && actualType !== expectedType) {
+            // Allow int -> float? No, User requested strict check.
+            // "strict type casting (e.g. i32 -> f32) in generation" implies implicit is BAD.
+            errors.push({
+              nodeId: node.id,
+              message: `Type Mismatch in buffer_store: Buffer '${resId}' expects '${expectedType}', got '${actualType}'`,
+              severity: 'error'
+            });
+          }
+        }
       }
     }
   });

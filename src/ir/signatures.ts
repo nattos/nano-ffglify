@@ -133,6 +133,11 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { val: 'float' }, output: 'boolean' }
   ],
 
+  // Scalar Constructors
+  'float': [{ inputs: { val: 'float' }, output: 'float' }],
+  'int': [{ inputs: { val: 'int' }, output: 'int' }],
+  'bool': [{ inputs: { val: 'boolean' }, output: 'boolean' }],
+
   // Vector Constructors
   'float2': [{ inputs: { x: 'float', y: 'float' }, output: 'float2' }],
   'float3': [{ inputs: { x: 'float', y: 'float', z: 'float' }, output: 'float3' }],

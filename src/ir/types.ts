@@ -250,6 +250,8 @@ export type BuiltinOp =
 
   // Scalar Casts
   | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
+  // Scalar Constructors
+  | 'float' | 'int' | 'bool'
 
   // Vector & Color
   | 'float2' | 'float3' | 'float4'
@@ -283,7 +285,7 @@ export type BuiltinOp =
   // Resources
   // buffer_store/load accesses are typed based on the resource definition.
   // No implicit flattening occurs. The type of the value being written must match the type of the buffer.
-  // NOTE: 'buffer_store' may require strict type casting (e.g. i32 -> f32) in generation.
+  // Validation enforces strict type matching (e.g. storing float into int buffer is an error).
   | 'buffer_load' | 'buffer_store'
   | 'texture_sample' | 'texture_store' | 'texture_load'
   | 'resource_get_size' | 'resource_get_format'
