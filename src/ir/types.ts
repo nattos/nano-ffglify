@@ -239,66 +239,143 @@ export interface Edge {
 // ------------------------------------------------------------------
 // Standard OpCodes (Reference)
 // ------------------------------------------------------------------
+// The IR uses a strict set of Builtin Ops.
+//
+// Signatures Legend:
+// - T: Generic Scalar (float) or Vector (floatN)
+// - B: Boolean or Boolean Vector (implied)
+//
+// Most Math Ops support overloaded signatures:
+// - Scalar: (float, float) -> float
+// - Vector: (floatN, floatN) -> floatN
+//
 export type BuiltinOp =
+  // ----------------------------------------------------------------
   // Math & Logic
-  | 'math_add' | 'math_sub' | 'math_mul' | 'math_div' | 'math_mad'
-  | 'math_mod' | 'math_clamp' | 'math_abs' | 'math_ceil' | 'math_floor'
-  | 'math_min' | 'math_max' | 'math_pow' | 'math_sqrt' | 'math_exp' | 'math_log'
-  | 'math_sin' | 'math_cos' | 'math_tan' | 'math_asin' | 'math_acos' | 'math_atan' | 'math_atan2'
+  // ----------------------------------------------------------------
+  // Standard Arithmetic:
+  // Inputs: { a: T, b: T } | Output: T
+  | 'math_add' | 'math_sub' | 'math_mul' | 'math_div' | 'math_mod'
+  | 'math_pow' | 'math_min' | 'math_max'
+  // Multiply-Add: { a: T, b: T, c: T } -> T (a * b + c)
+  | 'math_mad'
+
+  // Unary Math:
+  // Inputs: { val: T } | Output: T
+  | 'math_abs' | 'math_ceil' | 'math_floor' | 'math_sqrt' | 'math_exp' | 'math_log'
+  | 'math_sin' | 'math_cos' | 'math_tan' | 'math_asin' | 'math_acos' | 'math_atan'
   | 'math_sinh' | 'math_cosh' | 'math_tanh' | 'math_sign'
-  | 'math_div_scalar'
+  | 'math_clamp' // { val: T, min: T, max: T } -> T
+
+  // Special Math:
+  | 'math_atan2' // { y: T, x: T } -> T
+  | 'math_div_scalar' // { val: T(vec), scalar: float } -> T
+
+  // Logic & Comparison:
+  // Inputs: { a: T, b: T } | Output: T (0.0/1.0) or B (true/false)
+  // Note: In strict mode, output is boolean. In shader mode, often maps to mix/step.
   | 'math_gt' | 'math_lt' | 'math_ge' | 'math_le' | 'math_eq' | 'math_neq'
-  | 'math_and' | 'math_or' | 'math_xor' | 'math_not'
-  | 'math_pi' | 'math_e'
+  | 'math_and' | 'math_or' | 'math_xor' | 'math_not' // { val: B } -> B
 
+  // Constants:
+  | 'math_pi' | 'math_e' // { } -> float
+
+  // ----------------------------------------------------------------
   // Advanced Math
+  // ----------------------------------------------------------------
+  // Unary: { val: T } -> T
   | 'math_fract' | 'math_trunc'
+  // Classification: { val: T } -> boolean
   | 'math_is_nan' | 'math_is_inf' | 'math_is_finite'
-  | 'math_flush_subnormal'
-  | 'math_mantissa' | 'math_exponent'
+  // Advanced:
+  | 'math_flush_subnormal' // { val: T } -> T
+  // Decomposition:
+  | 'math_mantissa' | 'math_exponent' // { val: T } -> T
 
-  // Scalar Casts
+  // ----------------------------------------------------------------
+  // Scalar Casts & Constructors
+  // ----------------------------------------------------------------
+  // Casts: { val: any } -> Type
   | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
-  // Scalar Constructors
+  // Constructors: { val: scalar } -> scalar
   | 'float' | 'int' | 'bool' | 'string'
 
-  // Vector & Color
-  | 'float2' | 'float3' | 'float4'
-  | 'vec_length' | 'vec_normalize' | 'vec_dot' | 'vec_mix'
-  // Performs Porter-Duff "Source Over" alpha composition.
-  // Note: Handles zero-alpha without NaN (returns 0).
-  | 'color_mix'
-  | 'vec_swizzle' | 'vec_get_element'
+  // ----------------------------------------------------------------
+  // Extended Types
+  // ----------------------------------------------------------------
+  // Vectors:
+  | 'float2' // { x: float, y: float } -> float2
+  | 'float3' // { x, y, z } -> float3
+  | 'float4' // { x, y, z, w } -> float4
+  | 'vec_length'    // { a: T } -> float
+  | 'vec_normalize' // { a: T } -> T
+  | 'vec_dot'       // { a: T, b: T } -> float
+  | 'vec_mix'       // { a: T, b: T, t: float|T } -> T
+  | 'color_mix'     // { a: float4, b: float4, t: float } -> float4 (Porter-Duff)
+  | 'vec_swizzle'   // { vec: T, channels: string("xy") } -> T'
+  | 'vec_get_element' // { vec: T, index: int } -> float
 
-  // Matrix
-  | 'float3x3' | 'float4x4'
-  | 'mat_identity' | 'mat_mul' | 'mat_transpose' | 'mat_inverse'
+  // Matrices:
+  | 'float3x3' // { ...9 floats }
+  | 'float4x4' // { ...16 floats }
+  | 'mat_identity'  // { size: int } -> mat
+  | 'mat_mul'       // { a: mat, b: mat|vec } -> mat|vec
+  | 'mat_transpose' // { val: mat } -> mat
+  | 'mat_inverse'   // { val: mat } -> mat
 
-  // Quaternion
-  | 'quat' | 'quat_identity' | 'quat_mul' | 'quat_slerp' | 'quat_to_float4x4' | 'quat_rotate'
+  // Quaternions:
+  | 'quat' // { x, y, z, w }
+  | 'quat_identity' // {} -> quat
+  | 'quat_mul'      // { a: quat, b: quat } -> quat
+  | 'quat_slerp'    // { a: quat, b: quat, t: float } -> quat
+  | 'quat_to_float4x4' // { q: quat } -> float4x4
+  | 'quat_rotate'   // { vec: float3, q: quat } -> float3
 
-  // Variables & Data
-  | 'var_get' | 'var_set' | 'const_get' | 'loop_index'
-  // struct_construct: 'type' MUST match a defined StructDef.id. Inputs match member names.
-  | 'struct_construct' | 'struct_extract'
-  // array_construct: 'fill' value determines element type if not inferred.
-  // array_set: 'array' input MUST resolve to a generic Variable L-Value (var_get or similar).
-  // It cannot be a direct expression result.
-  | 'array_construct' | 'array_extract' | 'array_set' | 'array_length'
+  // ----------------------------------------------------------------
+  // Variables, Data, & Memory
+  // ----------------------------------------------------------------
+  | 'var_get'    // { var: string } -> any
+  | 'var_set'    // { var: string, val: any } -> val
+  | 'const_get'  // { name: string } -> any
+  | 'loop_index' // { loop: string } -> int
 
-  // Flow & Functions
-  // call_func: Execution node that also produces a value (if outputs > 0).
-  // The generator captures this return value in a temporary variable for downstream data use.
-  | 'flow_branch' | 'flow_loop' | 'call_func' | 'func_return'
+  // Structs:
+  | 'struct_construct' // { ...members } -> struct (Type inferred from Op ID/Context)
+  | 'struct_extract'   // { struct: T, field: string } -> T.field
 
-  // Resources
-  // buffer_store/load accesses are typed based on the resource definition.
-  // No implicit flattening occurs. The type of the value being written must match the type of the buffer.
-  // Validation enforces strict type matching (e.g. storing float into int buffer is an error).
-  | 'buffer_load' | 'buffer_store'
-  | 'texture_sample' | 'texture_store' | 'texture_load'
-  | 'resource_get_size' | 'resource_get_format'
+  // Arrays:
+  | 'array_construct'  // { ...elements } -> array
+  | 'array_set'        // { array: string(Ref), index: int, val: T } -> void
+  | 'array_extract'    // { array: T[], index: int } -> T
+  | 'array_length'     // { array: T[] } -> int
 
-  // Commands (Side Effects)
-  | 'cmd_dispatch' | 'cmd_resize_resource';
+  // ----------------------------------------------------------------
+  // Flow Control
+  // ----------------------------------------------------------------
+  | 'flow_branch' // { cond: bool, true: NodeID, false: NodeID }
+  | 'flow_loop'   // { count: int, body: NodeID }
+  | 'call_func'   // { func: string, ...args } -> any
+  | 'func_return' // { val: any }
+
+  // ----------------------------------------------------------------
+  // GPU / Resource Ops
+  // ----------------------------------------------------------------
+  // Buffers (Typed):
+  | 'buffer_load'  // { buffer: string, index: int } -> T
+  | 'buffer_store' // { buffer: string, index: int, value: T } -> void
+
+  // Textures:
+  | 'texture_sample' // { texture: string, uv: float2 } -> float4
+  | 'texture_load'   // { texture: string, coords: int2 } -> float4
+  | 'texture_store'  // { texture: string, coords: int2, value: float4 } -> void
+
+  // Metadata:
+  | 'resource_get_size'   // { id: string } -> float2
+  | 'resource_get_format' // { id: string } -> int
+
+  // ----------------------------------------------------------------
+  // Side Effects / Commands
+  // ----------------------------------------------------------------
+  | 'cmd_dispatch' // { func: string, dispatch: int3, ...args }
+  | 'cmd_resize_resource'; // { id: string, size: int2 }
 
