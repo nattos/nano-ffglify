@@ -109,7 +109,8 @@ export const ComputeTestBackend: TestBackend = {
     func?.nodes.forEach(n => {
       if (n.op === 'var_set') {
         const v = n['var'];
-        if (!varMap.has(v)) varMap.set(v, varCounter++);
+        const isLocal = func.localVars?.some(lv => lv.id === v);
+        if (!isLocal && !varMap.has(v)) varMap.set(v, varCounter++);
       }
     });
 
@@ -118,14 +119,14 @@ export const ComputeTestBackend: TestBackend = {
       size: globalsSizeBytes,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
     });
+    const entryFn = ir.functions.find(f => f.id === entryPoint);
+    if (!entryFn) throw new Error(`Entry point '${entryPoint}' not found`);
 
-    // 4. Generate WGSL
-    const generator = new WgslGenerator();
-    const code = generator.compile(func, {
+    const code = new WgslGenerator().compile(ir, entryPoint, {
       globalBufferBinding: 0,
-      varMap,
-      resourceBindings,
-      resourceDefs
+      varMap: varMap,
+      resourceBindings: resourceBindings,
+      resourceDefs: resourceDefs
     });
 
     console.log("[ComputeTestBackend] Generated WGSL:\n", code);

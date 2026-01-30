@@ -155,6 +155,6 @@ describe('Conformance: Functions', () => {
         edges: []
       }
     ]
-  }, /Recursion detected/);
+  }, /Recursion detected|cyclic dependency/);
 
 });

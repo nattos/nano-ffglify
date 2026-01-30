@@ -1,6 +1,6 @@
 import { IRDocument, FunctionDef } from '../ir/types';
 import { EvaluationContext, RuntimeValue } from './context';
-import { create, globals, gpu } from 'webgpu';
+import { globals } from 'webgpu';
 import { CpuJitCompiler } from './cpu-jit';
 import { OpRegistry } from './ops';
 import { BuiltinOp, TextureFormatValues, TextureFormatFromId, TextureFormat } from '../ir/types';

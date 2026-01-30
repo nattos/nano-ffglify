@@ -36,10 +36,13 @@ describe('Conformance: Buffers', () => {
     { id: 'val2', op: 'float4', x: 5, y: 6, z: 7, w: 8 },
     { id: 'store2', op: 'buffer_store', buffer: 'b_vec', index: 1, value: 'val2' }
   ], (ctx) => {
-    const res = ctx.getResource('b_vec');
-    // Expect Structured Data (Array of Vec4s)
-    expect(res.data?.[0]).toEqual([1, 2, 3, 4]);
-    expect(res.data?.[1]).toEqual([5, 6, 7, 8]);
+    const b_vec = (ctx.getResource('b_vec') as any).data;
+    // Expected Layout:
+    // [0]: (1,2,3,4)
+    // [1]: (5,6,7,8) (Wait, stride alignment?)
+    // In Array(8): 1,2,3,4, 5,6,7,8
+    expect(Array.from(b_vec[0])).toEqual([1, 2, 3, 4]);
+    expect(Array.from(b_vec[1])).toEqual([5, 6, 7, 8]);
   }, [
     {
       id: 'b_vec',
@@ -50,7 +53,7 @@ describe('Conformance: Buffers', () => {
     }
   ], [
     { from: 'store', portOut: 'exec_out', to: 'store2', portIn: 'exec_in', type: 'execution' }
-  ]);
+  ], []);
 
   it('should detect Static OOB Write', () => {
     // Manually build IR to static check, no execution needed
