@@ -46,13 +46,15 @@ export interface Metadata {
 // ------------------------------------------------------------------
 // Inputs (Parameters / Uniforms)
 // ------------------------------------------------------------------
+// InputDef defines a Graph Input (Uniform).
+// These are values exposed to the host environment (UI) and passed to the graph.
 export interface InputDef {
-  id: string;
-  type: DataType;
-  label?: string;
-  comment?: string;
-  format?: string;
-  default?: any;
+  id: string;        // Unique identifier (variable name)
+  type: DataType;    // Data type (float, int, float3, etc.)
+  label?: string;    // Human-readable label for UI
+  comment?: string;  // Description
+  format?: string;   // For textures: 'rgba8', 'rgba32f', etc. hints for UI/Validation
+  default?: any;     // Default value if not provided by host
   ui?: {
     min?: number;
     max?: number;
@@ -71,16 +73,19 @@ export type ResourceSize =
 
 export type ResourceType = 'texture2d' | 'buffer' | 'atomic_counter';
 
+// TextureFormat: Explicit Integer Enum for efficient Runtime processing.
+// Uses explicit string values ('rgba8' etc) for serialization compatibility/readability.
 export enum TextureFormat {
   Unknown = 'unknown',
-  RGBA8 = 'rgba8',
-  RGBA16F = 'rgba16f',
-  RGBA32F = 'rgba32f',
-  R8 = 'r8',
-  R16F = 'r16f',
-  R32F = 'r32f'
+  RGBA8 = 'rgba8',     // Standard 8-bit Normalized
+  RGBA16F = 'rgba16f', // Half-Float
+  RGBA32F = 'rgba32f', // Full-Float (High Precision)
+  R8 = 'r8',           // Single Channel 8-bit
+  R16F = 'r16f',       // Single Channel Half-Float
+  R32F = 'r32f'        // Single Channel Full-Float
 }
 
+// Runtime Integer Map for fast switch/lookup in C++/ASM execution.
 export const TextureFormatValues: Record<TextureFormat, number> = {
   [TextureFormat.Unknown]: 0,
   [TextureFormat.RGBA8]: 1,
@@ -91,7 +96,7 @@ export const TextureFormatValues: Record<TextureFormat, number> = {
   [TextureFormat.R32F]: 6
 };
 
-// Reverse mapping for looking up format string from integer
+// Reverse mapping for looking up format string from integer ID.
 export const TextureFormatFromId: Record<number, TextureFormat> = Object.entries(TextureFormatValues).reduce((acc, [k, v]) => {
   acc[v] = k as TextureFormat;
   return acc;
@@ -102,27 +107,30 @@ export interface ResourceDef {
   type: ResourceType;
   comment?: string;
 
-  // For buffers
+  // For buffers: The native type of elements stored (e.g. 'float', 'int')
   dataType?: DataType;
   structType?: StructMember[]; // For custom layout buffers
 
-  // For textures
+  // For textures: The pixel format.
+  // Must match a recognized TextureFormat enum value.
   format?: TextureFormat; // Default 'rgba8'
+
+  // Sampling parameters (if applicable)
   sampler?: {
     filter: 'nearest' | 'linear';
     wrap: 'clamp' | 'repeat' | 'mirror';
   };
 
-  // Sizing
+  // Sizing Strategy
   size: ResourceSize;
 
   // Persistence / Lifecycle
   persistence: {
-    retain: boolean;         // If true, functions as "History" (not cleared automatically)
-    clearOnResize: boolean;
-    clearEveryFrame: boolean;
-    clearValue?: any;
-    cpuAccess: boolean;      // If true, host can read back
+    retain: boolean;         // If true, data persists across frames (History/Feedback).
+    clearOnResize: boolean;  // Reset content if size changes?
+    clearEveryFrame: boolean;// Explicitly clear at start of frame?
+    clearValue?: any;        // Value to clear to (if clearing).
+    cpuAccess: boolean;      // If true, enables Readback to Host (SLOW).
   };
 }
 

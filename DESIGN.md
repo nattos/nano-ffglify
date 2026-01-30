@@ -37,6 +37,11 @@ The heart of the system is the IR, designed to be a "lingua franca" for GPU logi
 -   **History**: Easy access to previous frames (feedback loops) and CPU-side history.
 -   **Recursion & Loops**: First-class support for complex control flow within the graph.
 
+### 5. Verification & Compliance
+-   **Reference Interpreter**: A pure CPU-based reference implementation of the IR to serve as the "Source of Truth".
+-   **Compliance Suite**: A comprehensive set of Unit and Integration tests (Scalar, Vector, Struct, Flow) that verify backends against the Reference.
+-   **Strict Typing**: The system enforces strict type safety at the IR entry level to prevent invalid states.
+
 ## Architecture
 
 ### Frontend

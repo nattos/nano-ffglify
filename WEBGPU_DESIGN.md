@@ -156,8 +156,32 @@ The CPU portion of the IR (Control Flow, Logic) is executed by a specialized JIT
 *   **Data Resolution**: Data inputs (`data` edges) are compiled recursively into expressions (e.g., `globals.bufferLoad(..., i + 1)`).
 *   **Statement Emission**: Executable nodes (`var_set`, `cmd_dispatch`) emit specific JS statements.
 
+
+## Implementation Status (Updated 2026-01-31)
+
+### 1. JIT Compiler (`src/interpreter/cpu-jit.ts`) (Implemented)
+- **Status**: Production Ready for Conformance Tests.
+- **Features**:
+  - Recursively compiles pure data nodes into unrolled JS expressions.
+  - Supports `struct` and `array` construction and mutation.
+  - Handles logical branching and loops.
+  - **Implicit Node Resolution**: Automatically detects when string arguments refer to internal Node IDs.
+
+### 2. WebGPU Executor (`src/interpreter/webgpu-executor.ts`) (Implemented)
+- **Status**: Functional.
+- **Capabilities**:
+  - **Hybrid Execution**: Runs CPU logic via JIT and Dispatch logic via WebGPU.
+  - **Data Marshalling**: Strongly typed marshalling of Scalars, Vectors, Matrices, and Structs from CPU to Shader.
+  - **Safety**: Strict validation against string injection into shaders.
+  - **Async Dispatch**: Tracks pending GPU operations for correct test synchronization.
+
+### 3. Sampling Strategy (Implemented)
+- **Hybrid Approach**:
+  - **Compute Integration**: Uses `textureLoad` and manual bilinear interpolation logic injected by `WgslGenerator` to support unfilterable formats (e.g. `r32float`) in Compute shaders.
+  - **Legacy Compatibility**: Maintains `sampler` binding definition for future Render Pass compatibility.
+
 ## Next Steps
 
-1.  **Skeleton**: Implement `WebGpuExecutor` structure.
-2.  **Transpiler**: Build `irToWgsl(functionDef)`.
-3.  **Integration**: Hook into `TestRunner`.
+1.  **Render Pass Support**: Extend IR and Executor to support `cmd_draw` and Vertex/Fragment stages.
+2.  **Performance Optimization**: Implement bind-group caching and pipeline caching.
+3.  **Advanced features**: Atomic counters and workgroup shared memory support.
