@@ -11,7 +11,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
     comment: 'This is a test pipeline demonstrating resize, generation, and blur phases.',
     entryPoint: 'fn_main_cpu',
     inputs: [
-      { id: 't_input', type: 'texture2d', comment: 'Source image for blur' },
+      { id: 't_input', type: 'texture2d', format: 'rgba8', comment: 'Source image for blur' },
       { id: 'u_kernel_size', type: 'int', default: 16 }
     ],
     structs: [],
@@ -19,6 +19,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
       {
         id: 't_output',
         type: 'texture2d',
+        format: 'rgba8',
         size: { mode: 'reference', ref: 't_input' },
         persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false },
         comment: 'Blurred result texture'

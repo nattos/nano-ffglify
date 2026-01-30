@@ -45,23 +45,20 @@ export const ComputeTestBackend: TestBackend = {
 
   createContext: async (ir: IRDocument, inputs?: Map<string, RuntimeValue>) => {
     // Reuse WebGpuBackend's context creation (device init, resource alloc)
-    return WebGpuBackend.createContext(ir, inputs);
+    console.log('[CreateContext] IR Resources:', JSON.stringify(ir.resources.map(r => ({ id: r.id, dt: r.dataType }))));
+    const ctx = await WebGpuBackend.createContext(ir, inputs);
+    (ctx as any)._ir = ir;
+    return ctx;
   },
 
   run: async (ctx: EvaluationContext, entryPoint: string) => {
-    // This run method is invalid for this backend since 'execute' handles the full flow
-    // including buffer readback which 'run' signature doesn't easily support without side effects.
-    // However, execute calls run usually.
-    // We will override execute mostly.
-  },
-
-  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    // 1. Setup Context
-    const ctx = await ComputeTestBackend.createContext(ir, inputs);
-    const device = ctx.device; // Assume it was added by WebGpuBackend.createContext
+    const ir = (ctx as any)._ir as IRDocument;
+    if (!ir) throw new Error('[ComputeTestBackend] IR not found on context private _ir field');
+    const device = ctx.device;
 
     // 2. Allocate & Prepare Resources
-    const resourceBuffers = new Map<string, GPUBuffer>();
+    device.pushErrorScope('validation');
+    const resourceBuffers = new Map<string, GPUBuffer | GPUTexture | GPUSampler>();
     const resourceBindings = new Map<string, number>();
     let bindingCounter = 1; // 0 is reserved for Globals
 
@@ -92,7 +89,92 @@ export const ComputeTestBackend: TestBackend = {
         resourceBuffers.set(res.id, buffer);
         resourceBindings.set(res.id, bindingCounter++);
       }
-      // TODO: Textures
+      else if (res.type === 'texture2d') {
+        const state = ctx.getResource(res.id);
+        const width = state.width || 1;
+        const height = state.height || 1;
+        const formatStr = (res as any).format || 'rgba8';
+
+        let gpuFormat: GPUTextureFormat = 'rgba8unorm';
+        if (formatStr === 'r32f') gpuFormat = 'r32float';
+        else if (formatStr === 'rgba8') gpuFormat = 'rgba8unorm';
+        else if (formatStr === 'rgba32f') gpuFormat = 'rgba32float';
+
+        const texture = device.createTexture({
+          size: [width, height, 1],
+          format: gpuFormat,
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC
+        });
+
+        // Upload Data
+        if (state.data && state.data.length > 0) {
+          // Assume data is number[] (flattened) or VectorValue[].
+          // We need to flatten to ArrayBuffer.
+          // For R32F -> Float32Array
+          // For RGBA8 -> Uint8Array (0-255) OR Float32Array?
+          // IR data usually stores 0-1 floats.
+          // If gpuFormat is 'rgba8unorm', we must upload bytes.
+          // Converting float data to correct buffer format is complex.
+          // For test simplicity: assume Float32 (r32f/rgba32f) for now, or handle rgba8 conversion.
+
+          if (gpuFormat === 'r32float' || gpuFormat === 'rgba32float' || gpuFormat === 'rgba8unorm') {
+            const flatFloats = (state.data as any).flat(2) as number[];
+
+            // 1. Prepare Source Bytes
+            let srcBytes: Uint8Array;
+            let bytesPerPixel = 4;
+
+            if (gpuFormat === 'rgba8unorm') {
+              bytesPerPixel = 4;
+              srcBytes = new Uint8Array(flatFloats.map(v => Math.max(0, Math.min(255, Math.floor(v * 255)))));
+            } else {
+              // Float formats
+              const f32 = new Float32Array(flatFloats);
+              srcBytes = new Uint8Array(f32.buffer);
+              bytesPerPixel = gpuFormat === 'r32float' ? 4 : 16;
+            }
+
+            // 2. Pad to 256 bytes per row
+            const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
+            const paddedSize = bytesPerRow * height;
+            const paddedData = new Uint8Array(paddedSize);
+            const validBytesPerRow = width * bytesPerPixel;
+
+            for (let y = 0; y < height; y++) {
+              const srcStart = y * validBytesPerRow;
+              const dstStart = y * bytesPerRow;
+              paddedData.set(srcBytes.subarray(srcStart, srcStart + validBytesPerRow), dstStart);
+            }
+
+            device.queue.writeTexture({ texture }, paddedData, { bytesPerRow, rowsPerImage: height }, { width, height });
+          }
+        }
+
+        resourceBuffers.set(res.id, texture as any); // Hack: Store texture in resourceBuffers map (typed as GPUBuffer) - Needs refactor or cast? Map<string, GPUBuffer | GPUTexture>
+        resourceBindings.set(res.id, bindingCounter++);
+
+        // Sampler
+        // Only if sampler props exist?
+        // 06-textures.test.ts has sampler: { ... }
+        if (res.sampler) {
+          const addressMode = res.sampler.wrap === 'repeat' ? 'repeat' : 'clamp-to-edge';
+          const filter = res.sampler.filter === 'linear' ? 'linear' : 'nearest';
+          const sampler = device.createSampler({
+            addressModeU: addressMode,
+            addressModeV: addressMode,
+            magFilter: filter,
+            minFilter: filter
+          });
+          resourceBuffers.set(`${res.id}_sampler`, sampler as any);
+          resourceBindings.set(`${res.id}_sampler`, bindingCounter++);
+        }
+      }
+    }
+
+    const allocError = await device.popErrorScope();
+    if (allocError) {
+      console.error("Resource Allocation Error:", allocError.message);
+      throw new Error(`WebGPU Allocation Error: ${allocError.message}`);
     }
 
     // 3. Globals Buffer & Resource Map
@@ -100,7 +182,10 @@ export const ComputeTestBackend: TestBackend = {
     const resourceDefs = new Map<string, ResourceDef>();
 
     // Populate Resource Defs
-    ir.resources.forEach(r => resourceDefs.set(r.id, r));
+    ir.resources.forEach(r => {
+      console.log('CTB Resource:', r.id, r.dataType);
+      resourceDefs.set(r.id, r);
+    });
 
     const func = ir.functions.find(f => f.id === entryPoint);
     if (!func) throw new Error('Entry point not found');
@@ -122,10 +207,20 @@ export const ComputeTestBackend: TestBackend = {
     const entryFn = ir.functions.find(f => f.id === entryPoint);
     if (!entryFn) throw new Error(`Entry point '${entryPoint}' not found`);
 
+    // Split resourceBindings into resources and samplers for Generator
+    const genResourceBindings = new Map<string, number>();
+    const genSamplerBindings = new Map<string, number>();
+
+    resourceBindings.forEach((binding, id) => {
+      if (id.endsWith('_sampler')) genSamplerBindings.set(id.replace('_sampler', ''), binding); // Generator expects resource ID key for samplers
+      else genResourceBindings.set(id, binding);
+    });
+
     const code = new WgslGenerator().compile(ir, entryPoint, {
       globalBufferBinding: 0,
       varMap: varMap,
-      resourceBindings: resourceBindings,
+      resourceBindings: genResourceBindings,
+      samplerBindings: genSamplerBindings,
       resourceDefs: resourceDefs
     });
 
@@ -156,19 +251,25 @@ export const ComputeTestBackend: TestBackend = {
     // 6. Bind Group
     const entries: GPUBindGroupEntry[] = [];
 
-    // Only bind globals if we have variables mapped or force binding if layout expects it?
-    // With auto layout, unused bindings are stripped.
-    // varMap tracks 'var_set'.
-    // We should assume if varMap size > 0, we use it (to write).
-    // If varMap is empty, but we read? 'var_get' of uninitialized var reads from globals?
-    // For now, check if varMap has usage.
+    // Only bind globals if we have variables mapped
     if (varMap.size > 0) {
       entries.push({ binding: 0, resource: { buffer: globalBuffer } });
     }
 
-    resourceBuffers.forEach((buf, id) => {
+    resourceBuffers.forEach((res, id) => {
+      // res is GPUBuffer | GPUTexture | GPUSampler.
+      // resourceBindings has the binding index.
       const binding = resourceBindings.get(id)!;
-      entries.push({ binding, resource: { buffer: buf } });
+
+      // Determine type
+      if ((res as any).usage !== undefined && ((res as any).usage & GPUBufferUsage.STORAGE)) {
+        entries.push({ binding, resource: { buffer: res as GPUBuffer } });
+      } else if (res instanceof GPUSampler) {
+        entries.push({ binding, resource: res });
+      } else {
+        // Texture View
+        entries.push({ binding, resource: (res as GPUTexture).createView() });
+      }
     });
 
     const bindGroup = device.createBindGroup({
@@ -200,10 +301,49 @@ export const ComputeTestBackend: TestBackend = {
     const globalsStaging = copyToStaging(globalBuffer, globalsSizeBytes);
 
     resourceBuffers.forEach((buf, id) => {
-      const state = ctx.getResource(id);
-      const elBytes = getElementSize(state.def.dataType);
-      const size = state.width * elBytes;
-      stagingBuffers.set(id, copyToStaging(buf, size));
+      // Check if it's a Buffer
+      if (buf instanceof GPUBuffer) {
+        const state = ctx.getResource(id);
+        const elBytes = getElementSize(state.def.dataType);
+        const size = state.width * elBytes;
+        console.log(`[ComputeTestBackend] Staging:`, id, buf.constructor.name);
+        stagingBuffers.set(id, copyToStaging(buf, size));
+      } else if (buf instanceof GPUTexture) {
+        // Texture Readback
+        const state = ctx.getResource(id);
+        const width = state.width || 1;
+        const height = state.height || 1;
+        // Assume rgba8unorm has 4 bytes per pixel. r32f has 4 bytes per pixel.
+        // We need to match bytesPerRow alignment (256 bytes).
+        // Wait, copyTextureToBuffer requires bytesPerRow to be multiple of 256.
+        // But for small test textures (2x2), this is padded.
+        // We must un-pad on read?
+
+        let bytesPerPixel = 4; // Default rgba8unorm
+        if (state.def.format === 'rgba32f') bytesPerPixel = 16;
+        if (state.def.format === 'r32f') bytesPerPixel = 4;
+
+        const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
+        const rowsPerImage = height;
+        const bufferSize = bytesPerRow * rowsPerImage;
+
+        const staging = device.createBuffer({
+          size: bufferSize,
+          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+        });
+
+        const cmd = encoder;
+        cmd.copyTextureToBuffer(
+          { texture: buf },
+          { buffer: staging, bytesPerRow, rowsPerImage: height },
+          { width, height }
+        );
+
+        stagingBuffers.set(id, staging);
+        // Store metadata for unpadding later if needed?
+        // But the staging iteration logic expects flat data.
+        // We will need to handle padding in the Readback loop.
+      }
     });
 
     device.queue.submit([encoder.finish()]);
@@ -223,7 +363,58 @@ export const ComputeTestBackend: TestBackend = {
     // Resources
     for (const [id, staging] of stagingBuffers) {
       const data = new Float32Array(staging.getMappedRange());
+      console.log(`[Readback] ${id}:`, Array.from(data));
       const state = ctx.getResource(id);
+
+      // Handle Texture Unpadding
+      if (state.def.type === 'texture2d') {
+        const width = state.width || 1;
+        const height = state.height || 1;
+        let bytesPerPixel = 4;
+        if (state.def.format === 'rgba32f') bytesPerPixel = 16;
+        if (state.def.format === 'r32f') bytesPerPixel = 4;
+
+        const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
+        const floatsPerRow = bytesPerRow / 4;
+        const validFloatsPerRow = (width * bytesPerPixel) / 4;
+
+        const unpadded: number[] = [];
+        for (let y = 0; y < height; y++) {
+          const rowStart = y * floatsPerRow;
+          const rowData = data.subarray(rowStart, rowStart + validFloatsPerRow);
+          unpadded.push(...Array.from(rowData));
+        }
+
+        // Reconstruct vectors if needed (for consistency with Buffer logic below)
+        // But texture state.data is usually just array of numbers or vectors?
+        // In format test: expect(tex.width).toBe(2);
+        // Does it check data? No, format test checks metadata.
+        // But Sampler test checks buffered logic.
+        // Wait, 'b_result' is a BUFFER. So it hits "else" block.
+        // 't_src' has no output check.
+        // 't_internal' format test: checks metadata.
+        // Does it verify clear operation? "Format and Clear Operations".
+        // Likely checks data is cleared.
+        // So we should populate state.data.
+        state.data = unpadded;
+        // Note: Buffer logic below handles vectors. We should probably reuse that if we want vectors in state.data.
+        // But state.data format varies.
+        // Let's assume flat array is fine for now or check usage.
+        // If `tex.data` expects vectors (Array<number[]>), we need to chunk it.
+
+        if (bytesPerPixel === 16) { // vec4
+          const vectors: number[][] = [];
+          for (let i = 0; i < unpadded.length; i += 4) {
+            vectors.push(unpadded.slice(i, i + 4));
+          }
+          state.data = vectors;
+        } else {
+          state.data = unpadded;
+        }
+
+        staging.unmap();
+        continue;
+      }
 
       const elBytes = getElementSize(state.def.dataType);
       const elFloats = elBytes / 4;
@@ -255,6 +446,12 @@ export const ComputeTestBackend: TestBackend = {
       staging.unmap();
     }
 
+    return;
+  },
+
+  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
+    const ctx = await ComputeTestBackend.createContext(ir, inputs);
+    await ComputeTestBackend.run(ctx, entryPoint);
     return ctx;
   }
 };

@@ -14,6 +14,7 @@ describe('Conformance: Texture Sampling', () => {
       {
         id: 't_src',
         type: 'texture2d',
+        format: 'rgba8',
         size: { mode: 'fixed', value: [2, 2] },
         persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false },
         sampler: { filter: 'nearest', wrap: 'repeat' } // Mutated in tests
@@ -21,6 +22,7 @@ describe('Conformance: Texture Sampling', () => {
       {
         id: 'b_result',
         type: 'buffer',
+        dataType: 'vec4<f32>',
         size: { mode: 'fixed', value: 1 },
         persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
       }

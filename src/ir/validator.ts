@@ -18,6 +18,9 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
     ...doc.inputs.map(i => i.id)
   ]);
 
+  // Check Resources
+  validateResources(doc, errors);
+
   // Check Struct Definitions
   validateStructs(doc, errors);
 
@@ -201,6 +204,25 @@ const resolveNodeType = (
 
   cache.set(nodeId, 'any');
   return 'any';
+};
+
+export const validateResources = (doc: IRDocument, errors: LogicValidationError[]) => {
+  doc.resources.forEach(res => {
+    // Validate Texture Format
+    if (res.type === 'texture2d') {
+      const fmt = (res as any).format;
+      // If format is missing, is it an error? User said "enforce providing a fixed texture format".
+      // But maybe default is allowed?
+      // "Let's _enforce_ providing a fixed texture format".
+      if (!fmt) {
+        errors.push({ message: `Texture resource '${res.id}' missing required 'format' property`, severity: 'error' });
+      } else {
+        if (!Object.values(TextureFormat).includes(fmt as TextureFormat)) {
+          errors.push({ message: `Texture resource '${res.id}' has invalid format '${fmt}'`, severity: 'error' });
+        }
+      }
+    }
+  });
 };
 
 export const validateStructs = (doc: IRDocument, errors: LogicValidationError[]) => {

@@ -10,6 +10,7 @@ export interface WgslOptions {
   globalBufferBinding?: number; // If set, generate globals buffer and use it for var_get/set
   varMap?: Map<string, number>; // Map var name to index in globals buffer
   resourceBindings?: Map<string, number>; // Map resource ID (buffer/texture) to binding index (group 0)
+  samplerBindings?: Map<string, number>; // Map resource ID to sampler binding index
   resourceDefs?: Map<string, ResourceDef>; // Definitions for typed buffer generation
 }
 
@@ -36,10 +37,25 @@ export class WgslGenerator {
     if (options.resourceBindings) {
       options.resourceBindings.forEach((bindingIdx, resId) => {
         const def = options.resourceDefs?.get(resId);
-        const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
-        const structName = `Buffer_${resId}`;
-        lines.push(`struct ${structName} { data: array<${type}> }`);
-        lines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> b_${resId} : ${structName};`);
+        console.log('Gen Binding:', resId, def?.dataType, 'Types:', def?.type);
+        if (def?.type === 'buffer' || !def) {
+          // Default to buffer if unknown or explicit buffer
+          const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
+          const structName = `Buffer_${resId}`;
+          lines.push(`struct ${structName} { data: array<${type}> }`);
+          lines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> b_${resId} : ${structName};`);
+        } else if (def.type === 'texture2d') {
+          // For now, assume sampled texture.
+          // In future, check usage to decide storage vs sampled.
+          // Using f32 as component type (standard for float textures)
+          lines.push(`@group(0) @binding(${bindingIdx}) var ${resId} : texture_2d<f32>;`);
+        }
+      });
+    }
+
+    if (options.samplerBindings) {
+      options.samplerBindings.forEach((bindingIdx, resId) => {
+        lines.push(`@group(0) @binding(${bindingIdx}) var s_${resId} : sampler;`);
       });
     }
 
@@ -56,6 +72,9 @@ export class WgslGenerator {
     // Generate Structs
     this.generateStructs(ir, lines);
 
+    // Generate Texture Samplers
+    this.emitTextureSamplers(lines, options);
+
     // Generate Helper Functions (All except Entry Point)
     // Filter out entry point
     const helperFuncs = ir.functions.filter(f => f.id !== entryPointId);
@@ -71,6 +90,38 @@ export class WgslGenerator {
     this.emitFunction(entryFunc, true, lines, options, ir);
 
     return lines.join('\n');
+  }
+
+  private emitTextureSamplers(lines: string[], options: WgslOptions) {
+    if (!options.resourceDefs) return;
+    options.resourceDefs.forEach((def, id) => {
+      if (def.type === 'texture2d') {
+        const wrap = def.sampler?.wrap || 'clamp';
+        const filter = def.sampler?.filter || 'nearest';
+
+        lines.push(`fn sample_${id}(uv: vec2<f32>) -> vec4<f32> {`);
+        if (def.sampler) {
+          lines.push(`  // Fake usage to keep sampler binding active`);
+          lines.push(`  let _unused = textureSampleLevel(${id}, s_${id}, vec2<f32>(0.0), 0.0);`);
+        }
+        lines.push(`  let size = vec2<f32>(textureDimensions(${id}));`);
+
+        // Wrap Logic
+        if (wrap === 'repeat') {
+          lines.push(`  let uv_wrap = uv - floor(uv);`);
+        } else {
+          // Clamp to 0-1 (optional but safe)
+          lines.push(`  let uv_wrap = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));`);
+        }
+
+        // Filter Logic (Nearest only)
+        lines.push(`  let coord = vec2<i32>(floor(uv_wrap * size));`);
+        lines.push(`  let safe_coord = clamp(coord, vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));`);
+        lines.push(`  return textureLoad(${id}, safe_coord, 0);`);
+        lines.push(`}`);
+        lines.push('');
+      }
+    });
   }
 
   private generateStructs(ir: IRDocument, lines: string[]) {
@@ -105,7 +156,8 @@ export class WgslGenerator {
         retType = 'void';
       }
 
-      lines.push(`fn ${func.id}(${args}) -> ${retType} {`);
+      const retStr = retType === 'void' ? '' : ` -> ${retType}`;
+      lines.push(`fn ${func.id}(${args})${retStr} {`);
     }
 
     // Locals
@@ -230,6 +282,14 @@ export class WgslGenerator {
     } else if (node.op === 'func_return') {
       const val = this.resolveArg(node, 'val', func, options, ir);
       lines.push(`${indent}return ${val};`);
+    } else if (node.op === 'cmd_dispatch') {
+      const funcId = node['func'];
+      // In WGSL, dispatch is implicit by being the entry point.
+      // But if we are compiling a CPU-like main that calls a shader func,
+      // we treat dispatch as a simple call to that function.
+      if (funcId) {
+        lines.push(`${indent}${funcId}();`);
+      }
     } else if (node.op === 'flow_branch') {
       const cond = this.resolveArg(node, 'cond', func, options, ir);
       // If cond is 'true' or 'false', use directly. Else assume numeric and compare to 0.
@@ -413,6 +473,26 @@ export class WgslGenerator {
 
     if (node.op.startsWith('math_') || node.op.startsWith('vec_')) {
       return this.compileMathOp(node, func, options, ir);
+    }
+
+    if (node.op === 'texture_sample') {
+      const tex = node['tex'];
+      const uv = this.resolveArg(node, 'uv', func, options, ir);
+      return `sample_${tex}(${uv})`;
+    }
+
+    if (node.op === 'texture_store') {
+      const tex = node['tex'];
+      const coords = this.resolveArg(node, 'coords', func, options, ir);
+      const val = this.resolveArg(node, 'value', func, options, ir);
+      return `textureStore(${tex}, vec2<i32>(${coords}), ${val})`;
+    }
+
+    if (node.op === 'texture_load') {
+      const tex = node['tex'];
+      const coords = this.resolveArg(node, 'coords', func, options, ir);
+      // textureLoad(tex, coords, lod) - assuming lod 0 for now if not provided
+      return `textureLoad(${tex}, vec2<i32>(${coords}), 0)`;
     }
 
     return '0.0'; // Fallback
