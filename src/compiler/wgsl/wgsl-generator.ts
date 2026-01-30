@@ -1,5 +1,5 @@
 
-import { FunctionDef, Node, Edge, DataType } from '../../ir/types';
+import { FunctionDef, Node, Edge, DataType, ResourceDef } from '../../ir/types';
 
 /**
  * WGSL Generator
@@ -10,6 +10,7 @@ export interface WgslOptions {
   globalBufferBinding?: number; // If set, generate globals buffer and use it for var_get/set
   varMap?: Map<string, number>; // Map var name to index in globals buffer
   resourceBindings?: Map<string, number>; // Map resource ID (buffer/texture) to binding index (group 0)
+  resourceDefs?: Map<string, ResourceDef>; // Definitions for typed buffer generation
 }
 
 export class WgslGenerator {
@@ -23,17 +24,24 @@ export class WgslGenerator {
 
     // Globals Buffer (for ComputeTestBackend)
     // We use a struct wrapper for compatibility
-    lines.push('struct StorageBuffer { data: array<f32> }');
+    lines.push('struct GlobalsBuffer { data: array<f32> }');
     lines.push('');
 
     if (options.globalBufferBinding !== undefined) {
-      lines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : StorageBuffer;`);
+      lines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : GlobalsBuffer;`);
     }
 
     // Resource Bindings
     if (options.resourceBindings) {
       options.resourceBindings.forEach((bindingIdx, resId) => {
-        lines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> b_${resId} : StorageBuffer;`);
+        const def = options.resourceDefs?.get(resId);
+        const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
+
+        // Define Struct
+        const structName = `Buffer_${resId}`;
+        lines.push(`struct ${structName} { data: array<${type}> }`);
+
+        lines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> b_${resId} : ${structName};`);
       });
     }
 
@@ -126,41 +134,8 @@ export class WgslGenerator {
       const val = this.resolveArg(node, 'value', func, options);
       const bufferId = node['buffer'];
 
-      // Determine value type to handle vector flattening
-      let valType = 'float';
-      const valEdge = func.edges.find(e => e.to === node.id && e.portIn === 'value');
-      if (valEdge) {
-        const srcNode = func.nodes.find(n => n.id === valEdge.from);
-        if (srcNode && srcNode.dataType) valType = srcNode.dataType;
-      }
-
-      const isVec = (t: string) => t.startsWith('vec') || t.startsWith('float') || Array.isArray(t); // simplistic check
-      // Better: check specific types
-      const width = (t: string) => {
-        if (t === 'vec2<f32>' || t === 'float2') return 2;
-        if (t === 'vec3<f32>' || t === 'float3') return 3;
-        if (t === 'vec4<f32>' || t === 'float4') return 4;
-        return 1;
-      }
-
-      const w = width(valType);
-
-      if (w > 1) {
-        // Flatten vector to float array
-        const components = ['x', 'y', 'z', 'w'];
-        // Capture value to avoid re-evaluation if expression
-        // But we can't easily make a new var inside this block without unique naming?
-        // We are inside `emitNode`. We can make a block? `{ let v = ...; }`
-        lines.push(`${indent}{`);
-        lines.push(`${indent}  let v_store = ${val};`);
-        for (let k = 0; k < w; k++) {
-          lines.push(`${indent}  b_${bufferId}.data[u32(${idx}) + ${k}u] = v_store.${components[k]};`);
-        }
-        lines.push(`${indent}}`);
-      } else {
-        // Ensure strictly float32 array access
-        lines.push(`${indent}b_${bufferId}.data[u32(${idx})] = ${val};`);
-      }
+      // Standard Store (No implicit flattening)
+      lines.push(`${indent}b_${bufferId}.data[u32(${idx})] = ${val};`);
     } else {
       lines.push(`${indent}// Op: ${node.op}`);
     }
@@ -313,15 +288,16 @@ export class WgslGenerator {
   }
 
   private resolveType(type: DataType): string {
+    // console.log(`[WgslGenerator] Resolving type: '${type}'`);
     // Map IR types to WGSL types
-    if (type === 'float') return 'f32';
-    if (type === 'int') return 'i32';
+    if (type === 'float' || type === 'f32') return 'f32';
+    if (type === 'int' || type === 'i32') return 'i32';
     if (type === 'bool') return 'bool';
-    if (type === 'float2') return 'vec2<f32>';
-    if (type === 'float3') return 'vec3<f32>';
-    if (type === 'float4') return 'vec4<f32>';
-    if (type === 'float3x3') return 'mat3x3<f32>';
-    if (type === 'float4x4') return 'mat4x4<f32>';
+    if (type === 'float2' || type === 'vec2<f32>') return 'vec2<f32>';
+    if (type === 'float3' || type === 'vec3<f32>') return 'vec3<f32>';
+    if (type === 'float4' || type === 'vec4<f32>') return 'vec4<f32>';
+    if (type === 'float3x3' || type === 'mat3x3<f32>') return 'mat3x3<f32>';
+    if (type === 'float4x4' || type === 'mat4x4<f32>') return 'mat4x4<f32>';
     return 'f32'; // Default
   }
 }

@@ -39,17 +39,41 @@ describe('Conformance: Primitives and Operators', () => {
       });
 
       // Construct Nodes
-      const nodes = nodesWithMeta.flatMap((meta) => [
-        { id: `op_${meta.index}`, op: meta.op, ...meta.args, dataType: meta.dataType },
-        { id: `store_${meta.index}`, op: 'buffer_store', buffer: 'b_result', index: meta.offset, value: `op_${meta.index}` }
-      ]);
+      const nodes = nodesWithMeta.flatMap((meta) => {
+        const ops = [];
+        // Primary Op
+        ops.push({ id: `op_${meta.index}`, op: meta.op, ...meta.args, dataType: meta.dataType });
 
-      // Construct Execution Chain Edges (store_0 -> store_1 -> ...)
-      const execEdges = nodesWithMeta.map((_, i) => {
+        // Storage
+        if (meta.dataType.startsWith('vec') || meta.dataType.startsWith('float2') || meta.dataType.startsWith('float3') || meta.dataType.startsWith('float4')) {
+          // Vector: Decompose -> Store
+          const size = Array.isArray(meta.expected) ? meta.expected.length : 1;
+          const channels = ['x', 'y', 'z', 'w'];
+          for (let k = 0; k < size; k++) {
+            // Extract component
+            const compId = `comp_${meta.index}_${k}`;
+            // Use swizzle for extraction (supported by all backends easily)
+            ops.push({ id: compId, op: 'vec_swizzle', vec: `op_${meta.index}`, channels: channels[k] });
+            // Store component
+            ops.push({ id: `store_${meta.index}_${k}`, op: 'buffer_store', buffer: 'b_result', index: meta.offset + k, value: compId });
+          }
+        } else {
+          // Scalar: Direct Store
+          ops.push({ id: `store_${meta.index}_0`, op: 'buffer_store', buffer: 'b_result', index: meta.offset, value: `op_${meta.index}` });
+        }
+        return ops;
+      });
+
+      // Construct Execution Chain Edges (store_prev_last -> store_curr_0 -> store_curr_1 ...)
+      // We need to flatten the list of stores to chain them.
+      const storeNodes = nodes.filter(n => n.op === 'buffer_store');
+
+      const execEdges = storeNodes.map((node, i) => {
         if (i === 0) return null;
+        const prev = storeNodes[i - 1];
         return {
-          from: `store_${i - 1}`, portOut: 'exec_out',
-          to: `store_${i}`, portIn: 'exec_in',
+          from: prev.id, portOut: 'exec_out',
+          to: node.id, portIn: 'exec_in',
           type: 'execution'
         };
       }).filter(Boolean) as any[];

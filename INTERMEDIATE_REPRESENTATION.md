@@ -44,10 +44,11 @@ type ResourceSize =
 *   `cmd_resize_resource`: Resizes a 'cpu_driven' resource.
 
 ### Op Semantics & Quirks
-1.  **Buffer Flattening**: `buffer_store` treats the buffer as a flat array of scalars (`float[]` or `int[]`).
-    *   If a Vector is stored (e.g. `store(vec2(x,y), index=i)`), it is **flattened** into consecutive indices.
-    *   `buffer[i] = x`, `buffer[i+1] = y`.
-    *   Ensure your indexing logic accounts for vector widths (e.g. stride = 4 for `vec4`).
+1.  **Buffer Access**: `buffer_store/load` operations are **Typed**.
+    *   The buffer element type is determined by the `ResourceDef` (e.g., `vec4<f32>`, `f32`).
+    *   **No Implicit Flattening**: Storing a `vec4` writes the entire vector to a single index.
+    *   `buffer[i] = vec4(...)`.
+    *   Ensure your indexing logic aligns with the element count (e.g. index 0 is first vec4, index 1 is second vec4).
 2.  **Color Mixing**: `color_mix` performs **Porter-Duff Source Over** alpha composition.
     *   Formula: `outA = srcA + dstA * (1 - srcA)`, `outRGB = (srcRGB*srcA + dstRGB*dstA*(1-srcA)) / outA`.
     *   **Quirk**: It explicitly handles `outA < 1e-5` to avoid NaN, returning `vec4(0)` (transparent black).

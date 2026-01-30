@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runParametricTest, buildSimpleIR } from './test-runner';
+import { runParametricTest, buildSimpleIR, availableBackends } from './test-runner';
 import { validateIR } from '../../ir/validator';
 
 describe('Conformance: Buffers', () => {
@@ -23,6 +23,33 @@ describe('Conformance: Buffers', () => {
     }
   ], [
     { from: 'store', portOut: 'exec_out', to: 'resize', portIn: 'exec_in', type: 'execution' }
+
+  ],
+    [], // localVars
+    [], // structs
+    availableBackends.filter(b => b.name !== 'Compute')
+  );
+
+  runParametricTest('Typed Buffer Storage (vec4)', [
+    { id: 'val', op: 'float4', x: 1, y: 2, z: 3, w: 4 },
+    { id: 'store', op: 'buffer_store', buffer: 'b_vec', index: 0, value: 'val' },
+    { id: 'val2', op: 'float4', x: 5, y: 6, z: 7, w: 8 },
+    { id: 'store2', op: 'buffer_store', buffer: 'b_vec', index: 1, value: 'val2' }
+  ], (ctx) => {
+    const res = ctx.getResource('b_vec');
+    // Expect Structured Data (Array of Vec4s)
+    expect(res.data?.[0]).toEqual([1, 2, 3, 4]);
+    expect(res.data?.[1]).toEqual([5, 6, 7, 8]);
+  }, [
+    {
+      id: 'b_vec',
+      type: 'buffer',
+      dataType: 'vec4<f32>',
+      size: { mode: 'fixed', value: 2 }, // 2 vec4s
+      persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
+    }
+  ], [
+    { from: 'store', portOut: 'exec_out', to: 'store2', portIn: 'exec_in', type: 'execution' }
   ]);
 
   it('should detect Static OOB Write', () => {

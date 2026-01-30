@@ -1,5 +1,5 @@
 
-import { IRDocument } from '../../ir/types';
+import { IRDocument, ResourceDef } from '../../ir/types';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { WgslGenerator } from '../../compiler/wgsl/wgsl-generator';
 import { globals } from 'webgpu';
@@ -15,6 +15,16 @@ if (typeof global !== 'undefined' && !global.GPUBufferUsage) {
 const GPUBufferUsage = globals.GPUBufferUsage;
 const GPUShaderStage = globals.GPUShaderStage;
 const GPUMapMode = globals.GPUMapMode;
+
+// Helper: Calculate size per element
+const getElementSize = (type?: string) => {
+  if (!type) return 4;
+  if (type.startsWith('vec2') || type === 'float2') return 8;
+  if (type.startsWith('vec3') || type === 'float3') return 16; // WGSL vec3 alignment is 16 bytes.
+  if (type.startsWith('vec4') || type === 'float4') return 16;
+  if (type.startsWith('mat4') || type === 'float4x4') return 64;
+  return 4;
+};
 
 /**
  * ComputeTestBackend
@@ -62,7 +72,10 @@ export const ComputeTestBackend: TestBackend = {
         // ResourceState has width/height. width is array length.
         // But we might not have initialized data yet? Context constructor does.
         const state = ctx.getResource(res.id);
-        const sizeBytes = state.width * 4; // Assume f32
+
+
+        const elementSize = getElementSize(res.dataType);
+        const sizeBytes = state.width * elementSize;
 
         const buffer = device.createBuffer({
           size: sizeBytes,
@@ -82,8 +95,13 @@ export const ComputeTestBackend: TestBackend = {
       // TODO: Textures
     }
 
-    // 3. Globals Buffer & Map
+    // 3. Globals Buffer & Resource Map
     const varMap = new Map<string, number>();
+    const resourceDefs = new Map<string, ResourceDef>();
+
+    // Populate Resource Defs
+    ir.resources.forEach(r => resourceDefs.set(r.id, r));
+
     const func = ir.functions.find(f => f.id === entryPoint);
     if (!func) throw new Error('Entry point not found');
 
@@ -93,9 +111,6 @@ export const ComputeTestBackend: TestBackend = {
         const v = n['var'];
         if (!varMap.has(v)) varMap.set(v, varCounter++);
       }
-      // 'var_get' might just read it, but if it wasn't set locally, it's an Input.
-      // If it's an Input, we should pre-populate Globals Buffer!
-      // TODO: Handle Inputs.
     });
 
     const globalsSizeBytes = Math.max(varCounter * 4, 16); // Min size
@@ -109,7 +124,8 @@ export const ComputeTestBackend: TestBackend = {
     const code = generator.compile(func, {
       globalBufferBinding: 0,
       varMap,
-      resourceBindings
+      resourceBindings,
+      resourceDefs
     });
 
     console.log("[ComputeTestBackend] Generated WGSL:\n", code);
@@ -184,7 +200,8 @@ export const ComputeTestBackend: TestBackend = {
 
     resourceBuffers.forEach((buf, id) => {
       const state = ctx.getResource(id);
-      const size = state.width * 4;
+      const elBytes = getElementSize(state.def.dataType);
+      const size = state.width * elBytes;
       stagingBuffers.set(id, copyToStaging(buf, size));
     });
 
@@ -194,10 +211,8 @@ export const ComputeTestBackend: TestBackend = {
     await Promise.all(Array.from(stagingBuffers.values()).map(b => b.mapAsync(GPUMapMode.READ)));
     await globalsStaging.mapAsync(GPUMapMode.READ);
 
-    // Globals
+    // Globals Readback
     const globalsData = new Float32Array(globalsStaging.getMappedRange());
-
-    // Update Context Frame
     ctx.pushFrame(entryPoint);
     varMap.forEach((idx, name) => {
       ctx.setVar(name, globalsData[idx]);
@@ -207,9 +222,35 @@ export const ComputeTestBackend: TestBackend = {
     // Resources
     for (const [id, staging] of stagingBuffers) {
       const data = new Float32Array(staging.getMappedRange());
-      // Copy back to Context
       const state = ctx.getResource(id);
-      state.data = Array.from(data);
+
+      const elBytes = getElementSize(state.def.dataType);
+      const elFloats = elBytes / 4;
+
+      if (elFloats > 1) {
+        // Reconstruct Vectors
+        const count = state.width;
+        state.data = new Array(count);
+        for (let i = 0; i < count; i++) {
+          const start = i * elFloats;
+          // WGSL alignment rules? array<vec3> has padding?
+          // If WGSL `array<vec3<f32>>`, stride is 16 bytes (4 floats).
+          // But my `getElementSize` returned 16 for vec3. So elFloats=4.
+          // Is `data` (Float32Array) reflecting that padding? Yes.
+          const slice = Array.from(data.subarray(start, start + elFloats));
+
+          if (state.def.dataType?.startsWith('vec3') || state.def.dataType === 'float3') {
+            // Trim padding
+            state.data[i] = slice.slice(0, 3);
+          } else {
+            state.data[i] = slice;
+          }
+        }
+      } else {
+        // Scalar
+        state.data = Array.from(data);
+      }
+
       staging.unmap();
     }
 
