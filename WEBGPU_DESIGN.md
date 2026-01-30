@@ -94,6 +94,22 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 }
 ```
 
+### Texture Sampling & Sampler Emulation
+
+While WebGPU provides native `sampler` and `textureSample` logic, it has strict constraints in **Compute Stages**, especially regarding **Unfilterable Float Formats** (e.g., `r32float`). To maintain parity with the CPU Interpreter and allow flexible sampling across all backends, we use a hybrid strategy:
+
+1.  **Manual Emulation (Current/Compute)**:
+    - The `WgslGenerator` implements manual **Bilinear Interpolation** and custom **Wrap Logic** (`repeat`, `mirror`, `clamp`) using `textureDimensions` and `textureLoad`.
+    - This bypasses the need for a hardware `sampler` binding, allowing high-precision sampling on `r32float` and `rgba32float` textures which are normally restricted in WebGPU.
+    - **Current implementation**: Logic is manually injected into `sample_<id>` helper functions in the generated WGSL.
+
+2.  **Native Support (Future/Render)**:
+    - In future Render stages (Fragment Shaders), hardware samplers will be used where possible for performance.
+    - The `WgslOptions` preserve `samplerBindings` infrastructure in TypeScript (currently inactive) to support this transition.
+
+3.  **Hardware Sampler Bypass**:
+    - Hardware samplers are currently explicitly *not* allocated or bound in the `ComputeTestBackend` to prevent validation errors on unfilterable formats.
+
 ## Anticipated Issues & mitigations
 
 ### 1. Uniformity Analysis
