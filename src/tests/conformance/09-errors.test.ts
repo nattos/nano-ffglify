@@ -133,12 +133,12 @@ describe('Conformance: Error Handling & Negative Tests', () => {
 
     runStaticBadIR('Buffer Store Negative Index', [
       { id: 'bad_store', op: 'buffer_store', buffer: 'buf', index: -1, value: 10 }
-    ], [{ id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }], 'Invalid Negative Index');
+    ], [{ id: 'buf', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 10 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }], 'Invalid Negative Index');
 
     // New: Static OOB
     runStaticBadIR('Buffer Store Static OOB', [
       { id: 'bad_oob', op: 'buffer_store', buffer: 'buf', index: 10, value: 99 } // Size 10, Index 10 is OOB (0-9 valid)
-    ], [{ id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 10 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }], 'Static OOB Access');
+    ], [{ id: 'buf', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 10 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }], 'Static OOB Access');
   });
 
   // ----------------------------------------------------------------

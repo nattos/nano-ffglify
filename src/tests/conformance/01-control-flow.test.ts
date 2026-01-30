@@ -7,6 +7,7 @@ describe('Conformance: Control Flow', () => {
   {
     id: 'b_result',
     type: 'buffer',
+    dataType: 'float',
     size: { mode: 'fixed', value: 1 },
     persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
   };

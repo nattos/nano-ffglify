@@ -22,6 +22,7 @@ describe('Conformance: Buffers', () => {
     {
       id: 'buf',
       type: 'buffer',
+      dataType: 'float',
       size: { mode: 'fixed', value: 2 }, // Init size 2
       persistence: { retain: false, clearEveryFrame: false, clearOnResize: true, cpuAccess: false }
     }
@@ -51,7 +52,7 @@ describe('Conformance: Buffers', () => {
     {
       id: 'b_vec',
       type: 'buffer',
-      dataType: 'vec4<f32>',
+      dataType: 'float4',
       size: { mode: 'fixed', value: 2 }, // 2 vec4s
       persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
     }
@@ -64,7 +65,7 @@ describe('Conformance: Buffers', () => {
     const ir = buildSimpleIR('Buffer OOB Write', [
       { id: 'store_oob', op: 'buffer_store', buffer: 'buf', index: 5, value: 100 }
     ], [
-      { id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 2 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
+      { id: 'buf', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 2 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
     ]);
 
     const errors = validateIR(ir);
@@ -77,7 +78,7 @@ describe('Conformance: Buffers', () => {
       { id: 'read_oob', op: 'buffer_load', buffer: 'buf', index: 5 },
       { id: 'sink', op: 'var_set', var: 'x', val: 'read_oob' }
     ], [
-      { id: 'buf', type: 'buffer', size: { mode: 'fixed', value: 2 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
+      { id: 'buf', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 2 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
     ]);
 
     // Wire data edge manually or rely on auto-wire (read_oob ID matches val)

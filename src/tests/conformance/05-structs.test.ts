@@ -6,6 +6,7 @@ describe('Conformance: Structs and Arrays', () => {
   const bufferDef = {
     id: 'b_result',
     type: 'buffer',
+    dataType: 'float',
     size: { mode: 'fixed', value: 1 },
     persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
   };
@@ -56,7 +57,7 @@ describe('Conformance: Structs and Arrays', () => {
     expect(res.data?.[0]).toBe(100);
   }, [bufferDef], [
     { from: 'mk_arr', portOut: 'val', to: 'set_var', portIn: 'val', type: 'data' },
-    { from: 'set_elem', op: 'array_set', array: 'get_arr', index: 1, value: 100 },
+    { from: 'get_arr', portOut: 'val', to: 'set_elem', portIn: 'array', type: 'data' },
     { from: 'read_arr', portOut: 'val', to: 'extract', portIn: 'array', type: 'data' },
     { from: 'extract', portOut: 'val', to: 'store', portIn: 'value', type: 'data' },
     { from: 'set_var', portOut: 'exec_out', to: 'set_elem', portIn: 'exec_in', type: 'execution' },
@@ -100,7 +101,7 @@ describe('Conformance: Structs and Arrays', () => {
     // Try to extract field 'x' from it (expecting it to be a struct)
     { id: 'ex', op: 'struct_extract', struct: 'load', field: 'x' },
     { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'ex' }
-  ], /Runtime Error: buffer_load OOB|cannot index into expression|WGSL Compilation Failed/, [bufferDef],
+  ], /Runtime Error: buffer_load OOB|cannot index into expression|WGSL Compilation Failed|Static OOB Access/, [bufferDef],
     [{ id: 'S1', members: [{ name: 'x', type: 'float' }] }], // Arg 5 Structs
     [] // Arg 6 LocalVars
   );

@@ -6,6 +6,7 @@ describe('Conformance: Primitives and Operators', () => {
   const bufferDef = {
     id: 'b_result',
     type: 'buffer',
+    dataType: 'float',
     size: { mode: 'fixed', value: 100 },
     persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
   };
@@ -42,9 +43,16 @@ describe('Conformance: Primitives and Operators', () => {
       const nodes = nodesWithMeta.flatMap((meta) => {
         const ops = [];
         // Primary Op
-        ops.push({ id: `op_${meta.index}`, op: meta.op, ...meta.args, dataType: meta.dataType });
+        ops.push({ id: `op_${meta.index}`, op: meta.op, ...meta.args });
 
         // Storage
+        let storeValueId = `op_${meta.index}`;
+        if (typeof meta.expected === 'boolean') {
+          // Add cast node for storage
+          ops.push({ id: `cast_${meta.index}`, op: 'static_cast_float', val: storeValueId });
+          storeValueId = `cast_${meta.index}`;
+        }
+
         if (meta.dataType.startsWith('vec') || meta.dataType.startsWith('float2') || meta.dataType.startsWith('float3') || meta.dataType.startsWith('float4')) {
           // Vector: Decompose -> Store
           const size = Array.isArray(meta.expected) ? meta.expected.length : 1;
@@ -53,13 +61,13 @@ describe('Conformance: Primitives and Operators', () => {
             // Extract component
             const compId = `comp_${meta.index}_${k}`;
             // Use swizzle for extraction (supported by all backends easily)
-            ops.push({ id: compId, op: 'vec_swizzle', vec: `op_${meta.index}`, channels: channels[k] });
+            ops.push({ id: compId, op: 'vec_swizzle', vec: storeValueId, channels: channels[k] });
             // Store component
             ops.push({ id: `store_${meta.index}_${k}`, op: 'buffer_store', buffer: 'b_result', index: meta.offset + k, value: compId });
           }
         } else {
           // Scalar: Direct Store
-          ops.push({ id: `store_${meta.index}_0`, op: 'buffer_store', buffer: 'b_result', index: meta.offset, value: `op_${meta.index}` });
+          ops.push({ id: `store_${meta.index}_0`, op: 'buffer_store', buffer: 'b_result', index: meta.offset, value: storeValueId });
         }
         return ops;
       });
@@ -223,14 +231,14 @@ describe('Conformance: Primitives and Operators', () => {
     { op: 'math_neq', args: { a: 5, b: 6 }, expected: true },
     { op: 'math_neq', args: { a: 5, b: 5 }, expected: false },
     // Logical
-    { op: 'math_and', args: { a: 1, b: 1 }, expected: true },
-    { op: 'math_and', args: { a: 1, b: 0 }, expected: false },
-    { op: 'math_or', args: { a: 0, b: 1 }, expected: true },
-    { op: 'math_or', args: { a: 0, b: 0 }, expected: false },
-    { op: 'math_xor', args: { a: 1, b: 0 }, expected: true },
-    { op: 'math_xor', args: { a: 1, b: 1 }, expected: false },
-    { op: 'math_not', args: { val: 0 }, expected: true },
-    { op: 'math_not', args: { val: 1 }, expected: false },
+    { op: 'math_and', args: { a: true, b: true }, expected: true },
+    { op: 'math_and', args: { a: true, b: false }, expected: false },
+    { op: 'math_or', args: { a: false, b: true }, expected: true },
+    { op: 'math_or', args: { a: false, b: false }, expected: false },
+    { op: 'math_xor', args: { a: true, b: false }, expected: true },
+    { op: 'math_xor', args: { a: true, b: true }, expected: false },
+    { op: 'math_not', args: { val: false }, expected: true },
+    { op: 'math_not', args: { val: true }, expected: false },
   ]);
 
   runBatchTest('WGSL Generator Edge Cases', [

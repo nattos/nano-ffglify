@@ -26,8 +26,8 @@ describe('Conformance: Structural Logic Validation', () => {
     it('should validate correct swizzles', () => {
       const ir = makeIR([
         { id: 'v2', op: 'float2', x: 1, y: 2 },
-        { id: 'swiz', op: 'vec_swizzle', val: 'v2', mask: 'yx' },
-        { id: 'swiz_scalar', op: 'vec_swizzle', val: 'v2', mask: 'x' }
+        { id: 'swiz', op: 'vec_swizzle', vec: 'v2', channels: 'yx' },
+        { id: 'swiz_scalar', op: 'vec_swizzle', vec: 'v2', channels: 'x' }
       ]);
       const result = validateIR(ir);
       expect(result.success).toBe(true);
@@ -36,7 +36,7 @@ describe('Conformance: Structural Logic Validation', () => {
     it('should fail on invalid mask length', () => {
       const ir = makeIR([
         { id: 'v2', op: 'float2', x: 1, y: 2 },
-        { id: 'swiz', op: 'vec_swizzle', val: 'v2', mask: 'xyzzz' } // 5 chars
+        { id: 'swiz', op: 'vec_swizzle', vec: 'v2', channels: 'xyzzz' } // 5 chars
       ]);
       const result = validateIR(ir);
       expect(result.success).toBe(false);
@@ -48,7 +48,7 @@ describe('Conformance: Structural Logic Validation', () => {
     it('should fail on invalid mask characters', () => {
       const ir = makeIR([
         { id: 'v2', op: 'float2', x: 1, y: 2 },
-        { id: 'swiz', op: 'vec_swizzle', val: 'v2', mask: 'xq' } // 'q' is invalid
+        { id: 'swiz', op: 'vec_swizzle', vec: 'v2', channels: 'xq' } // 'q' is invalid
       ]);
       const result = validateIR(ir);
       expect(result.success).toBe(false);
@@ -61,7 +61,7 @@ describe('Conformance: Structural Logic Validation', () => {
       const ir = makeIR([
         { id: 'v2', op: 'float2', x: 1, y: 2 },
         // 'z' is index 2, float2 has size 2 (indices 0,1)
-        { id: 'swiz', op: 'vec_swizzle', val: 'v2', mask: 'xz' }
+        { id: 'swiz', op: 'vec_swizzle', vec: 'v2', channels: 'xz' }
       ]);
       const result = validateIR(ir);
       expect(result.success).toBe(false);

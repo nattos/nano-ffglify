@@ -67,6 +67,9 @@ const resolveNodeType = (
 ): ValidationType => {
   if (cache.has(nodeId)) return cache.get(nodeId)!;
 
+  // Sentinel to break recursion cycles
+  cache.set(nodeId, 'any');
+
   const node = func.nodes.find(n => n.id === nodeId);
   if (!node) return 'any';
 
@@ -165,8 +168,8 @@ const resolveNodeType = (
 
     // Vec Swizzle Logic
     if (node.op === 'vec_swizzle') {
-      const inputType = inputTypes['val'];
-      const mask = node['mask'];
+      const inputType = inputTypes['vec'];
+      const mask = node['channels'];
 
       if (typeof mask !== 'string') {
         errors.push({ nodeId, message: 'Swizzle mask must be a string literal', severity: 'error' });
@@ -225,9 +228,11 @@ const resolveNodeType = (
 };
 
 const validateDataType = (type: string, doc: IRDocument, errors: LogicValidationError[], contextMsg: string) => {
-  if (PRIMITIVE_TYPES.includes(type as any)) return;
+  if (['float', 'int', 'bool', 'float2', 'float3', 'float4', 'float3x3', 'float4x4', 'texture2d', 'sampler'].includes(type as any)) return;
   const isStruct = doc.structs?.some(s => s.id === type);
   if (isStruct) return;
+
+  if (type.startsWith('array<')) return;
 
   // Custom Arrays? "array<f32, 10>" - Regex check?
   // IR types says: | string; // Allow custom Struct IDs or "array<T, N>"

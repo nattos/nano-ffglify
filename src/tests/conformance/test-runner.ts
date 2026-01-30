@@ -56,7 +56,7 @@ if (process.env.TEST_BACKEND && availableBackends.length === 0) {
 // Test Helpers
 // ------------------------------------------------------------------
 
-export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [], extraEdges: any[] = [], localVars: any[] = [{ id: 'res', type: 'any' }], structs: any[] = [], globalVars: any[] = []): IRDocument => {
+export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [], extraEdges: any[] = [], localVars: any[] = [{ id: 'res', type: 'float' }], structs: any[] = [], globalVars: any[] = []): IRDocument => {
   const edges: any[] = [];
   const nodeIds = new Set(nodes.map(n => n.id));
 
@@ -102,7 +102,7 @@ export const runGraphTest = (
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
       // Type Inference for the result variable
-      let inferredType = 'any';
+      let inferredType: string = 'float';
       if (Array.isArray(expectedVal)) {
         if (expectedVal.length === 2) inferredType = 'float2';
         else if (expectedVal.length === 3) inferredType = 'float3';
@@ -154,7 +154,7 @@ export const runGraphErrorTest = (
   expectedError: string | RegExp,
   resources: any[] = [],
   structs: any[] = [],
-  localVars: any[] = [{ id: 'res', type: 'any' }],
+  localVars: any[] = [{ id: 'res', type: 'float' }],
   backends: TestBackend[] = availableBackends
 ) => {
   backends.forEach(backend => {
@@ -176,7 +176,7 @@ export const runParametricTest = (
   verify: (ctx: EvaluationContext) => void | Promise<void>,
   resources: any[] = [],
   extraEdges: any[] = [],
-  localVars: any[] = [{ id: 'res', type: 'any' }],
+  localVars: any[] = [{ id: 'res', type: 'float' }],
   structs: any[] = [],
   backends: TestBackend[] = availableBackends
 ) => {

@@ -149,9 +149,9 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { vec: 'float4', index: 'int' }, output: 'float' }
   ],
   'vec_swizzle': [
-    { inputs: { val: 'float2', mask: 'string' }, output: 'any' },
-    { inputs: { val: 'float3', mask: 'string' }, output: 'any' },
-    { inputs: { val: 'float4', mask: 'string' }, output: 'any' }
+    { inputs: { vec: 'float2', channels: 'string' }, output: 'any' },
+    { inputs: { vec: 'float3', channels: 'string' }, output: 'any' },
+    { inputs: { vec: 'float4', channels: 'string' }, output: 'any' }
   ],
 
   // Vector Ops
