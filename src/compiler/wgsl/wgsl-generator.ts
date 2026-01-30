@@ -15,6 +15,8 @@ export interface WgslOptions {
   varTypes?: Map<string, DataType>; // Map variable ID to DataType for global buffer sizing
   nodeTypes?: Map<string, DataType>; // Map node ID to inferred DataType
   inputBinding?: number; // Binding for shader inputs (uniform)
+  stage?: 'compute' | 'vertex' | 'fragment';
+  excludeIds?: string[];
 }
 
 export class WgslGenerator {
@@ -34,7 +36,9 @@ export class WgslGenerator {
     this.emitTextureSamplers(lines, options);
 
     // Generate Helper Functions (All except Entry Point)
-    const helperFuncs = ir.functions.filter(f => f.id !== entryPointId);
+    // Only include shaders/libraries, exclude CPU functions, and excluded IDs
+    const exclude = new Set(options.excludeIds || []);
+    const helperFuncs = ir.functions.filter(f => f.id !== entryPointId && f.type !== 'cpu' && !exclude.has(f.id));
     for (const func of helperFuncs) {
       this.emitFunction(func, false, lines, options, ir);
       lines.push('');
@@ -56,9 +60,10 @@ export class WgslGenerator {
     }
 
     // Inputs Buffer (for shader dispatch arguments)
-    if (options.inputBinding !== undefined && entryFunc.inputs.length > 0) {
+    const nonBuiltinInputs = entryFunc.inputs.filter(i => !i.builtin);
+    if (options.inputBinding !== undefined && nonBuiltinInputs.length > 0) {
       finalLines.push('struct Inputs {');
-      for (const input of entryFunc.inputs) {
+      for (const input of nonBuiltinInputs) {
         const type = this.resolveType(input.type);
         finalLines.push(`  ${input.id} : ${type},`);
       }
@@ -174,7 +179,13 @@ export class WgslGenerator {
       lines.push(`struct ${s.id} {`);
       for (const m of s.members) {
         const type = this.resolveType(m.type);
-        lines.push(`  ${m.name} : ${type},`);
+        let decorators = '';
+        if (m.builtin) {
+          decorators += `@builtin(${m.builtin}) `;
+        } else if (m.location !== undefined) {
+          decorators += `@location(${m.location}) `;
+        }
+        lines.push(`  ${decorators}${m.name} : ${type},`);
       }
       lines.push(`}`);
       lines.push('');
@@ -183,8 +194,52 @@ export class WgslGenerator {
 
   private emitFunction(func: FunctionDef, isEntryPoint: boolean, lines: string[], options: WgslOptions, ir: IRDocument) {
     if (isEntryPoint) {
-      lines.push(`@compute @workgroup_size(1, 1, 1)`);
-      lines.push(`fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {`);
+      if (options.stage === 'vertex') {
+        // Vertex Shader Entry Point
+        // Inputs: builtins (vertex_index, instance_index).
+        // Outputs: Must return a struct with @builtin(position). infer return type.
+        const retType = this.resolveType(func.outputs[0]?.type || 'vec4<f32>');
+        lines.push(`@vertex`);
+        lines.push(`fn main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) instance_index : u32) -> ${retType} {`);
+        // Map builtins to local variables
+        for (const input of func.inputs) {
+          if (input.builtin === 'vertex_index') {
+            lines.push(`  let l_${input.id} = i32(vertex_index);`);
+          } else if (input.builtin === 'instance_index') {
+            lines.push(`  let l_${input.id} = i32(instance_index);`);
+          }
+        }
+      } else if (options.stage === 'fragment') {
+        // Fragment Shader Entry Point
+        // Inputs: Output from VS. The first argument MUST be the stage input struct.
+        // We assume the function signature in IR matches: fn main(in: VSOut)
+        // But for entry point, we flatten args? Or expect IR to match?
+        // Let's iterate inputs and map them.
+        const args = func.inputs.map(input => {
+          // If input type is a struct, it's likely the VertexOutput.
+          // In WGSL entry point, we just declare it as arg.
+          const type = this.resolveType(input.type);
+          return `${input.id} : ${type}`;
+        }).join(', ');
+
+        let retType = 'vec4<f32>';
+        let retDecorators = '@location(0)';
+        if (func.outputs.length > 0) {
+          retType = this.resolveType(func.outputs[0].type);
+          // If return type is struct, assume decorators are defining it.
+          // If scalar/vec, default to location(0)
+          if (ir.structs.some(s => s.id === func.outputs[0].type)) {
+            retDecorators = '';
+          }
+        }
+
+        lines.push(`@fragment`);
+        lines.push(`fn main(${args}) -> ${retDecorators} ${retType} {`);
+      } else {
+        // Compute (Default)
+        lines.push(`@compute @workgroup_size(1, 1, 1)`);
+        lines.push(`fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {`);
+      }
     } else {
       // Signature
       const args = func.inputs.map(arg => {
@@ -344,7 +399,7 @@ export class WgslGenerator {
         lines.push(`${indent}// Unknown function: ${funcId}`);
       }
     } else if (node.op === 'func_return') {
-      const val = this.resolveArg(node, 'val', func, options, ir);
+      const val = this.resolveArg(node, 'value', func, options, ir);
       lines.push(`${indent}return ${val};`);
     } else if (node.op === 'cmd_dispatch') {
       const funcId = node['func'];
@@ -456,7 +511,9 @@ export class WgslGenerator {
             return `b_globals.data[${idx}]`;
           }
           // Function Argument?
-          if (func.inputs.some(i => i.id === varId)) {
+          const arg = func.inputs.find(i => i.id === varId);
+          if (arg) {
+            if (arg.builtin) return `l_${varId}`;
             if (options.inputBinding !== undefined) return `b_inputs.${varId}`;
             return varId;
           }
@@ -525,6 +582,14 @@ export class WgslGenerator {
     // Array Construct
     if (node.op === 'array_construct') {
       // array<Type, N>(val1, val2...)
+      // Support explicit values array
+      if (node['values']) {
+        const vals = node['values'] as number[];
+        const type = 'f32'; // Default to float for now
+        const formatted = vals.map(v => this.formatLiteral(v, type));
+        return `array<${type}, ${vals.length}>(${formatted.join(', ')})`;
+      }
+
       // The node has 'length', 'fill'.
       const len = node['length'];
       const fill = node['fill'];

@@ -138,6 +138,11 @@ export interface StructMember {
   name: string;
   type: DataType;
   comment?: string;
+  // Annotation for flexible shader IO (e.g. '@builtin(position)')
+  // If set to 'position', the generator treats this as the clip-space position.
+  builtin?: 'position' | 'vertex_index' | 'instance_index' | 'front_facing' | 'frag_coord';
+  // Location index for inter-stage variables (auto-assigned if missing, but explicit is better)
+  location?: number;
 }
 
 // ------------------------------------------------------------------
@@ -191,6 +196,9 @@ export interface PortDef {
   id: string;
   type: DataType;
   comment?: string;
+  // Shader IO
+  builtin?: 'position' | 'vertex_index' | 'instance_index' | 'front_facing' | 'frag_coord';
+  location?: number;
 }
 
 export interface VariableDef {
@@ -377,5 +385,35 @@ export type BuiltinOp =
   // Side Effects / Commands
   // ----------------------------------------------------------------
   | 'cmd_dispatch' // { func: string, dispatch: int3, ...args }
-  | 'cmd_resize_resource'; // { id: string, size: int2 }
+  | 'cmd_resize_resource' // { id: string, size: int2 }
+  | 'cmd_draw'; // { target: string, vertex: string, fragment: string, count: int, pipeline: RenderPipelineDef }
 
+
+// ------------------------------------------------------------------
+// Render Pipeline Definitions
+// ------------------------------------------------------------------
+export interface RenderPipelineDef {
+  topology?: 'point-list' | 'line-list' | 'line-strip' | 'triangle-list' | 'triangle-strip'; // Default: triangle-list
+  cullMode?: 'none' | 'front' | 'back'; // Default: none
+  frontFace?: 'ccw' | 'cw'; // Default: ccw
+  depthStencil?: {
+    format: TextureFormat;
+    depthWriteEnabled: boolean;
+    depthCompare: 'never' | 'less' | 'equal' | 'less-equal' | 'greater' | 'not-equal' | 'greater-equal' | 'always';
+  };
+  blend?: {
+    color: BlendComponent;
+    alpha: BlendComponent;
+  };
+}
+
+export interface BlendComponent {
+  operation?: 'add' | 'subtract' | 'reverse-subtract' | 'min' | 'max';
+  srcFactor?: BlendFactor;
+  dstFactor?: BlendFactor;
+}
+
+export type BlendFactor =
+  | 'zero' | 'one'
+  | 'src' | 'one-minus-src' | 'src-alpha' | 'one-minus-src-alpha'
+  | 'dst' | 'one-minus-dst' | 'dst-alpha' | 'one-minus-dst-alpha';

@@ -154,6 +154,14 @@ export class CpuJitCompiler {
 
       lines.push(`globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func)});`);
     }
+    else if (node.op === 'cmd_draw') {
+      const target = node['target'];
+      const vertex = node['vertex'];
+      const fragment = node['fragment'];
+      const count = this.resolveArg(node, 'count', func);
+      const pipeline = JSON.stringify(node['pipeline'] || {});
+      lines.push(`globals.draw('${target}', '${vertex}', '${fragment}', ${count}, ${pipeline});`);
+    }
     else if (node.op === 'cmd_resize_resource') {
       const resId = node['resource'];
       const size = this.resolveArg(node, 'size', func);

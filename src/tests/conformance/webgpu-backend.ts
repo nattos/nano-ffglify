@@ -2,7 +2,7 @@ import type { TestBackend } from './types';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { InterpretedExecutor } from '../../interpreter/executor';
 import { WebGpuExecutor } from '../../interpreter/webgpu-executor';
-import { IRDocument, Node, FunctionDef, TextureFormatFromId } from '../../ir/types';
+import { IRDocument, Node, FunctionDef, TextureFormatFromId, RenderPipelineDef } from '../../ir/types';
 import { create, globals } from 'webgpu';
 
 // Ensure globals
@@ -40,6 +40,10 @@ class WebGpuHostExecutor {
         // Dispatch to GPU
         // Track the async promise so we can await it later
         const p = this.webGpuExec.executeShader(targetId, dim, args);
+        this.pending.push(p);
+      },
+      draw: (targetId: string, vertexId: string, fragmentId: string, count: number, pipeline: RenderPipelineDef) => {
+        const p = this.webGpuExec.executeDraw(targetId, vertexId, fragmentId, count, pipeline);
         this.pending.push(p);
       },
       callOp: (opName: string, args: Record<string, RuntimeValue>) => {

@@ -3,7 +3,7 @@ import { EvaluationContext, RuntimeValue } from './context';
 import { globals } from 'webgpu';
 import { CpuJitCompiler } from './cpu-jit';
 import { OpRegistry } from './ops';
-import { BuiltinOp, TextureFormatValues, TextureFormatFromId, TextureFormat } from '../ir/types';
+import { BuiltinOp, TextureFormatValues, TextureFormatFromId, TextureFormat, RenderPipelineDef } from '../ir/types';
 
 // Helper to polyfill if needed, similar to test
 function ensureGpuGlobals() {
@@ -18,6 +18,7 @@ export class WebGpuExecutor {
 
   private shaderCache: Map<string, GPUShaderModule> = new Map();
   private pipelineCache: Map<string, GPUComputePipeline> = new Map();
+  private renderPipelineCache: Map<string, GPURenderPipeline> = new Map();
 
   constructor(device: GPUDevice, context: EvaluationContext) {
     this.device = device;
@@ -185,6 +186,227 @@ export class WebGpuExecutor {
       state.data = Array.from(data);
       staging.unmap();
     }));
+  }
+
+  /**
+   * Execute a "Draw" function on the GPU.
+   */
+  async executeDraw(
+    targetId: string,
+    vertexId: string,
+    fragmentId: string,
+    vertexCount: number,
+    pipelineDef: RenderPipelineDef
+  ) {
+    // 1. Prepare Pipeline
+    const pipeline = await this.prepareRenderPipeline(vertexId, fragmentId, pipelineDef);
+
+    // 2. Prepare Target Texture
+    const texture = this.ensureTexture(targetId);
+    if (!texture) throw new Error(`Target '${targetId}' is not a valid texture resource`);
+
+    const view = texture.createView();
+
+    // 3. Encoder & Pass
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: view,
+        loadOp: 'clear', // TODO: Make configurable or respect existing clear logic
+        storeOp: 'store',
+        clearValue: { r: 0, g: 0, b: 0, a: 1 }
+      }]
+    });
+
+    // 4. Bind Resources (Group 0)
+    // We reuse the same logic as Compute? We need a bindgroup covering needed resources.
+    // For now, let's look for a single bind group that covers relevant buffers?
+    // Or just create a new one for this pass?
+    // Simplified: Create a bindgroup with ALL resources (Compute style) for now.
+    // This assumes specific layout compatibility.
+    // We must exclude the render target (output) from bindings if not used as input.
+    // TODO: Improve bind group management.
+    const bindGroup = await this.createUniversalBindGroup(pipeline, [targetId]);
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+
+    // 5. Draw
+    pass.draw(vertexCount);
+    pass.end();
+
+    // 6. Readback
+    // Copy target texture to staging buffer to sync with context
+    // Assuming target is rgba8unorm (4 bytes per pixel)
+    const stagingBuffer = this.device.createBuffer({
+      size: texture.width * texture.height * 4,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
+    encoder.copyTextureToBuffer(
+      { texture },
+      { buffer: stagingBuffer, bytesPerRow: texture.width * 4 },
+      [texture.width, texture.height, 1]
+    );
+
+    this.device.queue.submit([encoder.finish()]);
+
+    // Wait and Map
+    await stagingBuffer.mapAsync(GPUMapMode.READ);
+    const data = new Uint8Array(stagingBuffer.getMappedRange());
+
+    // Convert to Float array (0..1) for RuntimeValue consistency
+    const floatData = new Array(data.length);
+    for (let i = 0; i < data.length; i++) {
+      floatData[i] = data[i] / 255.0;
+    }
+
+    const res = this.context.getResource(targetId);
+    if (res) {
+      res.data = floatData;
+    }
+
+    stagingBuffer.unmap();
+  }
+
+  private async prepareRenderPipeline(vertexId: string, fragmentId: string, def: RenderPipelineDef): Promise<GPURenderPipeline> {
+    const key = `${vertexId}|${fragmentId}|${JSON.stringify(def)}`;
+    if (this.renderPipelineCache.has(key)) return this.renderPipelineCache.get(key)!;
+
+    const generator = new (await import('../compiler/wgsl/wgsl-generator')).WgslGenerator();
+    const ir = this.context.ir;
+
+    // Options (Need to populate resources for bindings)
+    const options = {
+      resourceBindings: new Map<string, number>(),
+      resourceDefs: new Map<string, ResourceDef>(),
+      globalBufferBinding: 0, // Using Buffer 0 for globals? No, use bindings from 2.
+      // Wait, ComputeExecutor uses:
+      // inputBinding: 1
+      // resources: 2+
+    };
+
+    // We need to define bindings consistent with 'createUniversalBindGroup'.
+    // Let's assume:
+    // Binding 0: Globals (if needed? we removed it in ComputeExecutor?)
+    // Binding 1: Inputs/Uniforms
+    // Binding 2+: Resources
+    // ComputeExecutor.initialize actually used: inputBinding=1.
+    // And resources starting at 2.
+
+    let bindingIdx = 2;
+    ir.resources.forEach(res => {
+      options.resourceBindings!.set(res.id, bindingIdx++);
+      options.resourceDefs!.set(res.id, res);
+    });
+
+    const vsOptions = { ...options, stage: 'vertex' as const, inputBinding: 1, excludeIds: [fragmentId] };
+    const fsOptions = { ...options, stage: 'fragment' as const, inputBinding: 1, excludeIds: [vertexId] };
+
+    const vsCode = generator.compile(ir, vertexId, vsOptions);
+    const fsCode = generator.compile(ir, fragmentId, fsOptions);
+
+    const vsModule = this.device.createShaderModule({ code: vsCode, label: vertexId });
+    const fsModule = this.device.createShaderModule({ code: fsCode, label: fragmentId });
+
+    // Target Format
+    // We assume target is rgba8unorm unless specified.
+    // We should look up the target ID to get format?
+    // But pipeline is cached by DEF. Def doesn't verify target format compatibility.
+    // WebGPU requires pipeline to match target format.
+    // So 'def' usually implies a target format or we assume a default.
+    // For now, hardcode 'rgba8unorm' or make it part of cache key?
+    // Ideally, pass format in 'def' or look up target?
+    // Let's assume 'rgba8unorm' for sanity tests.
+    const targetFormat: GPUTextureFormat = 'rgba8unorm';
+
+    const pipeline = await this.device.createRenderPipelineAsync({
+      layout: 'auto',
+      vertex: { module: vsModule, entryPoint: 'main' },
+      fragment: {
+        module: fsModule,
+        entryPoint: 'main',
+        targets: [{
+          format: targetFormat,
+          blend: def.blend ? {
+            color: def.blend.color as GPUBlendComponent,
+            alpha: def.blend.alpha as GPUBlendComponent
+          } : undefined
+        }]
+      },
+      primitive: {
+        topology: (def.topology || 'triangle-list') as GPUPrimitiveTopology,
+        cullMode: def.cullMode as GPUCullMode,
+        frontFace: def.frontFace as GPUFrontFace
+      }
+    });
+
+    this.renderPipelineCache.set(key, pipeline);
+    return pipeline;
+  }
+
+  private ensureTexture(id: string): GPUTexture | undefined {
+    const state = this.context.getResource(id);
+    if (!state) return undefined;
+    if (state.def.type !== 'texture2d') return undefined; // Only textures
+
+    if (!(state as any).gpuTexture) {
+      let format = 'rgba8unorm';
+      if (typeof state.def.format === 'number') {
+        format = (TextureFormatFromId as any)[state.def.format] || 'rgba8unorm';
+      } else if (typeof state.def.format === 'string') {
+        format = state.def.format;
+      }
+      (state as any).gpuTexture = this.device.createTexture({
+        label: id,
+        size: [state.width, state.height, 1],
+        format: format as GPUTextureFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST
+      });
+    }
+    return (state as any).gpuTexture;
+  }
+
+  private async createUniversalBindGroup(pipeline: GPURenderPipeline | GPUComputePipeline, excludeIds: string[] = []): Promise<GPUBindGroup> {
+    // Helper to match bindings used in generation
+    // Copied/Refactored from executeShader logic
+    // Binding 1: Inputs
+    // Binding 2+: Resources
+    // TODO: Factor out common binding logic.
+    // For now, implementing minimal inputs buffer logic.
+    const entries: GPUBindGroupEntry[] = [];
+    // Inputs binding (1)
+    // ... logic implies we need 'func' to pack arguments.
+    // But 'utils' might not have current function inputs?
+    // 'executeDraw' doesn't pass inputs yet.
+    // Let's assume no inputs for now or fix later.
+    // Just bind resources.
+    this.context.ir.resources.forEach((res, idx) => {
+      if (excludeIds.includes(res.id)) return;
+      const binding = 2 + idx;
+      const state = this.context.getResource(res.id);
+      // If buffer, bind buffer. If texture, bind texture view?
+      // Generator assumes 'texture_2d<f32>' for texture resources?
+      // If so, `resource: view`.
+      if (res.type === 'texture2d') {
+        const tex = this.ensureTexture(res.id);
+        if (tex) entries.push({ binding, resource: tex.createView() });
+      } else {
+        // Buffer
+        // Ensure buffer
+        if (!(state as any).gpuBuffer) {
+          (state as any).gpuBuffer = this.device.createBuffer({
+            size: Math.max(state.width * 4, 16),
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+          });
+        }
+        entries.push({ binding, resource: { buffer: (state as any).gpuBuffer } });
+      }
+    });
+
+    return this.device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries
+    });
   }
 
   private packArguments(inputs: { id: string, type: string }[], args: Record<string, RuntimeValue>): ArrayBuffer {
