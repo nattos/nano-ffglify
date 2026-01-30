@@ -864,6 +864,10 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
 
   'cmd_dispatch': (ctx, args) => {
-    // Executor handles Logic, this is just for logging fallback if needed
+    const targetId = args.func as string;
+    const dim = args.dispatch as [number, number, number] || [1, 1, 1];
+    // Pass everything minus infrastructure props as potential arguments
+    const { func: _, dispatch: __, ...rest } = args;
+    ctx.webGpuExec.executeShader(targetId, dim, rest);
   },
 };

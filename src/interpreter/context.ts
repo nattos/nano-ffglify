@@ -59,6 +59,7 @@ export class EvaluationContext {
 
   // Platform/Backend specific handles (e.g. GPUDevice)
   device?: any; // GPUDevice
+  webGpuExec?: any; // WebGpuExecutor
 
   constructor(ir: IRDocument, inputs: Map<string, RuntimeValue>) {
     this.ir = ir;

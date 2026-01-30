@@ -19,6 +19,7 @@ class WebGpuHostExecutor {
   context: EvaluationContext;
   jit: CpuJitCompiler;
   compiledCache: Map<string, Function> = new Map();
+  pending: Promise<any>[] = [];
 
   constructor(context: EvaluationContext, webGpuExec: WebGpuExecutor) {
     this.context = context;
@@ -35,12 +36,11 @@ class WebGpuHostExecutor {
 
     // Prepare Globals (Dispatch Interface & Ops)
     const globals = {
-      dispatch: (targetId: string, dim: [number, number, number]) => {
+      dispatch: (targetId: string, dim: [number, number, number], args: Record<string, RuntimeValue> = {}) => {
         // Dispatch to GPU
-        // Since we are running in JIT (sync JS), we call the async method but don't await?
-        // This circles back to the Sync vs Async issue.
-        // For now, we fire and forget (queue.submit).
-        this.webGpuExec.executeShader(targetId, dim);
+        // Track the async promise so we can await it later
+        const p = this.webGpuExec.executeShader(targetId, dim, args);
+        this.pending.push(p);
       },
       callOp: (opName: string, args: Record<string, RuntimeValue>) => {
         const handler = OpRegistry[opName as keyof typeof OpRegistry];
@@ -51,6 +51,8 @@ class WebGpuHostExecutor {
         return 0;
       },
       resolveString: (val: string) => {
+        const v = this.context.getVar(val);
+        if (v !== undefined) return v;
         try {
           return this.context.getInput(val);
         } catch {
@@ -182,6 +184,7 @@ export const WebGpuBackend: TestBackend = {
     if (!device) throw new Error('Context missing GPUDevice');
 
     const gpuExec = new WebGpuExecutor(device, ctx);
+    await gpuExec.initialize();
     const hostExec = new WebGpuHostExecutor(ctx, gpuExec);
 
     const func = ctx.ir.functions.find(f => f.id === entryPoint);
@@ -191,6 +194,9 @@ export const WebGpuBackend: TestBackend = {
     if (func.type === 'cpu') {
       ctx.pushFrame(entryPoint);
       hostExec.executeFunction(func);
+      if (hostExec.pending.length > 0) {
+        await Promise.all(hostExec.pending);
+      }
     } else {
       // Direct shader execution - usually tests use a wrapper 'main'
       // If entry point is shader, we dispatch (1,1,1)?

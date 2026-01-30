@@ -25,7 +25,7 @@ export class CpuJitCompiler {
     // 2. Result Variables for Executable Nodes that return data (e.g. call_func)
     // We declare them at top level to ensure scope visibility.
     const resultVars = func.nodes
-      .filter(n => n.op === 'call_func' || n.op === 'array_set')
+      .filter(n => n.op === 'call_func' || n.op === 'array_set' || n.op === 'array_construct' || n.op === 'struct_construct')
       .map(n => `let r_${n.id};`);
 
     if (resultVars.length) {
@@ -57,7 +57,8 @@ export class CpuJitCompiler {
 
   private isExecutable(op: string) {
     return op.startsWith('cmd_') || op.startsWith('flow_') || op.startsWith('var_') ||
-      op.startsWith('buffer_') || op.startsWith('texture_') || op === 'call_func' || op === 'func_return' || op === 'array_set';
+      op.startsWith('buffer_') || op.startsWith('texture_') || op === 'call_func' || op === 'func_return' || op === 'array_set' ||
+      op === 'array_construct' || op === 'struct_construct';
   }
 
   private emitChain(startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>) {
@@ -151,7 +152,7 @@ export class CpuJitCompiler {
         dimCode = JSON.stringify(node['dispatch']);
       }
 
-      lines.push(`globals.dispatch('${targetId}', ${dimCode});`);
+      lines.push(`globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func)});`);
     }
     else if (node.op === 'cmd_resize_resource') {
       const resId = node['resource'];
@@ -166,6 +167,9 @@ export class CpuJitCompiler {
       const clear = resolveRaw('clear'); // TODO: Check if 'clear' implies vector or scalar
 
       lines.push(`globals.resize('${resId}', ${size}, ${format}, ${clear});`);
+    }
+    else if (node.op === 'array_construct' || node.op === 'struct_construct') {
+      lines.push(`r_${node.id} = globals.callOp('${node.op}', ${this.generateArgsObject(node, func)});`);
     }
     else if (node.op === 'call_func') {
       const targetId = node['func'];
@@ -247,6 +251,13 @@ export class CpuJitCompiler {
         if (func.localVars.some(v => v.id === val)) {
           return `l_${val}`;
         }
+
+        // Node Reference?
+        const targetNode = func.nodes.find(n => n.id === val);
+        if (targetNode && targetNode.id !== node.id) {
+          return this.compileExpression(targetNode, func);
+        }
+
         // Input?
         // We generally assume strings not matching locals are Inputs.
         // But some ops take string literals (e.g. swizzle channels).
@@ -294,7 +305,7 @@ export class CpuJitCompiler {
       const bufferId = node['buffer'];
       return `globals.bufferLoad('${bufferId}', ${this.resolveArg(node, 'index', func)})`;
     }
-    if (node.op === 'call_func' || node.op === 'array_set') {
+    if (node.op === 'call_func' || node.op === 'array_set' || node.op === 'array_construct' || node.op === 'struct_construct') {
       return `r_${node.id}`;
     }
 

@@ -14,6 +14,7 @@ export interface WgslOptions {
   resourceDefs?: Map<string, ResourceDef>; // Definitions for typed buffer generation
   varTypes?: Map<string, DataType>; // Map variable ID to DataType for global buffer sizing
   nodeTypes?: Map<string, DataType>; // Map node ID to inferred DataType
+  inputBinding?: number; // Binding for shader inputs (uniform)
 }
 
 export class WgslGenerator {
@@ -51,6 +52,18 @@ export class WgslGenerator {
     if (options.globalBufferBinding !== undefined) {
       finalLines.push('struct GlobalsBuffer { data: array<f32> }');
       finalLines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : GlobalsBuffer;`);
+      finalLines.push('');
+    }
+
+    // Inputs Buffer (for shader dispatch arguments)
+    if (options.inputBinding !== undefined && entryFunc.inputs.length > 0) {
+      finalLines.push('struct Inputs {');
+      for (const input of entryFunc.inputs) {
+        const type = this.resolveType(input.type);
+        finalLines.push(`  ${input.id} : ${type},`);
+      }
+      finalLines.push('}');
+      finalLines.push(`@group(0) @binding(${options.inputBinding}) var<uniform> b_inputs : Inputs;`);
       finalLines.push('');
     }
 
@@ -443,7 +456,10 @@ export class WgslGenerator {
             return `b_globals.data[${idx}]`;
           }
           // Function Argument?
-          if (func.inputs.some(i => i.id === varId)) return varId;
+          if (func.inputs.some(i => i.id === varId)) {
+            if (options.inputBinding !== undefined) return `b_inputs.${varId}`;
+            return varId;
+          }
           throw new Error(`Variable '${varId}' is not defined`);
         }
         // If src is 'struct_construct' or 'array_construct' or 'array_extract' etc., compileExpression handles it.

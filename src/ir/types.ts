@@ -251,7 +251,7 @@ export type BuiltinOp =
   // Scalar Casts
   | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
   // Scalar Constructors
-  | 'float' | 'int' | 'bool'
+  | 'float' | 'int' | 'bool' | 'string'
 
   // Vector & Color
   | 'float2' | 'float3' | 'float4'
