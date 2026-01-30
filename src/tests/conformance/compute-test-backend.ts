@@ -4,7 +4,7 @@ import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { WgslGenerator } from '../../compiler/wgsl/wgsl-generator';
 import { InterpretedExecutor } from '../../interpreter/executor';
 import { globals } from 'webgpu';
-import { TestBackend } from './test-runner';
+import { TestBackend } from './types';
 import { WebGpuBackend } from './webgpu-backend';
 
 // Ensure globals

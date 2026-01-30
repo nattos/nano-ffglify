@@ -8,12 +8,8 @@ import { WebGpuBackend } from './webgpu-backend';
 // ------------------------------------------------------------------
 // Backend Abstraction
 // ------------------------------------------------------------------
-export interface TestBackend {
-  name: string;
-  createContext: (ir: IRDocument, inputs?: Map<string, RuntimeValue>) => Promise<EvaluationContext>;
-  run: (ctx: EvaluationContext, entryPoint: string) => Promise<void>;
-  execute: (ir: IRDocument, entryPoint: string, inputs?: Map<string, RuntimeValue>) => Promise<EvaluationContext>;
-}
+import { TestBackend } from './types';
+export { TestBackend }; // Re-export for convenience if needed, or update consumers
 
 export const InterpreterBackend: TestBackend = {
   name: 'Interpreter',

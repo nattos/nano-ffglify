@@ -1,4 +1,4 @@
-import type { TestBackend } from './test-runner';
+import type { TestBackend } from './types';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { InterpretedExecutor } from '../../interpreter/executor';
 import { WebGpuExecutor } from '../../interpreter/webgpu-executor';
