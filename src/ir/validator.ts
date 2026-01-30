@@ -131,21 +131,10 @@ const resolveNodeType = (
     // We don't validate the TYPES of data edges yet here, because that's what ResolveNodeType is doing recursively.
     // However, for commands like cmd_draw, we can validate the static config.
 
-    // Create a data object for Zod validation consisting of literal props
-    // and placeholders for ports that have incoming edges.
+    // Create a data object for Zod validation consisting of ONLY literal props
     const validationData: any = {};
     Object.keys(node).forEach(key => {
       if (!reservedKeys.has(key)) validationData[key] = node[key];
-    });
-    incomingEdges.forEach(edge => {
-      // Placeholder for edge values - we assume they match for this step
-      // or will be caught by the signature-based type check below.
-      // But we must at least put SOMETHING there so Zod doesn't complain about missing keys.
-      if (!validationData[edge.portIn]) {
-        // We use a proxy value that should pass most basic type checks if the edge provides it.
-        // This is a bit of a hack because we want to validate the STRUCTURE including edges.
-        validationData[edge.portIn] = (node as any)[edge.portIn] ?? null;
-      }
     });
 
     const result = zodSchema.safeParse(validationData);
@@ -158,6 +147,7 @@ const resolveNodeType = (
         });
       });
     }
+
   }
 
   // 4. Match against Overloads (Signature-based inference)

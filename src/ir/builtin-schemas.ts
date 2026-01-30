@@ -22,11 +22,13 @@ export interface OpDef<T> {
 /**
  * Helper to define a Builtin Op with docstrings and strict type verification.
  * Returns a Zod object schema for the arguments.
+ * NOTE: All arguments are made OPTIONAL to support IR nodes where
+ * values are provided via incoming edges rather than literal properties.
  */
 export function defineOp<T>(def: OpDef<T>): z.ZodObject<any> {
   const shape: any = {};
   for (const [key, arg] of Object.entries(def.args)) {
-    shape[key] = (arg as OpArg).type;
+    shape[key] = (arg as OpArg).type.optional();
   }
   return z.object(shape);
 }
@@ -46,14 +48,22 @@ const Float4Schema = z.array(z.number()).length(4);
 const Float3x3Schema = z.array(z.number()).length(9);
 const Float4x4Schema = z.array(z.number()).length(16);
 
+/**
+ * Helper to mark a field as accepting either a literal value of type T
+ * OR a string reference to another node or input.
+ */
+export function literalOrRef<T>(schema: z.ZodType<T>) {
+  return z.union([schema, z.string()]).describe('literal_or_ref');
+}
+
 // Flexible types: many operation arguments in Nano IR can be either
 // a literal value (number/array) OR a string referencing another node/input.
-const RefableFloat = z.union([FloatSchema, z.string()]);
-const RefableInt = z.union([IntSchema, z.string()]);
-const RefableBool = z.union([BoolSchema, z.string()]);
-const RefableVec2 = z.union([Float2Schema, z.string()]);
-const RefableVec3 = z.union([Float3Schema, z.string()]);
-const RefableVec4 = z.union([Float4Schema, z.string()]);
+const RefableFloat = literalOrRef(FloatSchema);
+const RefableInt = literalOrRef(IntSchema);
+const RefableBool = literalOrRef(BoolSchema);
+const RefableVec2 = literalOrRef(Float2Schema);
+const RefableVec3 = literalOrRef(Float3Schema);
+const RefableVec4 = literalOrRef(Float4Schema);
 
 // Generic types for overloads
 const AnyScalar = z.union([FloatSchema, IntSchema, BoolSchema]);
@@ -179,7 +189,7 @@ export const Float4ConstructorSchema = defineOp<{ x: any, y: any, z: any, w: any
 export const VecSwizzleSchema = defineOp<{ vec: any, channels: string }>({
   doc: "Swizzle vector components (e.g. 'xy', 'rgba').",
   args: {
-    vec: { type: AnyVector, doc: "Source vector" },
+    vec: { type: literalOrRef(AnyVector), doc: "Source vector" },
     channels: { type: z.string(), doc: "Component selection mask (e.g. 'xy')" }
   }
 });
@@ -187,9 +197,9 @@ export const VecSwizzleSchema = defineOp<{ vec: any, channels: string }>({
 export const VecMixSchema = defineOp<{ a: any, b: any, t: any }>({
   doc: "Linearly interpolate between two vectors.",
   args: {
-    a: { type: AnyVector, doc: "First vector" },
-    b: { type: AnyVector, doc: "Second vector" },
-    t: { type: z.union([FloatSchema, AnyVector, z.string()]), doc: "Interpolation factor" }
+    a: { type: literalOrRef(AnyVector), doc: "First vector" },
+    b: { type: literalOrRef(AnyVector), doc: "Second vector" },
+    t: { type: z.union([RefableFloat, literalOrRef(AnyVector)]), doc: "Interpolation factor" }
   }
 });
 
@@ -202,7 +212,7 @@ export const MatMulSchema = defineOp<{ a: any, b: any }>({
 
 export const MatUnarySchema = defineOp<{ val: any }>({
   doc: "Matrix unary operation (transpose, inverse).",
-  args: { val: { type: AnyMat, doc: "Input matrix" } }
+  args: { val: { type: literalOrRef(AnyMat), doc: "Input matrix" } }
 });
 
 // --- Quaternions ---
@@ -321,8 +331,8 @@ export const OpSchemas: Partial<Record<BuiltinOp, z.ZodObject<any>>> = {
   'math_not': MathUnarySchema,
 
   // Vector Unary
-  'vec_length': defineOp({ doc: "Vector length", args: { a: { type: AnyVector, doc: "Vector" } } }),
-  'vec_normalize': defineOp({ doc: "Normalize vector", args: { a: { type: AnyVector, doc: "Vector" } } }),
+  'vec_length': defineOp({ doc: "Vector length", args: { a: { type: literalOrRef(AnyVector), doc: "Vector" } } }),
+  'vec_normalize': defineOp({ doc: "Normalize vector", args: { a: { type: literalOrRef(AnyVector), doc: "Vector" } } }),
 
   // Special Math
   'math_mad': defineOp({ doc: "a * b + c", args: { a: { type: AnyData, doc: "a" }, b: { type: AnyData, doc: "b" }, c: { type: AnyData, doc: "c" } } }),
@@ -343,7 +353,7 @@ export const OpSchemas: Partial<Record<BuiltinOp, z.ZodObject<any>>> = {
   // Vectors
   'vec_swizzle': VecSwizzleSchema,
   'vec_mix': VecMixSchema,
-  'vec_get_element': defineOp({ doc: "Get element from vector", args: { vec: { type: z.union([AnyVector, z.string()]), doc: "Vector" }, index: { type: RefableInt, doc: "Index" } } }),
+  'vec_get_element': defineOp({ doc: "Get element from vector", args: { vec: { type: literalOrRef(AnyVector), doc: "Vector" }, index: { type: RefableInt, doc: "Index" } } }),
 
   // Resources
   'texture_sample': TextureSampleSchema,
