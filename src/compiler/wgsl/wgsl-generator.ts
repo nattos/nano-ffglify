@@ -12,66 +12,19 @@ export interface WgslOptions {
   resourceBindings?: Map<string, number>; // Map resource ID (buffer/texture) to binding index (group 0)
   samplerBindings?: Map<string, number>; // Map resource ID to sampler binding index
   resourceDefs?: Map<string, ResourceDef>; // Definitions for typed buffer generation
+  varTypes?: Map<string, DataType>; // Map variable ID to DataType for global buffer sizing
+  nodeTypes?: Map<string, DataType>; // Map node ID to inferred DataType
 }
 
 export class WgslGenerator {
+  private helpers = new Set<string>();
 
   compile(ir: IRDocument, entryPointId: string, options: WgslOptions = {}): string {
-    const lines: string[] = [];
+    this.helpers.clear();
+    const lines: string[] = []; // For structs, texture samplers, and non-entry functions
+    const entryPointLines: string[] = []; // For the entry point function itself
     const entryFunc = ir.functions.find(f => f.id === entryPointId);
     if (!entryFunc) throw new Error(`Entry point function '${entryPointId}' not found`);
-
-    // Header
-    lines.push('diagnostic(off, derivative_uniformity);');
-    lines.push('');
-
-    // Globals Buffer (for ComputeTestBackend)
-    lines.push('struct GlobalsBuffer { data: array<f32> }');
-    lines.push('');
-
-    if (options.globalBufferBinding !== undefined) {
-      lines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : GlobalsBuffer;`);
-    }
-
-    // Resource Bindings
-    if (options.resourceBindings) {
-      options.resourceBindings.forEach((bindingIdx, resId) => {
-        const def = options.resourceDefs?.get(resId);
-        console.log('Gen Binding:', resId, def?.dataType, 'Types:', def?.type);
-        if (def?.type === 'buffer' || !def) {
-          // Default to buffer if unknown or explicit buffer
-          const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
-          const structName = `Buffer_${resId}`;
-          lines.push(`struct ${structName} { data: array<${type}> }`);
-          lines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> b_${resId} : ${structName};`);
-        } else if (def.type === 'texture2d') {
-          // For now, assume sampled texture.
-          // In future, check usage to decide storage vs sampled.
-          // Using f32 as component type (standard for float textures)
-          lines.push(`@group(0) @binding(${bindingIdx}) var ${resId} : texture_2d<f32>;`);
-        }
-      });
-    }
-
-    /*
-    // Hardware Samplers (Currently disabled for Compute emulation, available in render stages)
-    if (options.samplerBindings) {
-      options.samplerBindings.forEach((bindingIdx, resId) => {
-        lines.push(`@group(0) @binding(${bindingIdx}) var s_${resId} : sampler;`);
-      });
-      lines.push('');
-    }
-    */
-
-    lines.push('fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {');
-    lines.push('  let srcA = src.w;');
-    lines.push('  let dstA = dst.w;');
-    lines.push('  let outA = srcA + dstA * (1.0 - srcA);');
-    lines.push('  if (outA < 1e-5) { return vec4<f32>(0.0); }');
-    lines.push('  let outRGB = (src.xyz * srcA + dst.xyz * dstA * (1.0 - srcA)) / outA;');
-    lines.push('  return vec4<f32>(outRGB, outA);');
-    lines.push('}');
-    lines.push('');
 
     // Generate Structs
     this.generateStructs(ir, lines);
@@ -80,20 +33,76 @@ export class WgslGenerator {
     this.emitTextureSamplers(lines, options);
 
     // Generate Helper Functions (All except Entry Point)
-    // Filter out entry point
     const helperFuncs = ir.functions.filter(f => f.id !== entryPointId);
-
-    // Sort? For now, assume order is mostly fine or use forward declarations (not supported in WGSL 1.0 same-scope but strict ordering is safer).
-    // Actually WGSL allows calling functions defined later.
     for (const func of helperFuncs) {
       this.emitFunction(func, false, lines, options, ir);
       lines.push('');
     }
 
     // Generate Entry Point
-    this.emitFunction(entryFunc, true, lines, options, ir);
+    this.emitFunction(entryFunc, true, entryPointLines, options, ir);
 
-    return lines.join('\n');
+    // Assemble final shader code
+    const finalLines: string[] = [];
+    finalLines.push('diagnostic(off, derivative_uniformity);');
+    finalLines.push('');
+
+    // Globals Buffer (for ComputeTestBackend)
+    if (options.globalBufferBinding !== undefined) {
+      finalLines.push('struct GlobalsBuffer { data: array<f32> }');
+      finalLines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : GlobalsBuffer;`);
+      finalLines.push('');
+    }
+
+    // Resource Bindings
+    if (options.resourceBindings) {
+      options.resourceBindings.forEach((bindingIdx, resId) => {
+        const def = options.resourceDefs?.get(resId);
+        // console.log('Gen Binding:', resId, def?.dataType, 'Types:', def?.type); // Debug line, keep for now
+        if (def?.type === 'buffer' || !def) {
+          // Default to buffer if unknown or explicit buffer
+          const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
+          const structName = `Buffer_${resId}`;
+          finalLines.push(`struct ${structName} { data: array<${type}> }`);
+          finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> b_${resId} : ${structName};`);
+        } else if (def.type === 'texture2d') {
+          // For now, assume sampled texture.
+          // In future, check usage to decide storage vs sampled.
+          // Using f32 as component type (standard for float textures)
+          finalLines.push(`@group(0) @binding(${bindingIdx}) var ${resId} : texture_2d<f32>;`);
+        }
+      });
+      if (options.resourceBindings.size > 0) finalLines.push('');
+    }
+
+    /*
+    // Hardware Samplers (Currently disabled for Compute emulation, available in render stages)
+    if (options.samplerBindings) {
+      options.samplerBindings.forEach((bindingIdx, resId) => {
+        finalLines.push(`@group(0) @binding(${bindingIdx}) var s_${resId} : sampler;`);
+      });
+      finalLines.push('');
+    }
+    */
+
+    // Add injected helpers
+    if (this.helpers.size > 0) {
+      finalLines.push('// Injected Helpers');
+      this.helpers.forEach(h => finalLines.push(h));
+      finalLines.push('');
+    }
+
+    // Add generated structs, texture samplers, and non-entry functions
+    finalLines.push(...lines);
+
+    // Add entry point function
+    finalLines.push(...entryPointLines);
+
+    return finalLines.join('\n');
+  }
+
+  private addHelper(code: string) {
+    this.helpers.add(code);
   }
 
   private emitTextureSamplers(lines: string[], options: WgslOptions) {
@@ -248,13 +257,33 @@ export class WgslGenerator {
     const indent = '  ';
 
     if (node.op === 'var_set') {
-      const val = this.resolveArg(node, 'val', func, options, ir);
       const varId = node['var'];
+      const valExpr = this.resolveArg(node, 'val', func, options, ir);
       if (options.varMap?.has(varId)) {
         const idx = options.varMap.get(varId)!;
-        lines.push(`${indent}b_globals.data[${idx}] = ${val};`);
+        const type = options.varTypes?.get(varId) || 'float';
+        const count = this.getComponentCount(type);
+        if (count === 1) {
+          lines.push(`  b_globals.data[${idx}] = ${valExpr};`);
+        } else if (type === 'float3x3' || type === 'mat3x3<f32>') {
+          for (let c = 0; c < 3; c++) {
+            for (let r = 0; r < 3; r++) {
+              lines.push(`  b_globals.data[${idx + c * 3 + r}] = ${valExpr}[${c}][${r}];`);
+            }
+          }
+        } else if (type === 'float4x4' || type === 'mat4x4<f32>') {
+          for (let c = 0; c < 4; c++) {
+            for (let r = 0; r < 4; r++) {
+              lines.push(`  b_globals.data[${idx + c * 4 + r}] = ${valExpr}[${c}][${r}];`);
+            }
+          }
+        } else {
+          for (let i = 0; i < count; i++) {
+            lines.push(`  b_globals.data[${idx + i}] = ${valExpr}[${i}];`);
+          }
+        }
       } else if (func.localVars.some(v => v.id === varId)) {
-        lines.push(`${indent}l_${varId} = ${val};`);
+        lines.push(`  l_${varId} = ${valExpr};`);
       }
     } else if (node.op === 'array_set') {
       const arr = this.resolveArg(node, 'array', func, options, ir); // Should return l_arr
@@ -389,6 +418,28 @@ export class WgslGenerator {
           if (func.localVars.some(v => v.id === varId)) return `l_${varId}`; // Local var
           if (options.varMap?.has(varId)) { // Global var
             const idx = options.varMap.get(varId)!;
+            const type = options.varTypes?.get(varId) || 'float';
+            const count = this.getComponentCount(type);
+            if (count === 1) return `b_globals.data[${idx}]`;
+            if (type === 'float2' || type === 'vec2<f32>') {
+              return `vec2<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}])`;
+            }
+            if (type === 'float3' || type === 'vec3<f32>') {
+              return `vec3<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}], b_globals.data[${idx + 2}])`;
+            }
+            if (type === 'float4' || type === 'vec4<f32>') {
+              return `vec4<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}], b_globals.data[${idx + 2}], b_globals.data[${idx + 3}])`;
+            }
+            if (type === 'float3x3' || type === 'mat3x3<f32>') {
+              const comps = [];
+              for (let i = 0; i < 9; i++) comps.push(`b_globals.data[${idx + i}]`);
+              return `mat3x3<f32>(${comps.join(', ')})`;
+            }
+            if (type === 'float4x4' || type === 'mat4x4<f32>') {
+              const comps = [];
+              for (let i = 0; i < 16; i++) comps.push(`b_globals.data[${idx + i}]`);
+              return `mat4x4<f32>(${comps.join(', ')})`;
+            }
             return `b_globals.data[${idx}]`;
           }
           // Function Argument?
@@ -396,7 +447,7 @@ export class WgslGenerator {
           throw new Error(`Variable '${varId}' is not defined`);
         }
         // If src is 'struct_construct' or 'array_construct' or 'array_extract' etc., compileExpression handles it.
-        return this.compileExpression(src, func, options, ir);
+        return this.compileExpression(src, func, options, ir, targetType);
       }
     }
     if (node[key] !== undefined) {
@@ -414,8 +465,8 @@ export class WgslGenerator {
     return this.formatZero(targetType || 'float'); // Default?
   }
 
-  private compileExpression(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument): string {
-    if (node.op === 'literal') return this.formatLiteral(node['val'], 'float');
+  private compileExpression(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType?: string | DataType): string {
+    if (node.op === 'literal') return this.formatLiteral(node['val'], targetType || 'float');
     if (node.op === 'loop_index') {
       const loopId = node['loop'];
       return `i_${loopId}`;
@@ -424,7 +475,18 @@ export class WgslGenerator {
     // Constructors
     if (node.op === 'float2') return `vec2<f32>(${this.resolveArg(node, 'x', func, options, ir)}, ${this.resolveArg(node, 'y', func, options, ir)})`;
     if (node.op === 'float3') return `vec3<f32>(${this.resolveArg(node, 'x', func, options, ir)}, ${this.resolveArg(node, 'y', func, options, ir)}, ${this.resolveArg(node, 'z', func, options, ir)})`;
-    if (node.op === 'float4') return `vec4<f32>(${this.resolveArg(node, 'x', func, options, ir)}, ${this.resolveArg(node, 'y', func, options, ir)}, ${this.resolveArg(node, 'z', func, options, ir)}, ${this.resolveArg(node, 'w', func, options, ir)})`;
+    if (node.op === 'float4' || node.op === 'quat') {
+      return `vec4<f32>(${this.resolveArg(node, 'x', func, options, ir, 'float')}, ${this.resolveArg(node, 'y', func, options, ir, 'float')}, ${this.resolveArg(node, 'z', func, options, ir, 'float')}, ${this.resolveArg(node, 'w', func, options, ir, 'float')})`;
+    }
+
+    if (node.op === 'float3x3' || node.op === 'float4x4') {
+      const vals = node['vals'] as number[];
+      if (vals) {
+        const formatted = vals.map(v => this.formatLiteral(v, 'float'));
+        const type = node.op === 'float3x3' ? 'mat3x3<f32>' : 'mat4x4<f32>';
+        return `${type}(${formatted.join(', ')})`;
+      }
+    }
 
     // Struct Construct
     if (node.op === 'struct_construct') {
@@ -493,8 +555,8 @@ export class WgslGenerator {
       return `${struct}.${field}`;
     }
 
-    if (node.op.startsWith('math_') || node.op.startsWith('vec_')) {
-      return this.compileMathOp(node, func, options, ir);
+    if (node.op.startsWith('math_') || node.op.startsWith('vec_') || node.op.startsWith('mat_') || node.op.startsWith('quat_')) {
+      return this.compileMathOp(node, func, options, ir, targetType);
     }
 
     if (node.op === 'texture_sample') {
@@ -572,6 +634,8 @@ export class WgslGenerator {
     if (type === 'float2' || type === 'vec2<f32>') return 'vec2<f32>(0.0)';
     if (type === 'float3' || type === 'vec3<f32>') return 'vec3<f32>(0.0)';
     if (type === 'float4' || type === 'vec4<f32>') return 'vec4<f32>(0.0)';
+    if (type === 'float3x3' || type === 'mat3x3<f32>') return 'mat3x3<f32>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)';
+    if (type === 'float4x4' || type === 'mat4x4<f32>') return 'mat4x4<f32>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)';
 
     // Array zero init
     if (typeof type === 'string' && type.startsWith('array<')) {
@@ -581,8 +645,12 @@ export class WgslGenerator {
     return '0.0';
   }
 
-  private compileMathOp(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument): string {
+  private compileMathOp(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType?: string | DataType): string {
     const op = node.op;
+    const effectiveType = targetType || options.nodeTypes?.get(node.id) || 'float';
+    const zero = this.formatZero(effectiveType);
+    const one = this.formatOne(effectiveType);
+
     const a = (k = 'a') => this.resolveArg(node, k, func, options, ir);
     const b = (k = 'b') => this.resolveArg(node, k, func, options, ir);
     const val = (k = 'val') => this.resolveArg(node, k, func, options, ir);
@@ -600,8 +668,73 @@ export class WgslGenerator {
     if (op === 'math_floor') return `floor(${val()})`;
     if (op === 'math_ceil') return `ceil(${val()})`;
     if (op === 'math_fract') return `fract(${val()})`;
+
+    if (op === 'quat_identity') return 'vec4<f32>(0.0, 0.0, 0.0, 1.0)';
+    if (op === 'quat_mul') {
+      return `vec4<f32>(${a()}.w * ${b()}.xyz + ${b()}.w * ${a()}.xyz + cross(${a()}.xyz, ${b()}.xyz), ${a()}.w * ${b()}.w - dot(${a()}.xyz, ${b()}.xyz))`;
+    }
+    if (op === 'quat_rotate') {
+      const q = this.resolveArg(node, 'q', func, options, ir);
+      const v = this.resolveArg(node, 'v', func, options, ir);
+      return `(${v} + 2.0 * cross(${q}.xyz, cross(${q}.xyz, ${v}) + ${q}.w * ${v}))`;
+    }
+    if (op === 'quat_slerp') {
+      // ... helper already added above or add here
+      this.addHelper(`
+fn quat_slerp_impl(q1: vec4<f32>, q2: vec4<f32>, t: f32) -> vec4<f32> {
+  var dot_val = dot(q1, q2);
+  var q2_prime = q2;
+  if (dot_val < 0.0) { dot_val = -dot_val; q2_prime = -q2; }
+  if (dot_val > 0.9995) { return normalize(mix(q1, q2_prime, t)); }
+  let theta_0 = acos(clamp(dot_val, -1.0, 1.0));
+  let theta = theta_0 * t;
+  let q3 = normalize(q2_prime - q1 * dot_val);
+  return q1 * cos(theta) + q3 * sin(theta);
+}
+      `);
+      return `quat_slerp_impl(${this.resolveArg(node, 'a', func, options, ir)}, ${this.resolveArg(node, 'b', func, options, ir)}, ${this.resolveArg(node, 't', func, options, ir, 'float')})`;
+    }
+    if (op === 'quat_to_mat4' || op === 'quat_to_float4x4') {
+      const q = this.resolveArg(node, 'q', func, options, ir);
+      // Quat to Mat4 (Column major)
+      return `mat4x4<f32>(
+        1.0 - 2.0*(${q}.y*${q}.y + ${q}.z*${q}.z), 2.0*(${q}.x*${q}.y + ${q}.w*${q}.z), 2.0*(${q}.x*${q}.z - ${q}.w*${q}.y), 0.0,
+        2.0*(${q}.x*${q}.y - ${q}.w*${q}.z), 1.0 - 2.0*(${q}.x*${q}.x + ${q}.z*${q}.z), 2.0*(${q}.y*${q}.z + ${q}.w*${q}.x), 0.0,
+        2.0*(${q}.x*${q}.z + ${q}.w*${q}.y), 2.0*(${q}.y*${q}.z - ${q}.w*${q}.x), 1.0 - 2.0*(${q}.x*${q}.x + ${q}.y*${q}.y), 0.0,
+        0.0, 0.0, 0.0, 1.0
+      )`;
+    }
+
+    if (op === 'mat_identity') {
+      const size = node['size'];
+      if (size === 3) return 'mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)';
+      return 'mat4x4<f32>(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)';
+    }
+    if (op === 'mat_mul') return `(${a()} * ${b()})`;
+    if (op === 'mat_transpose') return `transpose(${val()})`;
+    if (op === 'mat_inverse') return `inverse(${val()})`; // Note: WGSL doesn't have inverse! We might need a polyfill.
+
+    // Quaternion Ops (Wait for common-math.wgsl or inject polyfills)
+    // For now, let's assume we need to implement them or they are external.
+    if (op === 'quat_mul') return `/* TODO: quat_mul */ 0.0`;
+    if (op === 'quat_rotate') return `/* TODO: quat_rotate */ 0.0`;
+    if (op === 'quat_slerp') return `/* TODO: quat_slerp */ 0.0`;
+    if (op === 'quat_to_mat4') return `/* TODO: quat_to_mat4 */ 0.0`;
+
+    // Trig & Transcendental
     if (op === 'math_sqrt') return `sqrt(${val()})`;
-    if (op === 'math_exp') return `exp(${val()})`;
+    if (op === 'math_is_nan') {
+      const v = val();
+      const count = this.getComponentCount(effectiveType);
+      const uType = count === 1 ? 'u32' : `vec${count}<u32>`;
+      const bType = count === 1 ? 'u32' : `vec${count}<u32>`;
+
+      const mask = count === 1 ? '0x7fffffffu' : `${uType}(0x7fffffffu)`;
+      const inf = count === 1 ? '0x7f800000u' : `${uType}(0x7f800000u)`;
+
+      return `select(${zero}, ${one}, (bitcast<${uType}>(${v}) & ${mask}) > ${inf})`;
+    }
+    if (op === 'math_is_inf') return `select(${zero}, ${one}, isinf(${val()}))`;
     if (op === 'math_log') return `log(${val()})`;
     if (op === 'math_sin') return `sin(${val()})`;
     if (op === 'math_cos') return `cos(${val()})`;
@@ -624,12 +757,12 @@ export class WgslGenerator {
     if (op === 'vec_mix') return `mix(${a()}, ${b()}, ${this.resolveArg(node, 't', func, options, ir)})`;
 
     // Logic & Cmparison (Returns bool? Cast to float?)
-    if (op === 'math_lt') return `select(0.0, 1.0, ${a()} < ${b()})`;
-    if (op === 'math_gt') return `select(0.0, 1.0, ${a()} > ${b()})`;
-    if (op === 'math_le') return `select(0.0, 1.0, ${a()} <= ${b()})`;
-    if (op === 'math_ge') return `select(0.0, 1.0, ${a()} >= ${b()})`;
-    if (op === 'math_eq') return `select(0.0, 1.0, ${a()} == ${b()})`;
-    if (op === 'math_neq') return `select(0.0, 1.0, ${a()} != ${b()})`;
+    if (op === 'math_lt') return `select(${zero}, ${one}, ${a()} < ${b()})`;
+    if (op === 'math_gt') return `select(${zero}, ${one}, ${a()} > ${b()})`;
+    if (op === 'math_le') return `select(${zero}, ${one}, ${a()} <= ${b()})`;
+    if (op === 'math_ge') return `select(${zero}, ${one}, ${a()} >= ${b()})`;
+    if (op === 'math_eq') return `select(${zero}, ${one}, ${a()} == ${b()})`;
+    if (op === 'math_neq') return `select(${zero}, ${one}, ${a()} != ${b()})`;
 
     // Boolean Logic (assuming scalar 0.0/1.0 inputs or bools)
     // If inputs are floats (from select), we need `!= 0.0`.
@@ -662,5 +795,24 @@ export class WgslGenerator {
     // Fallback: Assume it's a struct name or user type
     // In strict mode we should check in IR.
     return type; // Default
+  }
+
+  private getComponentCount(type: DataType | string): number {
+    if (type === 'float2' || type === 'vec2<f32>') return 2;
+    if (type === 'float3' || type === 'vec3<f32>') return 3;
+    if (type === 'float4' || type === 'vec4<f32>') return 4;
+    if (type === 'float3x3' || type === 'mat3x3<f32>') return 9;
+    if (type === 'float4x4' || type === 'mat4x4<f32>') return 16;
+    return 1;
+  }
+
+  private formatOne(type: string | DataType): string {
+    if (type === 'float' || type === 'f32') return '1.0';
+    if (type === 'int' || type === 'i32') return '1';
+    if (type === 'bool') return 'true';
+    if (type === 'float2' || type === 'vec2<f32>') return 'vec2<f32>(1.0)';
+    if (type === 'float3' || type === 'vec3<f32>') return 'vec3<f32>(1.0)';
+    if (type === 'float4' || type === 'vec4<f32>') return 'vec4<f32>(1.0)';
+    return '1.0';
   }
 }

@@ -149,6 +149,10 @@ export class EvaluationContext {
     const builtin = this.builtins.get(id);
     if (builtin !== undefined) return builtin;
 
+    // 3. Inputs (Global constants/inputs)
+    const input = this.inputs.get(id);
+    if (input !== undefined) return input;
+
     return undefined;
   }
 

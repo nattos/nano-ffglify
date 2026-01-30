@@ -56,7 +56,7 @@ if (process.env.TEST_BACKEND && availableBackends.length === 0) {
 // Test Helpers
 // ------------------------------------------------------------------
 
-export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [], extraEdges: any[] = [], localVars: any[] = [{ id: 'res', type: 'any' }], structs: any[] = []): IRDocument => {
+export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [], extraEdges: any[] = [], localVars: any[] = [{ id: 'res', type: 'any' }], structs: any[] = [], globalVars: any[] = []): IRDocument => {
   const edges: any[] = [];
   const nodeIds = new Set(nodes.map(n => n.id));
 
@@ -77,7 +77,7 @@ export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [],
     version: '1.0.0',
     meta: { name },
     entryPoint: 'main',
-    inputs: [],
+    inputs: globalVars,
     resources: resources,
     structs: structs,
     functions: [{
@@ -101,8 +101,29 @@ export const runGraphTest = (
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
-      const ir = buildSimpleIR(name, nodes);
-      const ctx = await backend.execute(ir, 'main');
+      // Type Inference for the result variable
+      let inferredType = 'any';
+      if (Array.isArray(expectedVal)) {
+        if (expectedVal.length === 2) inferredType = 'float2';
+        else if (expectedVal.length === 3) inferredType = 'float3';
+        else if (expectedVal.length === 4) inferredType = 'float4';
+        else if (expectedVal.length === 9) inferredType = 'float3x3';
+        else if (expectedVal.length === 16) inferredType = 'float4x4';
+        else inferredType = 'float[]'; // Generic array? Or float4?
+      } else if (typeof expectedVal === 'number') {
+        inferredType = 'float';
+      }
+
+      const globalVars = [
+        { id: varToCheck, type: inferredType },
+        { id: 'u_dummy', type: 'float' }
+      ];
+      const ir = buildSimpleIR(name, nodes, [], [], [] /* No local vars */, [], globalVars);
+
+      const inputsMap = new Map<string, any>();
+      inputsMap.set('u_dummy', 0.0);
+
+      const ctx = await backend.execute(ir, 'main', inputsMap);
       const result = ctx.getVar(varToCheck);
 
       if (Array.isArray(expectedVal)) {

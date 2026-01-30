@@ -88,27 +88,10 @@ describe('Conformance: Vector Math Ops', () => {
   // Vector IsNan
   // ----------------------------------------------------------------
   runGraphTest('float2_is_nan', [
-    { id: 'nan', op: 'math_sqrt', val: -1 }, // NaN
-    { id: 'val', op: 'float2', x: 10, y: 'nan' }, // [10, NaN] (Wait, float2 ctor with string ref? manually link?)\
-    // Manual wiring needed for float2 args if not literal.
-    // My buildIR assumes literals.
-    // I need to use 'float2' node with inputs connected.
-    // But 'float2' has inputs x, y.
-    // I need to define 'nan' node first.
-    // v2 node: { id: 'v2', op: 'float2', x: 10, y: 0 } -> no, can't mix const and input easily in buildIR unless I am clever.
-    // buildIR connects matching IDs.
-    // I can put 'nan' node ID into y field?
-    // Type check for y is 'string'? 'nan' is string.
-    // buildIR: if typeof val === 'string' ... edges.push
-
-    // Correct setup:
-    { id: 'nan_src', op: 'math_sqrt', val: -1 }, // Output is NaN
-    { id: 'v_src', op: 'const_get', name: 'whatever' }, // Placeholder or just use literal 10 if allowed?
-    // Ops allow literals... but 'float2' inputs must be resolved.
-    // Default validateArg allows literals.
-    // So 'x': 10 is fine.
-    // 'y': 'nan_src' (ID) -> buildIR creates edge.
-    { id: 'vec', op: 'float2', x: 10, y: 'nan_src' },
+    { id: 'v_dummy', op: 'var_get', var: 'u_dummy' },
+    { id: 'v_neg', op: 'math_sub', a: 'v_dummy', b: 1.0 },
+    { id: 'nan', op: 'math_sqrt', val: 'v_neg' }, // Output is NaN
+    { id: 'vec', op: 'float2', x: 10, y: 'nan' },
 
     { id: 'check', op: 'math_is_nan', val: 'vec' },
     { id: 'sink', op: 'var_set', var: 'res', val: 'check' }

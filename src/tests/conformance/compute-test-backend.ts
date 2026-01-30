@@ -1,6 +1,5 @@
-
-import { IRDocument, ResourceDef } from '../../ir/types';
-import { validateIR } from '../../ir/validator';
+import { IRDocument, DataType, ResourceDef } from '../../ir/types';
+import { validateIR, inferFunctionTypes } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { WgslGenerator } from '../../compiler/wgsl/wgsl-generator';
 import { globals } from 'webgpu';
@@ -41,6 +40,15 @@ const getElementSize = (type?: string) => {
  * 5. Dispatch (1, 1, 1).
  * 6. Read back the storage buffer and populate the EvaluationContext variables.
  */
+const getComponentCount = (type: string): number => {
+  if (type === 'float2' || type === 'vec2<f32>') return 2;
+  if (type === 'float3' || type === 'vec3<f32>') return 3;
+  if (type === 'float4' || type === 'vec4<f32>') return 4;
+  if (type === 'float3x3' || type === 'mat3x3<f32>') return 9;
+  if (type === 'float4x4' || type === 'mat4x4<f32>') return 16;
+  return 1;
+};
+
 export const ComputeTestBackend: TestBackend = {
   name: 'Compute',
 
@@ -188,7 +196,16 @@ export const ComputeTestBackend: TestBackend = {
 
     // 3. Globals Buffer & Resource Map
     const varMap = new Map<string, number>();
+    const varTypes = new Map<string, DataType>();
     const resourceDefs = new Map<string, ResourceDef>();
+
+    // Initial varMap from IR inputs
+    let varCounter = 0;
+    ir.inputs?.forEach(input => {
+      varMap.set(input.id, varCounter);
+      varTypes.set(input.id, input.type);
+      varCounter += getComponentCount(input.type);
+    });
 
     // Populate Resource Defs
     ir.resources.forEach(r => {
@@ -199,12 +216,15 @@ export const ComputeTestBackend: TestBackend = {
     const func = ir.functions.find(f => f.id === entryPoint);
     if (!func) throw new Error('Entry point not found');
 
-    let varCounter = 0;
-    func?.nodes.forEach(n => {
+    func.nodes.forEach(n => {
       if (n.op === 'var_set') {
         const v = n['var'];
         const isLocal = func.localVars?.some(lv => lv.id === v);
-        if (!isLocal && !varMap.has(v)) varMap.set(v, varCounter++);
+        if (!isLocal && !varMap.has(v)) {
+          varMap.set(v, varCounter);
+          varTypes.set(v, 'float'); // Default to float for dynamic vars
+          varCounter++;
+        }
       }
     });
 
@@ -213,6 +233,30 @@ export const ComputeTestBackend: TestBackend = {
       size: globalsSizeBytes,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
     });
+
+    // Initialize Global Buffer from Context Inputs (e.g. u_dummy)
+    if (varMap.size > 0) {
+      const initialData = new Float32Array(globalsSizeBytes / 4);
+      varMap.forEach((idx, name) => {
+        try {
+          const val = ctx.getInput(name);
+          if (val !== undefined) {
+            const type = varTypes.get(name) || 'float';
+            const count = getComponentCount(type);
+            if (count === 1 && typeof val === 'number') {
+              initialData[idx] = val as any as number;
+            } else if (Array.isArray(val)) {
+              for (let i = 0; i < Math.min(val.length, count); i++) {
+                initialData[idx + i] = val[i] as any as number;
+              }
+            }
+          }
+        } catch (e) {
+          // Input might not exist in context (e.g. ad-hoc output var), that's fine.
+        }
+      });
+      device.queue.writeBuffer(globalBuffer, 0, initialData);
+    }
     const entryFn = ir.functions.find(f => f.id === entryPoint);
     if (!entryFn) throw new Error(`Entry point '${entryPoint}' not found`);
 
@@ -224,9 +268,13 @@ export const ComputeTestBackend: TestBackend = {
       else genResourceBindings.set(id, binding);
     });
 
+    const nodeTypes = inferFunctionTypes(func, ir);
+
     const code = new WgslGenerator().compile(ir, entryPoint, {
       globalBufferBinding: 0,
       varMap: varMap,
+      varTypes: varTypes,
+      nodeTypes: nodeTypes as any, // Cast from ValidationType to DataType
       resourceBindings: genResourceBindings,
       samplerBindings: genSamplerBindings,
       resourceDefs: resourceDefs
@@ -364,7 +412,13 @@ export const ComputeTestBackend: TestBackend = {
     const globalsData = new Float32Array(globalsStaging.getMappedRange());
     ctx.pushFrame(entryPoint);
     varMap.forEach((idx, name) => {
-      ctx.setVar(name, globalsData[idx]);
+      const type = varTypes.get(name) || 'float';
+      const count = getComponentCount(type);
+      if (count === 1) {
+        ctx.setVar(name, globalsData[idx]);
+      } else {
+        ctx.setVar(name, Array.from(globalsData.subarray(idx, idx + count)));
+      }
     });
     globalsStaging.unmap();
 

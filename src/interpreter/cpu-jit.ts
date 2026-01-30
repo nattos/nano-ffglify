@@ -185,8 +185,12 @@ export class CpuJitCompiler {
     else if (node.op === 'var_set') {
       const val = this.resolveArg(node, 'val', func);
       const varId = node['var']; // String ID
-      lines.push(`l_${varId} = ${val};`);
-      lines.push(`ctx.setVar('${varId}', l_${varId});`);
+      if (func.localVars.some(v => v.id === varId)) {
+        lines.push(`l_${varId} = ${val};`);
+        lines.push(`ctx.setVar('${varId}', l_${varId});`);
+      } else {
+        lines.push(`ctx.setVar('${varId}', ${val});`);
+      }
     }
     else if (node.op === 'var_get') {
       // usually purely data node, handled by resolution.

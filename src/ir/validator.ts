@@ -34,6 +34,19 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
   return errors;
 };
 
+export const inferFunctionTypes = (func: FunctionDef, ir: IRDocument): InferredTypes => {
+  const resourceIds = new Set([
+    ...ir.resources.map(r => r.id),
+    ...ir.inputs.map(i => i.id)
+  ]);
+  const cache: InferredTypes = new Map();
+  const errors: LogicValidationError[] = [];
+  func.nodes.forEach(node => {
+    resolveNodeType(node.id, func, cache, resourceIds, errors);
+  });
+  return cache;
+};
+
 export const validateIR = (doc: IRDocument): LogicValidationError[] => {
   return validateStaticLogic(doc);
 };
@@ -42,6 +55,8 @@ export const validateIR = (doc: IRDocument): LogicValidationError[] => {
 // Type Inference Engine
 // ------------------------------------------------------------------
 type TypeCache = Map<string, ValidationType>;
+
+export type InferredTypes = Map<string, ValidationType>;
 
 const resolveNodeType = (
   nodeId: string,
