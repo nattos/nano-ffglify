@@ -5,7 +5,7 @@ export type DataType =
   | 'string' // logic only, usually
   | 'texture2d' // resource handle
   | 'sampler'
-  | string; // Allow custom Struct IDs
+  | string; // Allow custom Struct IDs or "array<T, N>" syntax (e.g. "array<f32, 10>")
 
 export const PRIMITIVE_TYPES = [
   'float', 'int', 'bool',
@@ -186,7 +186,8 @@ export interface PortDef {
 
 export interface VariableDef {
   id: string;
-  type: DataType; // Must be POD (scalar/vector/matrix)
+  type: DataType; // Must be POD (scalar/vector/matrix) or array<T, N>
+  // NOTE: Arrays MUST have an initialValue (e.g. []) to be valid in some backends.
   initialValue?: any;
   comment?: string;
 }
@@ -266,15 +267,22 @@ export type BuiltinOp =
 
   // Variables & Data
   | 'var_get' | 'var_set' | 'const_get' | 'loop_index'
+  // struct_construct: 'type' MUST match a defined StructDef.id. Inputs match member names.
   | 'struct_construct' | 'struct_extract'
+  // array_construct: 'fill' value determines element type if not inferred.
+  // array_set: 'array' input MUST resolve to a generic Variable L-Value (var_get or similar).
+  // It cannot be a direct expression result.
   | 'array_construct' | 'array_extract' | 'array_set' | 'array_length'
 
   // Flow & Functions
+  // call_func: Execution node that also produces a value (if outputs > 0).
+  // The generator captures this return value in a temporary variable for downstream data use.
   | 'flow_branch' | 'flow_loop' | 'call_func' | 'func_return'
 
   // Resources
   // buffer_store/load accesses are typed based on the resource definition.
   // No implicit flattening occurs. The type of the value being written must match the type of the buffer.
+  // NOTE: 'buffer_store' may require strict type casting (e.g. i32 -> f32) in generation.
   | 'buffer_load' | 'buffer_store'
   | 'texture_sample' | 'texture_store' | 'texture_load'
   | 'resource_get_size' | 'resource_get_format'
