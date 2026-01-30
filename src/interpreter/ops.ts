@@ -327,6 +327,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'float': (ctx, args) => args.val,
   'int': (ctx, args) => args.val,
   'bool': (ctx, args) => args.val,
+  'string': (ctx, args) => args.val,
 
   // ----------------------------------------------------------------
   // Matrix Operations (Column Major)

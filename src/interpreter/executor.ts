@@ -59,6 +59,7 @@ export class InterpretedExecutor {
     return node.op.startsWith('cmd_') ||
       node.op.startsWith('flow_') ||
       node.op.startsWith('var_set') ||
+      node.op.startsWith('array_set') ||
       node.op.startsWith('buffer_store') ||
       node.op.startsWith('texture_store') ||
       node.op === 'call_func' ||
@@ -90,6 +91,21 @@ export class InterpretedExecutor {
             for (let x = 0; x < dim[0]; x++) {
               this.context.builtins.set('GlobalInvocationID', [x, y, z]);
               this.context.pushFrame(targetId);
+
+              // Set arguments into the shader frame
+              if (targetFunc.inputs) {
+                for (const inputDef of targetFunc.inputs) {
+                  const val = args[inputDef.id];
+                  if (val !== undefined) {
+                    // String to shader error
+                    if (typeof val === 'string') {
+                      throw new Error(`Runtime Error: Cannot marshal string value "${val}" to shader non-string input '${inputDef.id}'`);
+                    }
+                    this.context.setVar(inputDef.id, val);
+                  }
+                }
+              }
+
               this.executeFunction(targetFunc);
               this.context.popFrame();
             }
@@ -173,6 +189,8 @@ export class InterpretedExecutor {
 
     for (let i = start; i < end; i++) {
       this.context.setLoopIndex(node.id, i);
+      // Clear node result cache to ensure nodes inside loop are re-evaluated
+      this.context.currentFrame.nodeResults.clear();
 
       const bodyEdges = func.edges.filter(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
       for (const edge of bodyEdges) {
@@ -222,13 +240,17 @@ export class InterpretedExecutor {
 
     const handler = OpRegistry[node.op as keyof typeof OpRegistry];
     if (handler) {
-      return handler(this.context, args) ?? 0;
+      const result = handler(this.context, args);
+      if (result !== undefined && node.op !== 'loop_index') {
+        this.context.currentFrame.nodeResults.set(node.id, result);
+      }
+      return result ?? 0;
     }
     return 0;
   }
 
   protected mixinNodeProperties(node: Node, args: Record<string, RuntimeValue>, func: FunctionDef) {
-    const SKIP_RESOLUTION = ['var', 'func', 'resource', 'buffer', 'tex', 'loop'];
+    const SKIP_RESOLUTION = ['var', 'func', 'resource', 'buffer', 'tex', 'loop', 'type', 'field', 'member', 'channels', 'mask'];
 
     // 1. Resolve Props
     for (const key of Object.keys(node)) {
@@ -248,7 +270,16 @@ export class InterpretedExecutor {
           } else {
             try {
               val = this.context.getInput(val);
-            } catch (e) { }
+            } catch (e) {
+              // Try resolving as a node ID in the current function if it's not a var/input
+              // Recursion guard: don't resolve yourself
+              if (val !== node.id) {
+                const targetNode = func.nodes.find(n => n.id === val);
+                if (targetNode) {
+                  val = this.resolveNodeValue(targetNode, func);
+                }
+              }
+            }
           }
         }
         args[key] = val;
