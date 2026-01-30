@@ -115,6 +115,7 @@ describe('Conformance: Texture Sampling', () => {
           {
             id: 't_internal',
             type: 'texture2d',
+            format: 'r32f', // Explicitly set format
             size: { mode: 'fixed', value: [1, 1] },
             persistence: { retain: false, clearEveryFrame: false, clearOnResize: true, clearValue: [1, 0, 1, 1], cpuAccess: true }
           }
@@ -127,20 +128,18 @@ describe('Conformance: Texture Sampling', () => {
             outputs: [],
             localVars: [],
             nodes: [
-              { id: 'c_r32f', op: 'const_get', name: 'TextureFormat.R32F' },
+              // Removed dynamic const_get for format
               {
                 id: 'resize',
                 op: 'cmd_resize_resource',
                 resource: 't_internal',
                 size: [2, 2],
-                format: 'c_r32f',
+                // Removed format arg
                 clear: [0.5, 0, 0, 1]
               },
               { id: 'get_fmt', op: 'resource_get_format', resource: 't_internal' }
             ],
-            edges: [
-              { from: 'c_r32f', portOut: 'val', to: 'resize', portIn: 'format', type: 'data' }
-            ]
+            edges: []
           }
         ]
       };

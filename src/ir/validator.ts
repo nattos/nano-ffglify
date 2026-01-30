@@ -257,21 +257,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       }
     }
 
-    if (node.op === 'cmd_resize_resource') {
-      const fmt = node['format'];
-      if (fmt !== undefined) {
-        if (typeof fmt === 'string') {
-          const valid = Object.values(TextureFormat).includes(fmt as TextureFormat);
-          if (!valid) {
-            errors.push({ nodeId: node.id, message: `Invalid TextureFormat value '${fmt}'`, severity: 'error' });
-          }
-        } else if (typeof fmt === 'number') {
-          if (!Object.values(TextureFormatValues).includes(fmt)) {
-            errors.push({ nodeId: node.id, message: `Invalid TextureFormat ID '${fmt}'`, severity: 'error' });
-          }
-        }
-      }
-    }
+
 
     if (node.op.startsWith('buffer_') || node.op.startsWith('texture_') || node.op === 'cmd_resize_resource') {
       const resId = node['buffer'] || node['tex'] || node['resource'];

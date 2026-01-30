@@ -75,10 +75,7 @@ describe('Conformance: Error Handling & Negative Tests', () => {
     // Resize format invalid logic is inside the op? Or arg validation?
     // OpSignature for cmd_resize_resource?
     // Currently relying on Runtime check for Format Constant.
-    runGraphErrorTest('Resize Texture with Invalid Format Constant', [
-      { id: 'bad_resize', op: 'cmd_resize_resource', resource: 'tex', size: [10, 10], format: 99999 }
-    ], /./, // Any throws is fine
-      [{ id: 'tex', type: 'texture2d', size: { mode: 'fixed', value: [1, 1] }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }]);
+
   });
 
   // ----------------------------------------------------------------

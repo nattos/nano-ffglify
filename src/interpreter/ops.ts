@@ -635,7 +635,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   'cmd_resize_resource': (ctx, args) => {
     const id = args.resource as string;
     const sizeVal = args.size;
-    const formatArg = args.format; // UnTyped check
+
     const clearVal = args.clear;
 
     let newWidth = 1;
@@ -653,22 +653,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     res.width = newWidth;
     res.height = newHeight;
 
-    // Format Handling: Hybrid String/Int
-    if (formatArg !== undefined) {
-      if (typeof formatArg === 'number') {
-        // Int -> String for Def
-        const strFmt = TextureFormatFromId[formatArg];
-        if (!strFmt) throw new Error(`Runtime Error: Invalid texture format ID ${formatArg}`);
-        res.def.format = strFmt;
-      } else if (typeof formatArg === 'string') {
-        // String -> String
-        // Validation?
-        if (!Object.values(TextureFormat).includes(formatArg as TextureFormat)) {
-          throw new Error(`Runtime Error: Invalid texture format '${formatArg}'`);
-        }
-        res.def.format = formatArg as TextureFormat;
-      }
-    }
+
 
     const totalSize = newWidth * newHeight;
 
