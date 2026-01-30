@@ -40,13 +40,14 @@ describe('IR Validation', () => {
       meta: { name: 'Precomputed Blur' },
       entryPoint: 'fn_main_cpu',
       inputs: [
-        { id: 't_input', type: 'texture2d' },
+        { id: 't_input', type: 'texture2d', format: 'rgba8' },
         { id: 'u_kernel_size', type: 'int', default: 16 }
       ],
       resources: [
         {
           id: 't_output',
           type: 'texture2d',
+          format: 'rgba8',
           size: { mode: 'reference', ref: 't_input' },
           persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
         },
@@ -68,10 +69,10 @@ describe('IR Validation', () => {
           localVars: [],
           nodes: [
             { id: 'resize_w', op: 'cmd_resize_resource', resource: 'b_weights', size: 'u_kernel_size' },
-            { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [1, 1, 1] },
+            { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [16, 1, 1] },
             { id: 'get_size', op: 'resource_get_size', resource: 't_input' },
-            { id: 'calc_groups', op: 'math_div_scalar', scalar: 8 },
-            { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur' }
+            { id: 'calc_groups', op: 'math_div_scalar', val: 'get_size', scalar: 8 },
+            { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1] }
           ],
           edges: [
             { from: 'resize_w', portOut: 'exec_out', to: 'cmd_gen', portIn: 'exec_in', type: 'execution' },
@@ -101,7 +102,8 @@ describe('IR Validation', () => {
             { id: 'loop', op: 'flow_loop', start: 0, end: 16 },
             { id: 'idx', op: 'loop_index', loop: 'loop' },
             { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 'idx' },
-            { id: 'tex_val', op: 'texture_sample', tex: 't_input' }
+            { id: 'uv', op: 'float2', x: 0.5, y: 0.5 },
+            { id: 'tex_val', op: 'texture_sample', tex: 't_input', uv: 'uv' }
           ],
           edges: []
         }

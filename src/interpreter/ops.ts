@@ -711,6 +711,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     const res = ctx.getResource(id);
 
     const wrapMode = res.def.sampler?.wrap || 'clamp';
+    const filterMode = res.def.sampler?.filter || 'nearest';
 
     const applyWrap = (coord: number): number => {
       if (wrapMode === 'clamp') {
@@ -728,14 +729,68 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     const u = applyWrap(uv[0]);
     const v = applyWrap(uv[1]);
 
-    // Nearest neighbor
     const w = res.width;
     const h = res.height;
-    const x = Math.min(Math.floor(u * w), w - 1);
-    const y = Math.min(Math.floor(v * h), h - 1);
 
-    const idx = y * w + x;
-    return res.data?.[idx] ?? [0, 0, 0, 1];
+    const normalizeSample = (val: any): [number, number, number, number] => {
+      if (Array.isArray(val)) {
+        if (val.length === 4) return val as [number, number, number, number];
+        if (val.length === 3) return [val[0], val[1], val[2], 1];
+        if (val.length === 1) return [val[0], val[0], val[0], 1];
+        return [val[0] || 0, val[1] || 0, val[2] || 0, val[3] || 1];
+      }
+      if (typeof val === 'number') return [val, val, val, 1];
+      return [0, 0, 0, 1];
+    };
+
+    if (filterMode === 'nearest') {
+      const x = Math.min(Math.floor(u * w), w - 1);
+      const y = Math.min(Math.floor(v * h), h - 1);
+      const idx = y * w + x;
+      return normalizeSample(res.data?.[idx]);
+    } else {
+      // Bilinear
+      const tx = u * w - 0.5;
+      const ty = v * h - 0.5;
+
+      const x0 = Math.floor(tx);
+      const y0 = Math.floor(ty);
+      const x1 = x0 + 1;
+      const y1 = y0 + 1;
+
+      const fx = tx - x0;
+      const fy = ty - y0;
+
+      const getSafeSample = (x: number, y: number) => {
+        let sx = x;
+        let sy = y;
+        if (wrapMode === 'clamp') {
+          sx = Math.max(0, Math.min(w - 1, sx));
+          sy = Math.max(0, Math.min(h - 1, sy));
+        } else if (wrapMode === 'repeat') {
+          sx = ((sx % w) + w) % w;
+          sy = ((sy % h) + h) % h;
+        } else if (wrapMode === 'mirror') {
+          // Simplification for pixel space mirroring
+          const mx = ((sx % (2 * w)) + (2 * w)) % (2 * w);
+          sx = mx >= w ? 2 * w - 1 - mx : mx;
+          const my = ((sy % (2 * h)) + (2 * h)) % (2 * h);
+          sy = my >= h ? 2 * h - 1 - my : my;
+        }
+        return normalizeSample(res.data?.[sy * w + sx]);
+      };
+
+      const s00 = getSafeSample(x0, y0);
+      const s10 = getSafeSample(x1, y0);
+      const s01 = getSafeSample(x0, y1);
+      const s11 = getSafeSample(x1, y1);
+
+      return [0, 1, 2, 3].map(i => {
+        const r0 = s00[i] * (1 - fx) + s10[i] * fx;
+        const r1 = s01[i] * (1 - fx) + s11[i] * fx;
+        return r0 * (1 - fy) + r1 * fy;
+      }) as [number, number, number, number];
+    }
   },
 
   'texture_store': (ctx, args) => {

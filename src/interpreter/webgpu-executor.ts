@@ -46,7 +46,6 @@ export class WebGpuExecutor {
     if (func.type !== 'shader') throw new Error(`Function '${funcId}' is not a shader`);
 
     // 1. Get/Compile Pieline
-    // 1. Get/Compile Pieline
     let pipeline = this.pipelineCache.get(funcId);
     if (!pipeline) {
       try {

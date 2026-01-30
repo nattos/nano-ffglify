@@ -65,6 +65,11 @@ const ResourceDefSchema = z.object({
   comment: z.string().optional(),
   dataType: DataTypeSchema.optional(),
   structType: z.array(z.object({ name: z.string(), type: DataTypeSchema })).optional(),
+  format: z.string().optional(),
+  sampler: z.object({
+    filter: z.enum(['nearest', 'linear']),
+    wrap: z.enum(['clamp', 'repeat', 'mirror']),
+  }).optional(),
   size: ResourceSizeSchema,
   persistence: z.object({
     retain: z.boolean(),
