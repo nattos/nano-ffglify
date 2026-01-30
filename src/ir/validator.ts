@@ -1,6 +1,6 @@
 import { IRDocument, FunctionDef } from './types';
 import { OpSignatures, OpSignature, ValidationType } from './signatures';
-import { TextureFormat, TextureFormatValues } from './types';
+import { TextureFormat, TextureFormatValues, PRIMITIVE_TYPES } from './types';
 
 // Local Error Type (Internal to logic validator, mapped by schema.ts)
 export interface LogicValidationError {
@@ -20,6 +20,9 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
 
   // Check Resources
   validateResources(doc, errors);
+
+  // Check Inputs
+  validateInputs(doc, errors);
 
   // Check Struct Definitions
   validateStructs(doc, errors);
@@ -206,14 +209,25 @@ const resolveNodeType = (
   return 'any';
 };
 
+const validateDataType = (type: string, doc: IRDocument, errors: LogicValidationError[], contextMsg: string) => {
+  if (PRIMITIVE_TYPES.includes(type as any)) return;
+  const isStruct = doc.structs?.some(s => s.id === type);
+  if (isStruct) return;
+
+  // Custom Arrays? "array<f32, 10>" - Regex check?
+  // IR types says: | string; // Allow custom Struct IDs or "array<T, N>"
+  // If we want to be strict, we should parse it.
+  // For now, let's assume strict primitives/structs only unless we really support array syntax.
+  // The user request was about `vec4<f32>` which is NOT valid.
+
+  errors.push({ message: `${contextMsg}: Invalid data type '${type}'. Must be a primitive or defined struct.`, severity: 'error' });
+};
+
 export const validateResources = (doc: IRDocument, errors: LogicValidationError[]) => {
   doc.resources.forEach(res => {
     // Validate Texture Format
     if (res.type === 'texture2d') {
       const fmt = (res as any).format;
-      // If format is missing, is it an error? User said "enforce providing a fixed texture format".
-      // But maybe default is allowed?
-      // "Let's _enforce_ providing a fixed texture format".
       if (!fmt) {
         errors.push({ message: `Texture resource '${res.id}' missing required 'format' property`, severity: 'error' });
       } else {
@@ -221,7 +235,19 @@ export const validateResources = (doc: IRDocument, errors: LogicValidationError[
           errors.push({ message: `Texture resource '${res.id}' has invalid format '${fmt}'`, severity: 'error' });
         }
       }
+    } else if (res.type === 'buffer') {
+      if (!res.dataType) {
+        errors.push({ message: `Buffer resource '${res.id}' missing required 'dataType' property`, severity: 'error' });
+      } else {
+        validateDataType(res.dataType, doc, errors, `Buffer resource '${res.id}'`);
+      }
     }
+  });
+};
+
+export const validateInputs = (doc: IRDocument, errors: LogicValidationError[]) => {
+  doc.inputs.forEach(input => {
+    validateDataType(input.type, doc, errors, `Input '${input.id}'`);
   });
 };
 
@@ -242,6 +268,8 @@ export const validateStructs = (doc: IRDocument, errors: LogicValidationError[])
     const def = (doc.structs || []).find(s => s.id === structId);
     if (def) {
       for (const member of def.members) {
+        validateDataType(member.type, doc, errors, `Struct '${structId}' member '${member.name}'`);
+
         if ((doc.structs || []).some(s => s.id === member.type)) {
           checkStruct(member.type as string);
         }
@@ -250,10 +278,14 @@ export const validateStructs = (doc: IRDocument, errors: LogicValidationError[])
     recursionStack.delete(structId);
   };
 
-  (doc.structs || []).forEach(s => checkStruct(s.id));
+  doc.structs?.forEach(s => checkStruct(s.id));
 };
 
 const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<string>, errors: LogicValidationError[]) => {
+  // Validate Signatures
+  func.inputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' input '${param.id}'`));
+  func.outputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' output '${param.id}'`));
+  func.localVars.forEach(v => validateDataType(v.type, doc, errors, `Function '${func.id}' variable '${v.id}'`));
   const nodeIds = new Set(func.nodes.map(n => n.id));
   func.edges.forEach(edge => {
     if (!nodeIds.has(edge.from)) errors.push({ message: `Edge source '${edge.from}' not found`, severity: 'error' });

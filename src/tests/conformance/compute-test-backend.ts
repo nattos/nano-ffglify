@@ -1,5 +1,6 @@
 
 import { IRDocument, ResourceDef } from '../../ir/types';
+import { validateIR } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { WgslGenerator } from '../../compiler/wgsl/wgsl-generator';
 import { globals } from 'webgpu';
@@ -44,6 +45,14 @@ export const ComputeTestBackend: TestBackend = {
   name: 'Compute',
 
   createContext: async (ir: IRDocument, inputs?: Map<string, RuntimeValue>) => {
+    // Validate IR
+    const errors = validateIR(ir);
+    const criticalErrors = errors.filter(e => e.severity === 'error');
+    if (criticalErrors.length > 0) {
+      console.error('[ComputeTestBackend] IR Validation Failed:', criticalErrors);
+      throw new Error(`IR Validation Failed:\n${criticalErrors.map(e => e.message).join('\n')}`);
+    }
+
     // Reuse WebGpuBackend's context creation (device init, resource alloc)
     console.log('[CreateContext] IR Resources:', JSON.stringify(ir.resources.map(r => ({ id: r.id, dt: r.dataType }))));
     const ctx = await WebGpuBackend.createContext(ir, inputs);

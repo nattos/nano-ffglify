@@ -22,7 +22,7 @@ describe('Conformance: Texture Sampling', () => {
       {
         id: 'b_result',
         type: 'buffer',
-        dataType: 'vec4<f32>',
+        dataType: 'float4',
         size: { mode: 'fixed', value: 1 },
         persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
       }
