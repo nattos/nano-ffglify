@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { availableBackends } from './test-runner';
 import { RuntimeValue } from '../../interpreter/context';
-import { IRDocument } from '../../ir/types';
+import { IRDocument, TextureFormat } from '../../ir/types';
 
 describe('Conformance: Integration - Precomputed Blur', () => {
 
@@ -19,7 +19,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
       {
         id: 't_output',
         type: 'texture2d',
-        format: 'rgba8',
+        format: TextureFormat.RGBA8,
         size: { mode: 'reference', ref: 't_input' },
         persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false },
         comment: 'Blurred result texture'

@@ -51,6 +51,7 @@ export interface InputDef {
   type: DataType;
   label?: string;
   comment?: string;
+  format?: string;
   default?: any;
   ui?: {
     min?: number;
