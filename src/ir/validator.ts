@@ -1,5 +1,7 @@
-import { IRDocument, FunctionDef } from './types';
+import { IRDocument, FunctionDef, BuiltinOp } from './types';
 import { OpSignatures, OpSignature, ValidationType } from './signatures';
+import { OpSchemas } from './builtin-schemas';
+
 import { TextureFormat, TextureFormatValues, PRIMITIVE_TYPES } from './types';
 
 // Local Error Type (Internal to logic validator, mapped by schema.ts)
@@ -93,8 +95,6 @@ const resolveNodeType = (
   });
 
   // 2. Gather Input Types from Literal Props
-  // To detect unknown arguments, we must look at ALL properties on the node,
-  // not just the ones expected by the signature.
   const reservedKeys = new Set(['id', 'op', 'metadata', 'const_data']);
   Object.keys(node).forEach(key => {
     if (reservedKeys.has(key)) return;
@@ -124,7 +124,44 @@ const resolveNodeType = (
     }
   });
 
-  // 3. Match against Overloads
+  // 3. New Zod Schema Validation
+  const zodSchema = OpSchemas[node.op as BuiltinOp];
+  if (zodSchema) {
+    // We only validate literal properties and existence of data edges.
+    // We don't validate the TYPES of data edges yet here, because that's what ResolveNodeType is doing recursively.
+    // However, for commands like cmd_draw, we can validate the static config.
+
+    // Create a data object for Zod validation consisting of literal props
+    // and placeholders for ports that have incoming edges.
+    const validationData: any = {};
+    Object.keys(node).forEach(key => {
+      if (!reservedKeys.has(key)) validationData[key] = node[key];
+    });
+    incomingEdges.forEach(edge => {
+      // Placeholder for edge values - we assume they match for this step
+      // or will be caught by the signature-based type check below.
+      // But we must at least put SOMETHING there so Zod doesn't complain about missing keys.
+      if (!validationData[edge.portIn]) {
+        // We use a proxy value that should pass most basic type checks if the edge provides it.
+        // This is a bit of a hack because we want to validate the STRUCTURE including edges.
+        validationData[edge.portIn] = (node as any)[edge.portIn] ?? null;
+      }
+    });
+
+    const result = zodSchema.safeParse(validationData);
+    if (!result.success) {
+      result.error.issues.forEach(issue => {
+        errors.push({
+          nodeId,
+          message: `Schema Error in '${node.op}': ${issue.path.join('.')}: ${issue.message}`,
+          severity: 'error'
+        });
+      });
+    }
+  }
+
+  // 4. Match against Overloads (Signature-based inference)
+
   let matchedSig: OpSignature | undefined;
 
   for (const sig of sigs) {
