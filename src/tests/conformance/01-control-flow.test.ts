@@ -21,7 +21,7 @@ describe('Conformance: Control Flow', () => {
   }, [commonResourcesResourceDef], [
     { from: 'branch', portOut: 'exec_true', to: 'set_true', portIn: 'exec_in', type: 'execution' },
     { from: 'branch', portOut: 'exec_false', to: 'set_false', portIn: 'exec_in', type: 'execution' }
-  ]);
+  ], []); // Empty localVars
 
   runParametricTest('should execute Branch (False path)', [
     { id: 'branch', op: 'flow_branch', cond: false },
@@ -33,7 +33,7 @@ describe('Conformance: Control Flow', () => {
   }, [commonResourcesResourceDef], [
     { from: 'branch', portOut: 'exec_true', to: 'set_true', portIn: 'exec_in', type: 'execution' },
     { from: 'branch', portOut: 'exec_false', to: 'set_false', portIn: 'exec_in', type: 'execution' }
-  ]);
+  ], []); // Empty localVars
 
   runParametricTest('should execute Loop (Accumulate Index)', [
     // Loop 0 to 5
@@ -54,6 +54,6 @@ describe('Conformance: Control Flow', () => {
     // Loop Completed (Store result)
     { from: 'loop', portOut: 'exec_completed', to: 'store', portIn: 'exec_in', type: 'execution' }
     // Data edges are auto-wired by buildSimpleIR assuming IDs match property values
-  ], [{ id: 'acc', type: 'int', initialValue: 0 }]);
+  ], [{ id: 'acc', type: 'int', initialValue: 0 }]); // Explicit localVars
 
 });

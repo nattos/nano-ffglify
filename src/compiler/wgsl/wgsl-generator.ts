@@ -232,7 +232,9 @@ export class WgslGenerator {
       lines.push(`${indent}return ${val};`);
     } else if (node.op === 'flow_branch') {
       const cond = this.resolveArg(node, 'cond', func, options, ir);
-      lines.push(`${indent}if (${cond} != 0.0) {`);
+      // If cond is 'true' or 'false', use directly. Else assume numeric and compare to 0.
+      const condExpr = (cond === 'true' || cond === 'false' || cond.includes('==') || cond.includes('!=')) ? cond : `${cond} != 0.0`;
+      lines.push(`${indent}if (${condExpr}) {`);
       // True Path
       const trueEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_true');
       if (trueEdge) {
@@ -247,12 +249,50 @@ export class WgslGenerator {
         if (falseNode) this.emitChain(falseNode, func, lines, options, new Set(), ir);
       }
       lines.push(`${indent}}`);
+    } else if (node.op === 'flow_loop') {
+      // For Loop: for (var i = start; i < end; i++)
+      const start = this.resolveArg(node, 'start', func, options, ir);
+      const end = this.resolveArg(node, 'end', func, options, ir);
+      // Loop variable id
+      const loopVar = `i_${node.id}`;
+      lines.push(`${indent}for (var ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
+
+      // Body
+      const bodyEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_body');
+      if (bodyEdge) {
+        const bodyNode = func.nodes.find(n => n.id === bodyEdge.to);
+        if (bodyNode) this.emitChain(bodyNode, func, lines, options, new Set(), ir);
+      }
+      lines.push(`${indent}}`);
+
+      // Completed (continue chain after loop)
+      const compEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_completed');
+      if (compEdge) {
+        const compNode = func.nodes.find(n => n.id === compEdge.to);
+        // Note: The main emitChain loop breaks on flow_* nodes (like flow_branch/loop).
+        // But for flow_loop, we want to continue "after" the loop is done.
+        // Since we are inside emitNode called by emitChain, and emitChain breaks after,
+        // we must manually emit the rest of the chain here?
+        // Or remove the 'break' in emitChain for flow_loop?
+        // Actually, flow_loop is linear in the sense that 'exec_completed' is the next step.
+        // BUT emitChain breaks on flow_*.
+        // So we should recursively call emitChain here for the continuation.
+        if (compNode) this.emitChain(compNode, func, lines, options, new Set(), ir);
+      }
     } else {
       lines.push(`${indent}// Op: ${node.op}`);
     }
   }
 
   private resolveArg(node: Node, key: string, func: FunctionDef, options: WgslOptions, ir: IRDocument): string {
+    // Special handling for loop_index which refers to a loop node
+    if (key === 'loop' && node.op === 'loop_index') {
+      // Return the ID of the loop directly? No, we needed the loop var name.
+      // Wait, resolveArg is called for inputs.
+      // But loop_index has 'loop' property pointing to node ID.
+      // We don't call resolveArg for it usually?
+      // Ah, compileExpression handles loop_index?
+    }
     const edge = func.edges.find(e => e.to === node.id && e.portIn === key && e.type === 'data');
     if (edge) {
       const src = func.nodes.find(n => n.id === edge.from);
@@ -278,13 +318,26 @@ export class WgslGenerator {
       }
     }
     if (node[key] !== undefined) {
-      return this.formatLiteral(node[key], 'unknown');
+      const val = node[key];
+      // Check if literal is a variable name (mimic Executor behavior)
+      if (typeof val === 'string') {
+        if (func.localVars.some(v => v.id === val)) return `l_${val}`;
+        if (options.varMap?.has(val)) {
+          const idx = options.varMap.get(val)!;
+          return `b_globals.data[${idx}]`;
+        }
+      }
+      return this.formatLiteral(val, 'unknown');
     }
     return '0.0'; // Default?
   }
 
   private compileExpression(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument): string {
     if (node.op === 'literal') return this.formatLiteral(node['val'], 'float');
+    if (node.op === 'loop_index') {
+      const loopId = node['loop'];
+      return `i_${loopId}`;
+    }
 
     // Constructors
     if (node.op === 'float2') return `vec2<f32>(${this.resolveArg(node, 'x', func, options, ir)}, ${this.resolveArg(node, 'y', func, options, ir)})`;
