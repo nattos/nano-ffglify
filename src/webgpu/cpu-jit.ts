@@ -48,7 +48,8 @@ export class CpuJitCompiler {
     const body = lines.join('\n');
     // console.log("--- JIT CODE ---\n", body);
     try {
-      return new Function('ctx', 'resources', 'globals', body);
+      const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
+      return new AsyncFunction('ctx', 'resources', 'globals', body);
     } catch (e) {
       console.error("JIT Compilation Failed:\n", body);
       throw e;
@@ -152,7 +153,7 @@ export class CpuJitCompiler {
         dimCode = JSON.stringify(node['dispatch']);
       }
 
-      lines.push(`globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func)});`);
+      lines.push(`await globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func)});`);
     }
     else if (node.op === 'cmd_draw') {
       const target = node['target'];
@@ -160,7 +161,7 @@ export class CpuJitCompiler {
       const fragment = node['fragment'];
       const count = this.resolveArg(node, 'count', func);
       const pipeline = JSON.stringify(node['pipeline'] || {});
-      lines.push(`globals.draw('${target}', '${vertex}', '${fragment}', ${count}, ${pipeline});`);
+      lines.push(`await globals.draw('${target}', '${vertex}', '${fragment}', ${count}, ${pipeline});`);
     }
     else if (node.op === 'cmd_resize_resource') {
       const resId = node['resource'];

@@ -21,9 +21,18 @@ export interface WgslOptions {
 
 export class WgslGenerator {
   private helpers = new Set<string>();
+  private allUsedBuiltins = new Set<string>();
 
   compile(ir: IRDocument, entryPointId: string, options: WgslOptions = {}): string {
     this.helpers.clear();
+    this.allUsedBuiltins.clear();
+
+    ir.functions.forEach(f => {
+      f.nodes.forEach(n => {
+        if (n.op === 'builtin_get') this.allUsedBuiltins.add(n['name']);
+      });
+    });
+
     const lines: string[] = []; // For structs, texture samplers, and non-entry functions
     const entryPointLines: string[] = []; // For the entry point function itself
     const entryFunc = ir.functions.find(f => f.id === entryPointId);
@@ -33,7 +42,7 @@ export class WgslGenerator {
     this.generateStructs(ir, lines);
 
     // Generate Texture Samplers
-    this.emitTextureSamplers(lines, options);
+    this.emitTextureSamplers(lines, options, ir);
 
     // Generate Helper Functions (All except Entry Point)
     // Only include shaders/libraries, exclude CPU functions, and excluded IDs
@@ -76,9 +85,19 @@ export class WgslGenerator {
 
     // Resource Bindings
     if (options.resourceBindings) {
+      const exclude = new Set(options.excludeIds || []);
+      const helperFuncs = ir.functions.filter(f => f.id !== entryPointId && f.type !== 'cpu' && !exclude.has(f.id));
+      const allEmittedFuncs = [entryFunc, ...helperFuncs];
+      const usedResources = new Set<string>();
+      allEmittedFuncs.forEach(f => {
+        const used = WgslGenerator.findUsedResources(f, ir);
+        used.forEach(r => usedResources.add(r));
+      });
+
       options.resourceBindings.forEach((bindingIdx, resId) => {
+        if (!usedResources.has(resId)) return; // Only emit bindings for used resources
+
         const def = options.resourceDefs?.get(resId);
-        // console.log('Gen Binding:', resId, def?.dataType, 'Types:', def?.type); // Debug line, keep for now
         if (def?.type === 'buffer' || !def) {
           // Default to buffer if unknown or explicit buffer
           const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
@@ -86,10 +105,20 @@ export class WgslGenerator {
           finalLines.push(`struct ${structName} { data: array<${type}> }`);
           finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> b_${resId} : ${structName};`);
         } else if (def.type === 'texture2d') {
-          // For now, assume sampled texture.
-          // In future, check usage to decide storage vs sampled.
-          // Using f32 as component type (standard for float textures)
-          finalLines.push(`@group(0) @binding(${bindingIdx}) var ${resId} : texture_2d<f32>;`);
+          // Check if it's used as a storage texture (by looking for texture_store ops in the IR)
+          const isStorage = ir.functions.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === resId));
+          if (isStorage) {
+            // Storage texture needs format. Default to rgba8unorm if not specified.
+            let format = 'rgba8unorm';
+            const irFormat = def.format;
+            if (typeof irFormat === 'string') {
+              const formatMap: Record<string, string> = { 'rgba8': 'rgba8unorm', 'rgba16f': 'rgba16float', 'rgba32f': 'rgba32float', 'r32f': 'r32float' };
+              format = formatMap[irFormat] || irFormat;
+            }
+            finalLines.push(`@group(0) @binding(${bindingIdx}) var ${resId} : texture_storage_2d<${format}, write>;`);
+          } else {
+            finalLines.push(`@group(0) @binding(${bindingIdx}) var ${resId} : texture_2d<f32>;`);
+          }
         }
       });
       if (options.resourceBindings.size > 0) finalLines.push('');
@@ -112,23 +141,40 @@ export class WgslGenerator {
       finalLines.push('');
     }
 
+    // Generate Global built-ins if used
+    if (this.allUsedBuiltins.has('global_invocation_id')) finalLines.push(`var<private> GlobalInvocationID : vec3<u32>;`);
+    if (this.allUsedBuiltins.has('local_invocation_id')) finalLines.push(`var<private> LocalInvocationID : vec3<u32>;`);
+    if (this.allUsedBuiltins.has('workgroup_id')) finalLines.push(`var<private> WorkgroupID : vec3<u32>;`);
+    if (this.allUsedBuiltins.has('local_invocation_index')) finalLines.push(`var<private> LocalInvocationIndex : u32;`);
+    if (this.allUsedBuiltins.has('num_workgroups')) finalLines.push(`var<private> NumWorkgroups : vec3<u32>;`);
+    if (this.allUsedBuiltins.has('position')) finalLines.push(`var<private> Position : vec4<f32>;`);
+    if (this.allUsedBuiltins.has('frag_coord')) finalLines.push(`var<private> FragCoord : vec4<f32>;`);
+    if (this.allUsedBuiltins.has('front_facing')) finalLines.push(`var<private> FrontFacing : bool;`);
+    if (this.allUsedBuiltins.has('sample_index')) finalLines.push(`var<private> SampleIndex : u32;`);
+    if (this.allUsedBuiltins.has('vertex_index')) finalLines.push(`var<private> VertexIndex : u32;`);
+    if (this.allUsedBuiltins.has('instance_index')) finalLines.push(`var<private> InstanceIndex : u32;`);
+
     // Add generated structs, texture samplers, and non-entry functions
     finalLines.push(...lines);
 
     // Add entry point function
     finalLines.push(...entryPointLines);
 
-    return finalLines.join('\n');
+    const res = finalLines.join('\n');
+    return res;
   }
 
   private addHelper(code: string) {
     this.helpers.add(code);
   }
 
-  private emitTextureSamplers(lines: string[], options: WgslOptions) {
+  private emitTextureSamplers(lines: string[], options: WgslOptions, ir: IRDocument) {
     if (!options.resourceDefs) return;
     options.resourceDefs.forEach((def, id) => {
       if (def.type === 'texture2d') {
+        const isStorage = ir.functions.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === id));
+        if (isStorage) return; // Skip sampling helper for storage textures
+
         const wrap = def.sampler?.wrap || 'clamp';
         const filter = def.sampler?.filter || 'nearest';
 
@@ -203,6 +249,11 @@ export class WgslGenerator {
         const retType = this.resolveType(func.outputs[0]?.type || 'vec4<f32>');
         lines.push(`@vertex`);
         lines.push(`fn main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) instance_index : u32) -> ${retType} {`);
+
+        // Initialize Global built-ins
+        if (this.allUsedBuiltins.has('vertex_index')) lines.push(`  VertexIndex = vertex_index;`);
+        if (this.allUsedBuiltins.has('instance_index')) lines.push(`  InstanceIndex = instance_index;`);
+
         // Map builtins to local variables
         for (const input of func.inputs) {
           if (input.builtin === 'vertex_index') {
@@ -216,11 +267,13 @@ export class WgslGenerator {
         // Map inputs
         for (const input of func.inputs) {
           if (input.builtin === 'frag_coord') {
-            stageArgs.push(`@builtin(frag_coord) FragCoord : vec4<f32>`);
+            stageArgs.push(`@builtin(frag_coord) fc : vec4<f32>`);
           } else if (input.builtin === 'front_facing') {
-            stageArgs.push(`@builtin(front_facing) FrontFacing : bool`);
+            stageArgs.push(`@builtin(front_facing) ff : bool`);
           } else if (input.builtin === 'sample_index') {
-            stageArgs.push(`@builtin(sample_index) SampleIndex : u32`);
+            stageArgs.push(`@builtin(sample_index) si : u32`);
+          } else if (input.builtin === 'position') {
+            stageArgs.push(`@builtin(position) pos : vec4<f32>`);
           } else {
             const type = this.resolveType(input.type);
             stageArgs.push(`${input.id} : ${type}`);
@@ -241,16 +294,40 @@ export class WgslGenerator {
         lines.push(`@fragment`);
         lines.push(`fn main(${args}) -> ${retDecorators} ${retType} {`);
 
+        // Initialize Global built-ins
+        if (this.allUsedBuiltins.has('frag_coord')) lines.push(`  FragCoord = fc;`);
+        if (this.allUsedBuiltins.has('front_facing')) lines.push(`  FrontFacing = ff;`);
+        if (this.allUsedBuiltins.has('sample_index')) lines.push(`  SampleIndex = si;`);
+        if (this.allUsedBuiltins.has('position')) lines.push(`  Position = pos;`);
+
         // Map builtins to local variables
         for (const input of func.inputs) {
-          if (input.builtin === 'frag_coord') lines.push(`  let l_${input.id} = FragCoord;`);
-          if (input.builtin === 'front_facing') lines.push(`  let l_${input.id} = FrontFacing;`);
-          if (input.builtin === 'sample_index') lines.push(`  let l_${input.id} = i32(SampleIndex);`);
+          if (input.builtin === 'frag_coord') lines.push(`  let l_${input.id} = fc;`);
+          if (input.builtin === 'front_facing') lines.push(`  let l_${input.id} = ff;`);
+          if (input.builtin === 'sample_index') lines.push(`  let l_${input.id} = i32(si);`);
+          if (input.builtin === 'position') lines.push(`  let l_${input.id} = pos;`);
         }
       } else {
         // Compute (Default)
+        const computeBuiltins: string[] = [];
+
+        // Always include global_invocation_id as it's the standard entry
+        computeBuiltins.push(`@builtin(global_invocation_id) gid : vec3<u32>`);
+
+        if (this.allUsedBuiltins.has('local_invocation_id')) computeBuiltins.push(`@builtin(local_invocation_id) lid : vec3<u32>`);
+        if (this.allUsedBuiltins.has('workgroup_id')) computeBuiltins.push(`@builtin(workgroup_id) wid : vec3<u32>`);
+        if (this.allUsedBuiltins.has('local_invocation_index')) computeBuiltins.push(`@builtin(local_invocation_index) lidx : u32`);
+        if (this.allUsedBuiltins.has('num_workgroups')) computeBuiltins.push(`@builtin(num_workgroups) nw : vec3<u32>`);
+
         lines.push(`@compute @workgroup_size(1, 1, 1)`);
-        lines.push(`fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {`);
+        lines.push(`fn main(${computeBuiltins.join(', ')}) {`);
+
+        // Initialize Global built-ins
+        if (this.allUsedBuiltins.has('global_invocation_id')) lines.push(`  GlobalInvocationID = gid;`);
+        if (this.allUsedBuiltins.has('local_invocation_id')) lines.push(`  LocalInvocationID = lid;`);
+        if (this.allUsedBuiltins.has('workgroup_id')) lines.push(`  WorkgroupID = wid;`);
+        if (this.allUsedBuiltins.has('local_invocation_index')) lines.push(`  LocalInvocationIndex = lidx;`);
+        if (this.allUsedBuiltins.has('num_workgroups')) lines.push(`  NumWorkgroups = nw;`);
         // Map builtins to local variables
         for (const input of func.inputs) {
           if (input.builtin === 'global_invocation_id') {
@@ -476,6 +553,16 @@ export class WgslGenerator {
         // So we should recursively call emitChain here for the continuation.
         if (compNode) this.emitChain(compNode, func, lines, options, new Set(), ir);
       }
+    } else if (node.op === 'texture_store') {
+      const tex = node['tex'];
+      const coords = this.resolveArg(node, 'coords', func, options, ir);
+      const val = this.resolveArg(node, 'value', func, options, ir);
+      lines.push(`${indent}textureStore(${tex}, vec2<i32>(${coords}.xy), ${val});`);
+    } else if (node.op === 'buffer_store') {
+      const bufferId = node['buffer'];
+      const idx = this.resolveArg(node, 'index', func, options, ir);
+      const val = this.resolveArg(node, 'value', func, options, ir);
+      lines.push(`${indent}b_${bufferId}.data[u32(${idx})] = ${val};`);
     } else {
       lines.push(`${indent}// Op: ${node.op}`);
     }
@@ -550,6 +637,11 @@ export class WgslGenerator {
           const idx = options.varMap.get(val)!;
           return `b_globals.data[${idx}]`;
         }
+        // Fallback: Resolve as node ID if it exists in current function
+        const targetNode = func.nodes.find(n => n.id === val);
+        if (targetNode && targetNode.id !== node.id) {
+          return this.compileExpression(targetNode, func, options, ir, targetType);
+        }
       }
       return this.formatLiteral(val, targetType || 'unknown');
     }
@@ -577,6 +669,16 @@ export class WgslGenerator {
         const type = node.op === 'float3x3' ? 'mat3x3<f32>' : 'mat4x4<f32>';
         return `${type}(${formatted.join(', ')})`;
       }
+    }
+
+    // Casts
+    if (node.op === 'static_cast_float') {
+      const val = this.resolveArg(node, 'val', func, options, ir, 'float');
+      return `f32(${val})`;
+    }
+    if (node.op === 'static_cast_int') {
+      const val = this.resolveArg(node, 'val', func, options, ir, 'int');
+      return `i32(${val})`;
     }
 
     // Struct Construct
@@ -654,6 +756,55 @@ export class WgslGenerator {
       return `${struct}.${field}`;
     }
 
+    if (node.op === 'texture_load') {
+      const tex = node['tex'];
+      const coords = this.resolveArg(node, 'coords', func, options, ir);
+      // textureLoad for sampled texture uses (tex, coords, lod)
+      return `textureLoad(${tex}, vec2<i32>(${coords}.xy), 0)`;
+    }
+
+    if (node.op === 'buffer_load') {
+      const bufferId = node['buffer'];
+      const idx = this.resolveArg(node, 'index', func, options, ir);
+      return `b_${bufferId}.data[u32(${idx})]`;
+    }
+
+    if (node.op === 'texture_load') {
+      const tex = node['tex'];
+      const coords = this.resolveArg(node, 'coords', func, options, ir);
+      // textureLoad for storage textures doesn't take lod
+      return `textureLoad(${tex}, vec2<i32>(${coords}.xy))`;
+    }
+
+    if (node.op === 'builtin_get') {
+      const name = node['name'] as string;
+      const map: Record<string, string> = {
+        'global_invocation_id': 'GlobalInvocationID',
+        'local_invocation_id': 'LocalInvocationID',
+        'workgroup_id': 'WorkgroupID',
+        'local_invocation_index': 'LocalInvocationIndex',
+        'num_workgroups': 'NumWorkgroups',
+        'frag_coord': 'FragCoord',
+        'front_facing': 'FrontFacing',
+        'sample_index': 'SampleIndex',
+        'vertex_index': 'VertexIndex',
+        'instance_index': 'InstanceIndex',
+        'position': 'Position',
+        'sample_mask': 'SampleMask',
+        'subgroup_invocation_id': 'SubgroupInvocationID',
+        'subgroup_size': 'SubgroupSize'
+      };
+      const wgslName = map[name] || name;
+      // Some built-ins need casting to match expected IR types (usually i32/f32)
+      // e.g. global_invocation_id is vec3<u32> in WGSL, but IR often expects vec3<f32>.
+      if (name.includes('invocation_id') || name === 'workgroup_id' || name === 'num_workgroups') {
+        return `vec3<f32>(${wgslName})`;
+      }
+      if (name === 'local_invocation_index' || name === 'sample_index' || name === 'vertex_index' || name === 'instance_index') {
+        return `i32(${wgslName})`;
+      }
+      return wgslName;
+    }
     if (node.op.startsWith('math_') || node.op.startsWith('vec_') || node.op.startsWith('mat_') || node.op.startsWith('quat_')) {
       return this.compileMathOp(node, func, options, ir, targetType);
     }
@@ -913,5 +1064,26 @@ fn quat_slerp_impl(q1: vec4<f32>, q2: vec4<f32>, t: f32) -> vec4<f32> {
     if (type === 'float3' || type === 'vec3<f32>') return 'vec3<f32>(1.0)';
     if (type === 'float4' || type === 'vec4<f32>') return 'vec4<f32>(1.0)';
     return '1.0';
+  }
+
+  public static findUsedResources(func: FunctionDef, ir: IRDocument): Set<string> {
+    const resources = new Set<string>();
+    func.nodes.forEach(node => {
+      if (node.op === 'buffer_load' || node.op === 'buffer_store') {
+        if (node['buffer']) resources.add(node['buffer'] as string);
+      }
+      if (node.op === 'texture_load' || node.op === 'texture_store' || node.op === 'texture_sample') {
+        if (node['tex']) resources.add(node['tex'] as string);
+      }
+      if (node.op === 'call_func') {
+        const targetId = node['func'];
+        const targetFunc = ir.functions.find(f => f.id === targetId);
+        if (targetFunc) {
+          const innerResources = WgslGenerator.findUsedResources(targetFunc, ir);
+          innerResources.forEach(res => resources.add(res));
+        }
+      }
+    });
+    return resources;
   }
 }

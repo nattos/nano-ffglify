@@ -364,6 +364,14 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
 
     resolveNodeType(node.id, func, cache, resourceIds, errors);
 
+    if (node.op === 'builtin_get' && func.type === 'cpu') {
+      errors.push({
+        nodeId: node.id,
+        message: `GPU Built-in '${node['name']}' is not available in CPU context`,
+        severity: 'error'
+      });
+    }
+
     if (node.op === 'const_get') {
       const name = node.name as string;
       if (!name) return;

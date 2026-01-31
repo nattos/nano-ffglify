@@ -116,27 +116,34 @@ export class WebGpuExecutor {
       entries.push({ binding: 1, resource: { buffer: inputBuffer } });
     }
 
-    // 3. Create BindGroup with ALL resources
+    // 3. Create BindGroup with ONLY used resources
+    const usedResources = WgslGenerator.findUsedResources(func, this.context.ir);
+
     this.context.ir.resources.forEach((res, idx) => {
+      if (!usedResources.has(res.id)) return; // Skip unused resources for this shader
+
       const binding = 2 + idx;
       const state = this.context.getResource(res.id);
 
       if (res.type === 'texture2d') {
         const tex = this.ensureTexture(res.id);
+        // Sync texture from CPU if it exists and might have changed
+        // (Simplified: always write if gpuTexture exists and we have data)
+        // ... (Existing ensureTexture already handles initial write)
         if (tex) entries.push({ binding, resource: tex.createView() });
       } else {
         // Ensure GPU buffer exists
         if (!(state as any).gpuBuffer) {
           (state as any).gpuBuffer = this.device.createBuffer({
             label: res.id,
-            size: Math.max(state.width * 4, 16), // Simplified: 4 bytes per float
+            size: Math.max(state.width * 4, 16),
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
           });
-          // Sync initial data if any
-          if (state.data) {
-            const flat = (state.data as any).flat(2) as number[];
-            this.device.queue.writeBuffer((state as any).gpuBuffer, 0, new Float32Array(flat));
-          }
+        }
+        // Always sync data to GPU before dispatch if it exists in CPU memory
+        if (state.data) {
+          const flat = (state.data as any).flat(2) as number[];
+          this.device.queue.writeBuffer((state as any).gpuBuffer, 0, new Float32Array(flat));
         }
         entries.push({ binding, resource: { buffer: (state as any).gpuBuffer } });
       }
@@ -158,37 +165,67 @@ export class WebGpuExecutor {
     pass.end();
 
     // 5. Read-back (Important for conformance tests)
-    const stagingBuffers: { id: string, staging: GPUBuffer }[] = [];
+    const stagingBuffers: { id: string, staging: GPUBuffer, isTexture?: boolean }[] = [];
     this.context.ir.resources.forEach(res => {
       const state = this.context.getResource(res.id);
-      const gpuBuffer = (state as any).gpuBuffer as GPUBuffer;
-      if (gpuBuffer) {
-        const staging = this.device.createBuffer({
-          size: gpuBuffer.size,
-          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-        });
-        encoder.copyBufferToBuffer(gpuBuffer, 0, staging, 0, gpuBuffer.size);
-        stagingBuffers.push({ id: res.id, staging });
+      if (res.type === 'texture2d') {
+        const gpuTexture = (state as any).gpuTexture as GPUTexture;
+        if (gpuTexture) {
+          const bytesPerRow = Math.ceil((state.width * 4) / 256) * 256;
+          const staging = this.device.createBuffer({
+            size: bytesPerRow * state.height,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+          });
+          encoder.copyTextureToBuffer(
+            { texture: gpuTexture },
+            { buffer: staging, bytesPerRow },
+            [state.width, state.height, 1]
+          );
+          stagingBuffers.push({ id: res.id, staging, isTexture: true });
+        }
+      } else {
+        const gpuBuffer = (state as any).gpuBuffer as GPUBuffer;
+        if (gpuBuffer) {
+          const staging = this.device.createBuffer({
+            size: gpuBuffer.size,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+          });
+          encoder.copyBufferToBuffer(gpuBuffer, 0, staging, 0, gpuBuffer.size);
+          stagingBuffers.push({ id: res.id, staging });
+        }
       }
     });
 
     this.device.queue.submit([encoder.finish()]);
 
     // 6. Wait for results and sync to Context
-    await Promise.all(stagingBuffers.map(async ({ id, staging }) => {
+    await Promise.all(stagingBuffers.map(async ({ id, staging, isTexture }) => {
       await staging.mapAsync(GPUMapMode.READ);
-      const data = new Float32Array(staging.getMappedRange());
       const state = this.context.getResource(id);
       if (state) {
-        const compCount = this.getComponentCount(state.def.dataType || 'float');
-        if (compCount > 1) {
+        if (isTexture) {
+          const data = new Uint8Array(staging.getMappedRange());
+          const bytesPerRow = Math.ceil((state.width * 4) / 256) * 256;
           const reshaped = [];
-          for (let i = 0; i < data.length; i += compCount) {
-            reshaped.push(Array.from(data.slice(i, i + compCount)));
+          for (let y = 0; y < state.height; y++) {
+            const rowStart = y * bytesPerRow;
+            for (let x = 0; x < state.width; x++) {
+              const start = rowStart + (x * 4);
+              const pixel = Array.from(data.slice(start, start + 4)).map(v => v / 255.0);
+              reshaped.push(pixel);
+            }
           }
           state.data = reshaped;
         } else {
-          state.data = Array.from(data);
+          const data = new Float32Array(staging.getMappedRange());
+          const compCount = this.getComponentCount(state.def.dataType || 'float');
+          if (compCount > 1) {
+            const reshaped = [];
+            for (let i = 0; i < data.length; i += compCount) reshaped.push(Array.from(data.slice(i, i + compCount)));
+            state.data = reshaped;
+          } else {
+            state.data = Array.from(data);
+          }
         }
       }
       staging.unmap();
@@ -244,14 +281,15 @@ export class WebGpuExecutor {
     // 6. Readback
     // Copy target texture to staging buffer to sync with context
     // Assuming target is rgba8unorm (4 bytes per pixel)
+    const bytesPerRow = Math.ceil((texture.width * 4) / 256) * 256;
     const stagingBuffer = this.device.createBuffer({
-      size: texture.width * texture.height * 4,
+      size: bytesPerRow * texture.height,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
     });
 
     encoder.copyTextureToBuffer(
       { texture },
-      { buffer: stagingBuffer, bytesPerRow: texture.width * 4 },
+      { buffer: stagingBuffer, bytesPerRow },
       [texture.width, texture.height, 1]
     );
 
@@ -261,19 +299,16 @@ export class WebGpuExecutor {
     await stagingBuffer.mapAsync(GPUMapMode.READ);
     const data = new Uint8Array(stagingBuffer.getMappedRange());
 
-    // Convert to Float array (0..1) for RuntimeValue consistency
-    const floatData = new Array(data.length);
-    for (let i = 0; i < data.length; i++) {
-      floatData[i] = data[i] / 255.0;
-    }
-
     const res = this.context.getResource(targetId);
     if (res) {
-      // res.data is expected to be vector-like if multi-channel (RGBA)
       const reshaped = [];
-      const compCount = 4; // Texture readback for RGBA
-      for (let i = 0; i < floatData.length; i += compCount) {
-        reshaped.push(floatData.slice(i, i + compCount));
+      for (let y = 0; y < texture.height; y++) {
+        const rowStart = y * bytesPerRow;
+        for (let x = 0; x < texture.width; x++) {
+          const start = rowStart + (x * 4);
+          const pixel = Array.from(data.slice(start, start + 4)).map(v => v / 255.0);
+          reshaped.push(pixel);
+        }
       }
       res.data = reshaped;
     }
@@ -386,7 +421,7 @@ export class WebGpuExecutor {
         label: id,
         size: [state.width, state.height, 1],
         format: finalFormat,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST
       });
       (state as any).gpuTexture = gpuTexture;
 

@@ -411,6 +411,29 @@ export const ArrayExtractDef = defineOp<ArrayExtractArgs>({
 
 // --- Logic & Control ---
 
+export const BuiltinNameSchema = z.enum([
+  'position',
+  'vertex_index',
+  'instance_index',
+  'global_invocation_id',
+  'local_invocation_id',
+  'workgroup_id',
+  'local_invocation_index',
+  'num_workgroups',
+  'frag_coord',
+  'front_facing',
+  'sample_index',
+  'sample_mask',
+  'subgroup_invocation_id',
+  'subgroup_size'
+]);
+
+export interface BuiltinGetArgs { name: string;[key: string]: any; }
+export const BuiltinGetDef = defineOp<BuiltinGetArgs>({
+  doc: "Get a GPU/Shader built-in variable.",
+  args: { name: { type: BuiltinNameSchema, doc: "Built-in name" } }
+});
+
 export interface VarSetArgs { var: string; val: any;[key: string]: any; }
 export const VarSetDef = defineOp<VarSetArgs>({
   doc: "Set the value of a local variable.",
@@ -533,6 +556,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   // Logic / Control
   'var_set': VarSetDef,
   'var_get': VarGetDef,
+  'builtin_get': BuiltinGetDef,
   'const_get': defineOp<ConstGetArgs>({ doc: "Get constant", args: { name: { type: z.string(), doc: "Name" } } }),
   'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true } } }),
   'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, true: { type: z.string(), doc: "Node ID for true", requiredRef: true, optional: true }, false: { type: z.string(), doc: "Node ID for false", requiredRef: true, optional: true } } }),
@@ -620,6 +644,7 @@ export type OpArgs = {
   'cmd_resize_resource': CmdResizeResourceArgs;
   'var_set': VarSetArgs;
   'var_get': VarGetArgs;
+  'builtin_get': BuiltinGetArgs;
   'const_get': ConstGetArgs;
   'loop_index': LoopIndexArgs;
   'flow_branch': FlowBranchArgs;

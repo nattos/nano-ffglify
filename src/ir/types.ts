@@ -134,7 +134,21 @@ export interface ResourceDef {
   };
 }
 
-export type BuiltinName = 'position' | 'vertex_index' | 'instance_index' | 'global_invocation_id' | 'frag_coord' | 'front_facing' | 'sample_index';
+export type BuiltinName =
+  | 'position'
+  | 'vertex_index'
+  | 'instance_index'
+  | 'global_invocation_id'
+  | 'local_invocation_id'
+  | 'workgroup_id'
+  | 'local_invocation_index'
+  | 'num_workgroups'
+  | 'frag_coord'
+  | 'front_facing'
+  | 'sample_index'
+  | 'sample_mask'
+  | 'subgroup_invocation_id'
+  | 'subgroup_size';
 
 export interface StructMember {
   name: string;
@@ -348,6 +362,7 @@ export type BuiltinOp =
   | 'var_get'    // { var: string } -> any
   | 'var_set'    // { var: string, val: any } -> val
   | 'const_get'  // { name: string } -> any
+  | 'builtin_get' // { name: BuiltinName } -> any
   | 'loop_index' // { loop: string } -> int
 
   // Structs:

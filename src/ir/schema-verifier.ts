@@ -79,7 +79,8 @@ export function verifyLiteralsOrRefsExist(
           // Strict literal that doesn't allow strings, but got a string.
           // EXCEPTION: If the literal type itself is a string, then it's fine.
           const isActuallyStringLiteral = (argDef.literalTypes as any)?.includes('string') ||
-            (argDef.type instanceof z.ZodString);
+            (argDef.type instanceof z.ZodString) ||
+            (argDef.type instanceof z.ZodEnum);
 
           if (!isActuallyStringLiteral) {
             errors.push(`Argument '${key}' does not support references, but got string '${value}'`);
@@ -147,15 +148,7 @@ function checkReferenceExists(id: string, ir?: IRDocument, func?: FunctionDef): 
   // 6. Special Constants (optional, but keep it clean)
   if (id === 'screen') return true; // Common generic target
 
-  // 7. GPU/Shader Builtins
-  const gpuBuiltins = [
-    'GlobalInvocationID', 'LocalInvocationID', 'WorkgroupID', 'LocalInvocationIndex',
-    'NumWorkgroups', 'FragCoord', 'FrontFacing', 'SampleIndex', 'VertexIndex',
-    'InstanceIndex', 'Position'
-  ];
-  if (gpuBuiltins.includes(id)) return true;
-
-  // 8. Function Inputs
+  // 7. Function Inputs
   if (func?.inputs?.some(i => i.id === id)) return true;
 
   return false;

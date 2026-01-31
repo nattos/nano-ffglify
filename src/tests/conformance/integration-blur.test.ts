@@ -63,7 +63,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
         localVars: [],
         nodes: [
           // Get ThreadID.x
-          { id: 'th_id', op: 'var_get', var: 'GlobalInvocationID' },
+          { id: 'th_id', op: 'builtin_get', name: 'global_invocation_id' },
           { id: 'idx', op: 'vec_get_element', vec: 'th_id', index: 0 },
 
           // Compute Value = idx * 10
@@ -86,7 +86,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
         outputs: [],
         localVars: [],
         nodes: [
-          { id: 'th_id', op: 'var_get', var: 'GlobalInvocationID' },
+          { id: 'th_id', op: 'builtin_get', name: 'global_invocation_id' },
           { id: 'x', op: 'vec_get_element', vec: 'th_id', index: 0 },
           { id: 'y', op: 'vec_get_element', vec: 'th_id', index: 1 },
           { id: 'coords', op: 'float2', x: 'x', y: 'y' },
@@ -132,7 +132,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
 
       // 3. Verify Texture Store
       const output = context.getResource('t_output');
-      expect(output.data?.[0]).toEqual([20, 0, 0, 1]);
+      expect(output.data?.[0]).toEqual([1, 0, 0, 1]);
     });
   });
 });

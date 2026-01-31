@@ -91,7 +91,11 @@ export class InterpretedExecutor {
         for (let z = 0; z < dim[2]; z++) {
           for (let y = 0; y < dim[1]; y++) {
             for (let x = 0; x < dim[0]; x++) {
-              this.context.builtins.set('GlobalInvocationID', [x, y, z]);
+              this.context.builtins.set('global_invocation_id', [x, y, z]);
+              this.context.builtins.set('local_invocation_id', [x, y, z]); // For now 1:1 with global
+              this.context.builtins.set('workgroup_id', [0, 0, 0]);
+              this.context.builtins.set('local_invocation_index', 0);
+              this.context.builtins.set('num_workgroups', dim);
               this.context.pushFrame(targetId);
 
               // Set arguments into the shader frame
@@ -270,7 +274,7 @@ export class InterpretedExecutor {
   }
 
   protected mixinNodeProperties(node: Node, args: Record<string, RuntimeValue>, func: FunctionDef) {
-    const SKIP_RESOLUTION = ['var', 'func', 'resource', 'buffer', 'tex', 'loop', 'type', 'field', 'member', 'channels', 'mask', 'target', 'vertex', 'fragment'];
+    const SKIP_RESOLUTION = ['var', 'func', 'resource', 'buffer', 'tex', 'loop', 'type', 'field', 'member', 'channels', 'mask', 'target', 'vertex', 'fragment', 'name'];
 
     // 1. Resolve Props
     for (const key of Object.keys(node)) {

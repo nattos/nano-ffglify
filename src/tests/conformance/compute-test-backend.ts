@@ -369,7 +369,23 @@ export const ComputeTestBackend: TestBackend = {
     const pass = encoder.beginComputePass();
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(1, 1, 1);
+
+    // Detect dispatch size from entry point if it's a simple wrapper
+    let dx = 1, dy = 1, dz = 1;
+    const entryFunc = ir.functions.find(f => f.id === entryPoint);
+    if (entryFunc) {
+      const dispNode = entryFunc.nodes.find(n => n.op === 'cmd_dispatch');
+      if (dispNode) {
+        const dims = dispNode['dispatch'];
+        if (Array.isArray(dims)) {
+          dx = typeof dims[0] === 'number' ? dims[0] : 1;
+          dy = typeof dims[1] === 'number' ? dims[1] : 1;
+          dz = typeof dims[2] === 'number' ? dims[2] : 1;
+        }
+      }
+    }
+
+    pass.dispatchWorkgroups(dx, dy, dz);
     pass.end();
 
     // 8. Readback Staging
@@ -436,6 +452,7 @@ export const ComputeTestBackend: TestBackend = {
     device.queue.submit([encoder.finish()]);
 
     // 9. Process Readback
+    await device.queue.onSubmittedWorkDone();
     await Promise.all(Array.from(stagingBuffers.values()).map(b => b.mapAsync(GPUMapMode.READ)));
     await globalsStaging.mapAsync(GPUMapMode.READ);
 

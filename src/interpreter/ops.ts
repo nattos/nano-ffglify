@@ -566,6 +566,27 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     }
     return val;
   },
+  'builtin_get': (ctx, args) => {
+    const name = args.name as string;
+
+    // Check context builtins first (set by Executor/Rasterizer)
+    const val = ctx.builtins.get(name);
+    if (val !== undefined) return val;
+
+    // Mock values for interpreter context (as fallback)
+    if (name === 'global_invocation_id') return [0, 0, 0] as VectorValue;
+    if (name === 'local_invocation_id') return [0, 0, 0] as VectorValue;
+    if (name === 'workgroup_id') return [0, 0, 0] as VectorValue;
+    if (name === 'local_invocation_index') return 0;
+    if (name === 'num_workgroups') return [1, 1, 1] as VectorValue;
+    if (name === 'frag_coord') return [0, 0, 0, 1] as VectorValue;
+    if (name === 'front_facing') return true;
+    if (name === 'sample_index') return 0;
+    if (name === 'vertex_index') return 0;
+    if (name === 'instance_index') return 0;
+    if (name === 'position') return [0, 0, 0, 1] as VectorValue;
+    return 0;
+  },
   'const_get': (ctx, args) => {
     const name = args.name as string;
     // Registry of Constants
@@ -625,6 +646,17 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     const res = ctx.getResource(id);
     res.width = newWidth;
     res.height = newHeight;
+
+    // Invalidate GPU resources if they exist (WebGpuExecutor will recreate)
+    const state = res as any;
+    if (state.gpuBuffer) {
+      if (typeof state.gpuBuffer.destroy === 'function') state.gpuBuffer.destroy();
+      delete state.gpuBuffer;
+    }
+    if (state.gpuTexture) {
+      if (typeof state.gpuTexture.destroy === 'function') state.gpuTexture.destroy();
+      delete state.gpuTexture;
+    }
 
 
 
@@ -769,8 +801,18 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   'texture_store': (ctx, args) => {
     const id = args.tex as string;
     const coords = args.coords as [number, number];
-    const val = args.value;
+    let val = args.value;
     const res = ctx.getResource(id);
+
+    // Enforce clamping for unorm formats (default if no format)
+    const format = res.def.format;
+    const isUnorm = !format || format === 'rgba8' || format === 'r8';
+
+    if (isUnorm && Array.isArray(val)) {
+      val = val.map(v => Math.max(0, Math.min(1, v)));
+    } else if (isUnorm && typeof val === 'number') {
+      val = Math.max(0, Math.min(1, val));
+    }
 
     if (!res.data) res.data = [];
     if (coords[0] >= res.width || coords[1] >= res.height) return;

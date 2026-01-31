@@ -25,7 +25,7 @@ class WebGpuHostExecutor {
     this.jit = new CpuJitCompiler();
   }
 
-  executeFunction(func: FunctionDef) {
+  async executeFunction(func: FunctionDef) {
     let compiled = this.compiledCache.get(func.id);
     if (!compiled) {
       compiled = this.jit.compile(func);
@@ -34,15 +34,12 @@ class WebGpuHostExecutor {
 
     // Prepare Globals (Dispatch Interface & Ops)
     const globals = {
-      dispatch: (targetId: string, dim: [number, number, number], args: Record<string, RuntimeValue> = {}) => {
+      dispatch: async (targetId: string, dim: [number, number, number], args: Record<string, RuntimeValue> = {}) => {
         // Dispatch to GPU
-        // Track the async promise so we can await it later
-        const p = this.webGpuExec.executeShader(targetId, dim, args);
-        this.pending.push(p);
+        await this.webGpuExec.executeShader(targetId, dim, args);
       },
-      draw: (targetId: string, vertexId: string, fragmentId: string, count: number, pipeline: RenderPipelineDef) => {
-        const p = this.webGpuExec.executeDraw(targetId, vertexId, fragmentId, count, pipeline);
-        this.pending.push(p);
+      draw: async (targetId: string, vertexId: string, fragmentId: string, count: number, pipeline: RenderPipelineDef) => {
+        await this.webGpuExec.executeDraw(targetId, vertexId, fragmentId, count, pipeline);
       },
       callOp: (opName: string, args: Record<string, RuntimeValue>) => {
         const handler = OpRegistry[opName as keyof typeof OpRegistry];
@@ -155,7 +152,7 @@ class WebGpuHostExecutor {
     // My JIT emits `ctx.getResource(...)`.
 
     // Execute
-    return compiled(this.context, this.context.resources, globals);
+    return await compiled(this.context, this.context.resources, globals);
   }
 }
 
@@ -195,10 +192,7 @@ export const WebGpuBackend: TestBackend = {
     // Only support CPU entry point for now (Host Logic)
     if (func.type === 'cpu') {
       ctx.pushFrame(entryPoint);
-      hostExec.executeFunction(func);
-      if (hostExec.pending.length > 0) {
-        await Promise.all(hostExec.pending);
-      }
+      await hostExec.executeFunction(func);
     } else {
       // Direct shader execution - usually tests use a wrapper 'main'
       // If entry point is shader, we dispatch (1,1,1)?
