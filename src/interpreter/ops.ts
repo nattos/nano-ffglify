@@ -816,7 +816,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   },
 
   'array_extract': (ctx, args) => {
-    const arr = args.array as RuntimeValue[];
+    const arr = args.array as unknown as RuntimeValue[];
     const idx = args.index as number;
     if (!Array.isArray(arr)) throw new Error('array_extract: target is not an array');
     if (idx < 0 || idx >= arr.length) throw new Error(`array_extract: OOB read index ${idx}`);
@@ -824,7 +824,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   },
 
   'array_set': (ctx, args) => {
-    const arr = args.array as RuntimeValue[];
+    const arr = args.array as unknown as RuntimeValue[];
     const idx = args.index as number;
     const val = args.value;
     if (!Array.isArray(arr)) throw new Error('array_set: target is not an array');
@@ -834,7 +834,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   },
 
   'array_length': (ctx, args) => {
-    const arr = args.array as RuntimeValue[];
+    const arr = args.array as unknown as RuntimeValue[];
     return Array.isArray(arr) ? arr.length : 0;
   },
 

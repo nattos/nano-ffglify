@@ -270,7 +270,7 @@ export class InterpretedExecutor {
   }
 
   protected mixinNodeProperties(node: Node, args: Record<string, RuntimeValue>, func: FunctionDef) {
-    const SKIP_RESOLUTION = ['var', 'func', 'resource', 'buffer', 'tex', 'loop', 'type', 'field', 'member', 'channels', 'mask'];
+    const SKIP_RESOLUTION = ['var', 'func', 'resource', 'buffer', 'tex', 'loop', 'type', 'field', 'member', 'channels', 'mask', 'target', 'vertex', 'fragment'];
 
     // 1. Resolve Props
     for (const key of Object.keys(node)) {
