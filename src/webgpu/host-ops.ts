@@ -109,13 +109,25 @@ export const HostOps: Partial<Record<BuiltinOp, HostOpHandler>> = {
   'math_is_inf': (args) => applyUnary(args.val, (x) => (Math.abs(x) === Infinity ? 1 : 0)),
   'math_is_nan': (args) => applyUnary(args.val, (x) => (isNaN(x) ? 1 : 0)),
   'math_is_finite': (args) => applyUnary(args.val, (x) => (isFinite(x) ? 1 : 0)),
+  'math_flush_subnormal': (args) => applyUnary(args.val, (x) => (Math.abs(x) < 1.17549435e-38 ? 0 : x)),
   'math_frexp_mantissa': (args) => {
     const val = args.val as number;
     if (val === 0) return 0;
     const exponent = Math.floor(Math.log2(Math.abs(val))) + 1;
     return val / Math.pow(2, exponent);
   },
+  'math_mantissa': (args) => {
+    const val = args.val as number;
+    if (val === 0) return 0;
+    const exponent = Math.floor(Math.log2(Math.abs(val))) + 1;
+    return val / Math.pow(2, exponent);
+  },
   'math_frexp_exponent': (args) => {
+    const val = args.val as number;
+    if (val === 0) return 0;
+    return Math.floor(Math.log2(Math.abs(val))) + 1;
+  },
+  'math_exponent': (args) => {
     const val = args.val as number;
     if (val === 0) return 0;
     return Math.floor(Math.log2(Math.abs(val))) + 1;

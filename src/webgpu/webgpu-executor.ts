@@ -36,18 +36,37 @@ export class WebGpuExecutor {
     this.allStructs = structs;
     const generator = new WgslGenerator();
 
+    // Identify shader stages
+    const computeShaders = new Set<string>();
+    const renderShaders = new Set<string>();
+
+    for (const f of functions) {
+      if (f.type !== 'cpu') continue;
+      for (const node of f.nodes) {
+        if (node.op === 'cmd_dispatch' && node.func) computeShaders.add(node.func);
+        if (node.op === 'cmd_draw') {
+          if (node.vertex) renderShaders.add(node.vertex);
+          if (node.fragment) renderShaders.add(node.fragment);
+        }
+      }
+    }
+
     for (const func of functions) {
       if (func.type !== 'shader') continue;
 
+      // If it's a render shader, we don't create a compute pipeline for it
+      const isCompute = computeShaders.has(func.id) || (!renderShaders.has(func.id));
+      if (!isCompute) continue;
+
       // Options for compilation
-      // We use binding 0 for globals (if needed) and binding 1 for inputs
       const options: any = {
         inputBinding: 1,
         resourceBindings: new Map<string, number>(),
         resourceDefs: new Map<string, ResourceDef>(),
+        stage: 'compute'
       };
 
-      // Map resources used in this function to bindings starting from index 2
+      // ... same resource loop ...
       let bindingIdx = 2;
       allResources.forEach(res => {
         options.resourceBindings!.set(res.id, bindingIdx++);
@@ -56,9 +75,14 @@ export class WebGpuExecutor {
 
       const code = generator.compileFunctions(functions, func.id, options, { structs });
       console.log(`[WebGpuExecutor] Generated WGSL for ${func.id}:\n${code}`);
-      // Use Global Cache
-      const pipeline = await GpuCache.getComputePipeline(this.device, code);
-      this.activePipelines.set(func.id, pipeline);
+
+      try {
+        const pipeline = await GpuCache.getComputePipeline(this.device, code);
+        this.activePipelines.set(func.id, pipeline);
+      } catch (e: any) {
+        console.warn(`[WebGpuExecutor] Failed to pre-compile compute pipeline for ${func.id}: ${e.message}`);
+        // If it was supposed to be a render shader but we didn't detect it, this is silent-ish
+      }
     }
   }
 
@@ -356,6 +380,9 @@ export class WebGpuExecutor {
     const vsCode = generator.compileFunctions(this.allFunctions, vertexId, vsOptions, { structs: this.allStructs });
     const fsCode = generator.compileFunctions(this.allFunctions, fragmentId, fsOptions, { structs: this.allStructs });
 
+    console.log(`[WebGpuExecutor] VS Code for ${vertexId}:\n${vsCode}`);
+    console.log(`[WebGpuExecutor] FS Code for ${fragmentId}:\n${fsCode}`);
+
     const vsModule = this.device.createShaderModule({ code: vsCode, label: vertexId });
     const fsModule = this.device.createShaderModule({ code: fsCode, label: fragmentId });
 
@@ -369,6 +396,10 @@ export class WebGpuExecutor {
     // Ideally, pass format in 'def' or look up target?
     // Let's assume 'rgba8unorm' for sanity tests.
     const targetFormat: GPUTextureFormat = 'rgba8unorm';
+
+    // Auto-assign locations for VS outputs / FS inputs if missing
+    // Actually WgslGenerator should handle this.
+    // Let's ensure WgslGenerator is robust.
 
     const pipeline = await this.device.createRenderPipelineAsync({
       layout: 'auto',
