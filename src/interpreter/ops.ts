@@ -109,20 +109,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   'math_min': (ctx, args) => applyBinary(args.a, args.b, Math.min),
   'math_max': (ctx, args) => applyBinary(args.a, args.b, Math.max),
   'math_pow': (ctx, args) => applyBinary(args.a, args.b, Math.pow),
-  'math_atan2': (ctx, args) => applyBinary(args.a, args.b, Math.atan2), // Note: args y, x standard. My signatures said a,b? No, signatures said y,x for atan2. But applyBinary uses args.a, args.b?
-  // Check atan2 signature: genMathVariants uses 'a', 'b'.
-  // Wait, my previous ops.ts had 'math_atan2': (ctx, args) => Math.atan2(args.y, args.x).
-  // My new signature generator used 'genMathVariants' which generates 'a' and 'b'.
-  // This is a mismatch! 'math_atan2' usually takes y, x.
-  // I should fix signature to use 'y', 'x' or update op to use 'a', 'b'. 'a'='y', 'b'='x'?
-  // Standard GLSL: atan(y, x).
-  // Let's stick to 'y' and 'x' for readability, but my helper blindly generated 'a', 'b'.
-  // I'll manually fix atan2 signature in previous step? Or just use 'a' and 'b' here mapping to y/x logic?
-  // Let's just update atomic op here to use 'a' and 'b' (y=a, x=b) to match the generated signature.
-  // Actually, I can customize applyBinary to accept key names. Or just pass args.y, args.x if I fix signature.
-  // But signatures are already 'a', 'b' due to genMathVariants.
-  // So 'math_atan2(a, b)' -> atan2(a, b) -> atan2(y, x). So a=y, b=x.
-
+  'math_atan2': (ctx, args) => applyBinary(args.a, args.b, Math.atan2), // Note: args y, x standard.
   'math_mod': (ctx, args) => applyBinary(args.a, args.b, (a, b) => a % b),
 
   'math_clamp': (ctx, args) => {
@@ -584,25 +571,6 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     // Registry of Constants
     if (name.startsWith('TextureFormat.')) {
       const key = name.split('.')[1] as keyof typeof TextureFormatValues;
-      // Look up in TextureFormatValues if key exists (Note: key should be the Enum Key 'RGBA8', not value 'rgba8')
-      // Wait, TextureFormat enum keys are RGBA8, values are 'rgba8'.
-      // IR types: TextureFormatValues[TextureFormat.RGBA8] = 1.
-      // So if I pass 'TextureFormat.RGBA8', I want 1.
-      // How do I lookup?
-      // const fmt = TextureFormat[key];
-      // if (fmt) return TextureFormatValues[fmt];
-
-      // Simpler: Just map generic names to IDs? Or precise names?
-      // Let's support 'TextureFormat.rgba8' (matching enum value) or 'TextureFormat.RGBA8' (matching enum key)?
-      // User said "fixed... mapping of string to runtime integer constant".
-      // Let's assume input matches the Enum Key for consistency with C++/GPU macros.
-      // Actually, my Enum Keys match the upper case names.
-      // So 'TextureFormat.RGBA8' -> TextureFormat.RGBA8 ('rgba8') -> TextureFormatValues[...] -> 1
-
-      // Let's try to find it in TextureFormatValues by traversing?
-      // Actually TextureFormatValues uses Enum Values as keys.
-      // So first map Name (RGBA8) -> Enum Value ('rgba8').
-
       const enumVal = (TextureFormat as any)[key];
       if (enumVal && typeof enumVal === 'string') {
         return TextureFormatValues[enumVal as TextureFormat];
