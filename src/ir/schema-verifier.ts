@@ -39,8 +39,10 @@ export function verifyLiteralsOrRefsExist(
 
     // Optional argument handling
     if (value === undefined) {
-      if (!argDef.optional) {
-        errors.push(`Missing required argument: ${key}`);
+      // Check if there is an incoming edge for this port
+      const hasEdge = func?.edges?.some(e => e.to === node.id && e.portIn === key && e.type === 'data');
+      if (!argDef.optional && !hasEdge) {
+        errors.push(`Missing required argument '${key}'`);
       }
       continue;
     }
@@ -132,7 +134,10 @@ function checkReferenceExists(id: string, ir?: IRDocument, func?: FunctionDef): 
   // 4. Check Other Nodes in Function
   if (func?.nodes?.some(n => n.id === id)) return true;
 
-  // 5. Special Constants (optional, but keep it clean)
+  // 5. Check Global Functions
+  if (ir?.functions?.some(f => f.id === id)) return true;
+
+  // 6. Special Constants (optional, but keep it clean)
   if (id === 'screen') return true; // Common generic target
 
   return false;

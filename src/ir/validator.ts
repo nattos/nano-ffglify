@@ -1,6 +1,7 @@
 import { IRDocument, FunctionDef, BuiltinOp } from './types';
 import { OpSignatures, OpSignature, ValidationType } from './signatures';
 import { OpSchemas } from './builtin-schemas';
+import { verifyLiteralsOrRefsExist } from './schema-verifier';
 
 import { TextureFormat, TextureFormatValues, PRIMITIVE_TYPES } from './types';
 
@@ -353,6 +354,14 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
   const cache: TypeCache = new Map();
 
   func.nodes.forEach(node => {
+    // 1. Literal and Reference Verification
+    const verification = verifyLiteralsOrRefsExist(node, doc, func);
+    if (!verification.valid) {
+      verification.errors.forEach(msg => {
+        errors.push({ nodeId: node.id, message: msg, severity: 'error' });
+      });
+    }
+
     resolveNodeType(node.id, func, cache, resourceIds, errors);
 
     if (node.op === 'const_get') {

@@ -249,10 +249,12 @@ export interface CmdDispatchArgs { target: string; x: any; y: any; z: any;[key: 
 export const CmdDispatchDef = defineOp<CmdDispatchArgs>({
   doc: "Dispatch compute shader.",
   args: {
-    target: { type: z.string(), doc: "ID of the compute function", requiredRef: true },
-    x: { type: IntSchema, doc: "Group count X", refable: true },
-    y: { type: IntSchema, doc: "Group count Y", refable: true },
-    z: { type: IntSchema, doc: "Group count Z", refable: true }
+    target: { type: z.string(), doc: "ID of the compute function", requiredRef: true, optional: true },
+    func: { type: z.string(), doc: "Alias for target", optional: true, requiredRef: true },
+    x: { type: IntSchema, doc: "Group count X", refable: true, optional: true },
+    y: { type: IntSchema, doc: "Group count Y", refable: true, optional: true },
+    z: { type: IntSchema, doc: "Group count Z", refable: true, optional: true },
+    dispatch: { type: z.array(z.number()), doc: "Group counts [x, y, z]", optional: true, literalTypes: ['float3'] }
   }
 });
 
@@ -263,7 +265,8 @@ export const TextureSampleDef = defineOp<TextureSampleArgs>({
   doc: "Sample a texture at given coordinates.",
   args: {
     tex: { type: z.string(), doc: "ID of the texture resource", requiredRef: true },
-    coords: { type: AnyVector, doc: "Coordinates", refable: true }
+    coords: { type: AnyVector, doc: "Coordinates", refable: true, optional: true },
+    uv: { type: AnyVector, doc: "Alias for coords (float2 expected)", refable: true, optional: true }
   }
 });
 
@@ -424,7 +427,7 @@ export const FlowLoopDef = defineOp<FlowLoopArgs>({
     start: { type: IntSchema, doc: "Start index", refable: true, optional: true },
     end: { type: IntSchema, doc: "End index", refable: true, optional: true },
     body: { type: z.string(), doc: "Node ID for loop body", requiredRef: true, optional: true },
-    tag: { type: z.string(), doc: "Loop tag for identification", optional: true }
+    tag: { type: z.string(), doc: "Loop tag for identification", optional: true, refable: true }
   }
 });
 
@@ -524,7 +527,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'var_set': VarSetDef,
   'var_get': VarGetDef,
   'const_get': defineOp<ConstGetArgs>({ doc: "Get constant", args: { name: { type: z.string(), doc: "Name" } } }),
-  'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag" } } }),
+  'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true } } }),
   'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, true: { type: z.string(), doc: "Node ID for true", requiredRef: true }, false: { type: z.string(), doc: "Node ID for false", requiredRef: true } } }),
   'flow_loop': FlowLoopDef,
   'call_func': defineOp<CallFuncArgs>({ doc: "Call a function", args: { func: { type: z.string(), doc: "Function ID", requiredRef: true } } }),

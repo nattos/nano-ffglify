@@ -2,13 +2,10 @@ import { expect, it } from 'vitest';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { InterpretedExecutor } from '../../interpreter/executor';
 import { IRDocument, FunctionDef } from '../../ir/types';
-
 import { WebGpuBackend } from './webgpu-backend';
-
-// ------------------------------------------------------------------
-// Backend Abstraction
-// ------------------------------------------------------------------
+import { ComputeTestBackend } from './compute-test-backend';
 import { TestBackend } from './types';
+
 export { TestBackend }; // Re-export for convenience if needed, or update consumers
 
 export const InterpreterBackend: TestBackend = {
@@ -35,8 +32,6 @@ export const InterpreterBackend: TestBackend = {
     return ctx;
   }
 };
-
-import { ComputeTestBackend } from './compute-test-backend';
 
 const backends = [InterpreterBackend, WebGpuBackend, ComputeTestBackend];
 

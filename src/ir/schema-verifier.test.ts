@@ -54,7 +54,7 @@ describe('Schema Verifier', () => {
       const node = { id: 'n1', op: 'math_add', a: 5 }; // Missing 'b'
       const result = verifyLiteralsOrRefsExist(node as any);
       expect(result.valid).toBe(false);
-      expect(result.errors[0]).toContain("Missing required argument: b");
+      expect(result.errors[0]).toContain("Missing required argument 'b'");
     });
 
     it('should verify reference existence when IR context is provided', () => {
