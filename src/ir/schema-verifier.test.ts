@@ -16,17 +16,15 @@ describe('Schema Verifier', () => {
       expect(result.valid).toBe(true);
     });
 
-    it('should fail if a reference is used for a non-refable argument', () => {
-      // 'literal' op: 'val' is z.any() but NOT refable.
-      const node = { id: 'n1', op: 'literal', val: 'some_string' };
-      const result = verifyLiteralsOrRefsExist(node as any);
-      // Wait, 'literal' val IS allowed to be a string if it's a literal string.
-      // But verifyLiteralsOrRefsExist checks if it DOES NOT support references.
-      // In LiteralDef, refable is false. So it will say "Argument 'val' does not support references, but got string".
-      // This is slightly ambiguous for 'literal' because the literal could be a string.
-      // However, for most other ops it works perfectly.
+    it('should fail if a string is provided for a non-string-literal argument with no ref support', () => {
+      // We'll define a temporary mock op or use a known one.
+      // Float2 x is refable: true, so it allows strings as refs.
+      // Let's use an hypothetical op that doesn't allow either.
+      // Actually, we can just check math_add with a literal that isn't allowed.
+      const invalidNode = { id: 'n1', op: 'math_add', a: { some: 'object' }, b: 5 };
+      const result = verifyLiteralsOrRefsExist(invalidNode as any);
       expect(result.valid).toBe(false);
-      expect(result.errors[0]).toContain("does not support references");
+      expect(result.errors[0]).toContain("has invalid literal type");
     });
 
     it('should require references for requiredRef arguments', () => {
@@ -57,6 +55,42 @@ describe('Schema Verifier', () => {
       const result = verifyLiteralsOrRefsExist(node as any);
       expect(result.valid).toBe(false);
       expect(result.errors[0]).toContain("Missing required argument: b");
+    });
+
+    it('should verify reference existence when IR context is provided', () => {
+      const ir = {
+        resources: [{ id: 'tex1' }],
+        inputs: [{ id: 'u_val' }]
+      };
+      const func = {
+        localVars: [{ id: 'v_local' }],
+        nodes: [{ id: 'node1', op: 'math_add' }]
+      };
+
+      // Valid references
+      const node1 = { id: 'n2', op: 'math_add', a: 'u_val', b: 'v_local' };
+      expect(verifyLiteralsOrRefsExist(node1 as any, ir, func).valid).toBe(true);
+
+      const node2 = { id: 'n3', op: 'texture_sample', tex: 'tex1', coords: [0, 0] };
+      expect(verifyLiteralsOrRefsExist(node2 as any, ir, func).valid).toBe(true);
+
+      // Invalid reference
+      const invalidNode = { id: 'n4', op: 'math_add', a: 'unknown_id', b: 5 };
+      const result = verifyLiteralsOrRefsExist(invalidNode as any, ir, func);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain("references unknown ID 'unknown_id'");
+    });
+
+    it('should validate literal types when literalTypes is provided', () => {
+      // math_add expects float/int/float2/3/4.
+      // If we pass a boolean literal, it should fail.
+      const invalidNode = { id: 'n1', op: 'math_add', a: true, b: 5 };
+      const result = verifyLiteralsOrRefsExist(invalidNode as any);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain("invalid literal type: expected one of [float, int, float2, float3, float4], but got bool");
+
+      const validNode = { id: 'n2', op: 'math_add', a: 5.5, b: [1, 2] };
+      expect(verifyLiteralsOrRefsExist(validNode as any).valid).toBe(true);
     });
   });
 

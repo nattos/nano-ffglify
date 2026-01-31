@@ -5,12 +5,19 @@ import { BuiltinOp, Node } from './types';
 // Core Schema Types
 // ------------------------------------------------------------------
 
+export type IRValueType =
+  | 'float' | 'int' | 'bool' | 'string'
+  | 'float2' | 'float3' | 'float4'
+  | 'float3x3' | 'float4x4'
+  | 'array' | 'struct';
+
 export interface OpArg<T = any> {
   type: z.ZodType<T>;
   doc: string;
   optional?: boolean;
   refable?: boolean;
   requiredRef?: boolean;
+  literalTypes?: IRValueType[];
 }
 
 export interface OpDef<T = any> {
@@ -150,8 +157,8 @@ export interface MathBinaryArgs { a: any; b: any;[key: string]: any; }
 export const MathBinaryDef = defineOp<MathBinaryArgs>({
   doc: "Standard binary math operation (add, sub, mul, div, mod, pow, min, max, gt, lt, ge, le, eq, neq).",
   args: {
-    a: { type: AnyData, doc: "First operand", refable: true },
-    b: { type: AnyData, doc: "Second operand", refable: true }
+    a: { type: AnyData, doc: "First operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] },
+    b: { type: AnyData, doc: "Second operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] }
   }
 });
 
@@ -159,7 +166,7 @@ export interface MathUnaryArgs { val: any;[key: string]: any; }
 export const MathUnaryDef = defineOp<MathUnaryArgs>({
   doc: "Standard unary math operation (abs, ceil, floor, sqrt, exp, log, sin, cos, tan, etc.).",
   args: {
-    val: { type: AnyData, doc: "Input value", refable: true }
+    val: { type: AnyData, doc: "Input value", refable: true, literalTypes: ['float', 'int', 'bool', 'float2', 'float3', 'float4'] }
   }
 });
 
@@ -175,13 +182,16 @@ export const MathClampDef = defineOp<MathClampArgs>({
 
 export const LiteralDef = defineOp<LiteralArgs>({
   doc: "Constant literal value.",
-  args: { val: { type: z.any(), doc: "The literal value (scalar, vector, matrix, array, etc.)" } }
+  args: { val: { type: z.any(), doc: "The literal value (scalar, vector, matrix, array, etc.)", literalTypes: ['float', 'int', 'bool', 'string', 'float2', 'float3', 'float4', 'float3x3', 'float4x4', 'array', 'struct'] } }
 });
 
 // --- Constructors ---
 export const Float2ConstructorDef = defineOp<Float2Args>({
   doc: "Construct a float2.",
-  args: { x: { type: FloatSchema, doc: "X", refable: true }, y: { type: FloatSchema, doc: "Y", refable: true } }
+  args: {
+    x: { type: FloatSchema, doc: "X", refable: true, literalTypes: ['float', 'int'] },
+    y: { type: FloatSchema, doc: "Y", refable: true, literalTypes: ['float', 'int'] }
+  }
 });
 
 export const Float3ConstructorDef = defineOp<Float3Args>({
@@ -199,7 +209,10 @@ export const Float4ConstructorDef = defineOp<Float4Args>({
 export interface VecSwizzleArgs { vec: any; channels: string;[key: string]: any; }
 export const VecSwizzleDef = defineOp<VecSwizzleArgs>({
   doc: "Swizzle components of a vector.",
-  args: { vec: { type: AnyVector, doc: "Input vector", refable: true }, channels: { type: z.string(), doc: "Swizzle mask (e.g. 'xyz')" } }
+  args: {
+    vec: { type: AnyVector, doc: "Input vector", refable: true, literalTypes: ['float2', 'float3', 'float4'] },
+    channels: { type: z.string(), doc: "Swizzle mask (e.g. 'xyz')", literalTypes: ['string'] }
+  }
 });
 
 export interface VecMixArgs { a: any; b: any; t: any;[key: string]: any; }
@@ -500,7 +513,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'array_construct': defineOp<DynamicArgs>({ doc: "Construct array", args: {} }),
   'array_set': ArraySetDef,
   'array_extract': ArrayExtractDef,
-  'array_length': defineOp<{ array: any }>({ doc: "Array length", args: { array: { type: z.any(), doc: "Array", refable: true } } }),
+  'array_length': defineOp<{ array: any }>({ doc: "Array length", args: { array: { type: z.any(), doc: "Array", refable: true, literalTypes: ['array'] } } }),
 
   // Commands
   'cmd_draw': CmdDrawDef,
