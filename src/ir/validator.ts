@@ -137,7 +137,8 @@ const resolveNodeType = (
       if (!reservedKeys.has(key)) validationData[key] = node[key];
     });
 
-    const result = zodSchema.safeParse(validationData);
+    const result = zodSchema.partial().safeParse(validationData);
+
     if (!result.success) {
       result.error.issues.forEach(issue => {
         errors.push({

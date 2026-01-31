@@ -8,6 +8,7 @@ import { BuiltinOp } from './types';
 export interface OpArg<T = any> {
   type: z.ZodType<T>;
   doc: string;
+  optional?: boolean;
 }
 
 export type OpArgMap<T> = {
@@ -22,16 +23,19 @@ export interface OpDef<T> {
 /**
  * Helper to define a Builtin Op with docstrings and strict type verification.
  * Returns a Zod object schema for the arguments.
- * NOTE: All arguments are made OPTIONAL to support IR nodes where
- * values are provided via incoming edges rather than literal properties.
  */
 export function defineOp<T>(def: OpDef<T>): z.ZodObject<any> {
   const shape: any = {};
   for (const [key, arg] of Object.entries(def.args)) {
-    shape[key] = (arg as OpArg).type.optional();
+    let schema = (arg as OpArg).type;
+    if ((arg as OpArg).optional) {
+      schema = schema.optional();
+    }
+    shape[key] = schema;
   }
   return z.object(shape);
 }
+
 
 // ------------------------------------------------------------------
 // Base Types
@@ -157,7 +161,7 @@ export const CmdDrawSchema = defineOp<CmdDrawArgs>({
     vertex: { type: z.string(), doc: "ID of the vertex shader function" },
     fragment: { type: z.string(), doc: "ID of the fragment shader function" },
     count: { type: RefableInt, doc: "Number of vertices/indices to draw" },
-    pipeline: { type: RenderPipelineSchema.optional(), doc: "Optional render pipeline state" }
+    pipeline: { type: RenderPipelineSchema, doc: "Optional render pipeline state", optional: true }
   }
 });
 
@@ -296,10 +300,10 @@ export const VarGetSchema = defineOp<{ var: string }>({
 export const FlowLoopSchema = defineOp<{ count?: any, start?: any, end?: any, body?: string }>({
   doc: "Control flow loop.",
   args: {
-    count: { type: RefableInt.optional(), doc: "Number of iterations" },
-    start: { type: RefableInt.optional(), doc: "Start index" },
-    end: { type: RefableInt.optional(), doc: "End index" },
-    body: { type: z.string().optional(), doc: "Node ID of loop body" }
+    count: { type: RefableInt, doc: "Number of iterations", optional: true },
+    start: { type: RefableInt, doc: "Start index", optional: true },
+    end: { type: RefableInt, doc: "End index", optional: true },
+    body: { type: z.string(), doc: "Node ID of loop body", optional: true }
   }
 });
 
@@ -391,7 +395,7 @@ export const OpSchemas: Partial<Record<BuiltinOp, z.ZodObject<any>>> = {
   // Commands
   'cmd_draw': CmdDrawSchema,
   'cmd_dispatch': CmdDispatchSchema,
-  'cmd_resize_resource': defineOp({ doc: "Resize a resource", args: { resource: { type: z.string(), doc: "Resource ID" }, size: { type: z.union([RefableVec2, RefableInt]), doc: "New size [w, h] or scalar" } } }),
+  'cmd_resize_resource': defineOp({ doc: "Resize a resource", args: { resource: { type: z.string(), doc: "Resource ID" }, size: { type: z.union([RefableVec2, RefableInt]), doc: "New size [w, h] or scalar" }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
 
   // Logic / Control
   'var_set': VarSetSchema,
@@ -401,5 +405,6 @@ export const OpSchemas: Partial<Record<BuiltinOp, z.ZodObject<any>>> = {
   'flow_branch': defineOp({ doc: "Branch based on condition", args: { cond: { type: RefableBool, doc: "Condition" }, true: { type: z.string(), doc: "Node ID for true" }, false: { type: z.string(), doc: "Node ID for false" } } }),
   'flow_loop': FlowLoopSchema,
   'call_func': defineOp({ doc: "Call a function", args: { func: { type: z.string(), doc: "Function ID" } } }),
-  'func_return': defineOp({ doc: "Return from function", args: { val: { type: z.any(), doc: "Return value" } } }),
+  'func_return': defineOp({ doc: "Return from function", args: { val: { type: z.any(), doc: "Return value", optional: true }, value: { type: z.any(), doc: "Return value (alias)", optional: true } } }),
+
 };
