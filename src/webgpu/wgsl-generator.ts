@@ -113,9 +113,9 @@ export class WgslGenerator {
     }
 
     // 2.5. Inputs Buffer (Uniforms / Non-Stage IO)
-    // Doc-level inputs map to b_inputs storage buffer.
-    // entryFunc inputs map to Stage IO (Locations).
-    if (options.inputBinding !== undefined && fullIr.inputs.length > 0) {
+    // Only generate for compute shaders or if specifically requested.
+    // In Render pipelines, inputs are often handled via vertex buffers or separate uniforms.
+    if (options.stage === 'compute' && options.inputBinding !== undefined && fullIr.inputs.length > 0) {
       const docInputs = [...fullIr.inputs];
       docInputs.sort((a, b) => {
         const aIsArr = a.type.includes('[]') || (a.type.startsWith('array<') && !a.type.includes(','));
@@ -673,9 +673,11 @@ export class WgslGenerator {
 
   private compileMath(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument): string {
     const op = node.op;
-    const a = (k = 'a') => `f32(${this.resolveArg(node, k, func, options, ir)})`;
-    const b = (k = 'b') => `f32(${this.resolveArg(node, k, func, options, ir)})`;
-    const val = (k = 'val') => `f32(${this.resolveArg(node, k, func, options, ir)})`;
+    const isFloatOp = !op.includes('_gt') && !op.includes('_lt') && !op.includes('_ge') && !op.includes('_le') && !op.includes('_eq') && !op.includes('_neq') && !op.startsWith('bits_');
+
+    const a = (k = 'a') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir)})` : this.resolveArg(node, k, func, options, ir);
+    const b = (k = 'b') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir)})` : this.resolveArg(node, k, func, options, ir);
+    const val = (k = 'val') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir)})` : this.resolveArg(node, k, func, options, ir);
 
     // Core Arithmetic
     if (op === 'math_add') return `(${a()} + ${b()})`;

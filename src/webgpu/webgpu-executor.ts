@@ -284,7 +284,7 @@ export class WebGpuExecutor {
         view: view,
         loadOp: 'clear', // TODO: Make configurable or respect existing clear logic
         storeOp: 'store',
-        clearValue: { r: 0, g: 0, b: 0, a: 1 }
+        clearValue: { r: 0, g: 0, b: 0, a: 0 }
       }]
     });
 
