@@ -1,7 +1,8 @@
 import { IRDocument, BuiltinOp, TextureFormat, TextureFormatValues, TextureFormatFromId } from '../ir/types';
+import { OpArgs } from '../ir/builtin-schemas';
 import { EvaluationContext, RuntimeValue, VectorValue } from './context';
 
-export type OpHandler = (ctx: EvaluationContext, args: Record<string, RuntimeValue>) => RuntimeValue | void;
+export type OpHandler<K extends BuiltinOp> = (ctx: EvaluationContext, args: OpArgs[K]) => RuntimeValue | void;
 
 const validateArg = (args: Record<string, RuntimeValue>, key: string, types: string | string[]) => {
   const val = args[key];
@@ -52,7 +53,7 @@ const applyComparison = (a: any, b: any, op: (x: number, y: number) => boolean):
   throw new Error(`Runtime Error: Invalid types for comparison op: ${typeof a}, ${typeof b}`);
 };
 
-export const OpRegistry: Record<BuiltinOp, OpHandler> = {
+export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   // ----------------------------------------------------------------
   // Standard Math
   // ----------------------------------------------------------------
@@ -162,8 +163,8 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
   'math_is_finite': (ctx, args) => {
     const val = args.val;
-    if (Array.isArray(val)) return val.map(v => Number.isFinite(v as number) ? 1.0 : 0.0);
-    return Number.isFinite(val as number);
+    if (Array.isArray(val)) return val.map(v => Number.isFinite(v) ? 1.0 : 0.0);
+    return Number.isFinite(val);
   },
 
   'math_flush_subnormal': (ctx, args) => applyUnary(args.val, x => {
@@ -336,9 +337,9 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
     // 3 args (vectors) or 9 args (scalars)
     // Simplified: expects 'cols' array of 3 float3s or 'vals' array of 9 numbers
     // Fallback: 9 scalars c0r0, c0r1...
-    if (Array.isArray(args.cols)) return (args.cols as any).flat();
-    if (Array.isArray(args.vals)) return args.vals as VectorValue;
-    return new Array(9).fill(0) as VectorValue;
+    if (Array.isArray(args.cols)) return (args.cols as any[]).flat();
+    if (Array.isArray(args.vals)) return args.vals;
+    return new Array(9).fill(0);
   },
 
   'float4x4': (ctx, args) => {
@@ -839,7 +840,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
 
   'array_construct': (ctx, args) => {
     if (args.values && Array.isArray(args.values)) {
-      return [...args.values] as unknown as RuntimeValue;
+      return [...args.values];
     }
     const len = args.length as number || 0;
     const fill = args.fill ?? 0;
@@ -847,7 +848,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
 
   'array_extract': (ctx, args) => {
-    const arr = args.array as unknown as RuntimeValue[];
+    const arr = args.array as RuntimeValue[];
     const idx = args.index as number;
     if (!Array.isArray(arr)) throw new Error('array_extract: target is not an array');
     if (idx < 0 || idx >= arr.length) throw new Error(`array_extract: OOB read index ${idx}`);
@@ -855,7 +856,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
 
   'array_set': (ctx, args) => {
-    const arr = args.array as unknown as RuntimeValue[];
+    const arr = args.array as RuntimeValue[];
     const idx = args.index as number;
     const val = args.value;
     if (!Array.isArray(arr)) throw new Error('array_set: target is not an array');
@@ -865,7 +866,7 @@ export const OpRegistry: Record<BuiltinOp, OpHandler> = {
   },
 
   'array_length': (ctx, args) => {
-    const arr = args.array as unknown as RuntimeValue[];
+    const arr = args.array as RuntimeValue[];
     return Array.isArray(arr) ? arr.length : 0;
   },
 

@@ -1,8 +1,3 @@
-import type { TestBackend } from './types';
-import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
-import { InterpretedExecutor } from '../../interpreter/executor';
-import { WebGpuExecutor } from '../../interpreter/webgpu-executor';
-import { IRDocument, Node, FunctionDef, TextureFormatFromId, RenderPipelineDef } from '../../ir/types';
 import { create, globals } from 'webgpu';
 
 // Ensure globals
@@ -10,8 +5,11 @@ if (typeof global !== 'undefined' && !global.GPUBufferUsage) {
   Object.assign(global, globals);
 }
 
+import type { TestBackend } from './types';
+import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
+import { WebGpuExecutor } from '../../interpreter/webgpu-executor';
+import { IRDocument, Node, FunctionDef, TextureFormatFromId, RenderPipelineDef } from '../../ir/types';
 import { CpuJitCompiler } from '../../interpreter/cpu-jit';
-
 import { OpRegistry } from '../../interpreter/ops';
 
 class WebGpuHostExecutor {
@@ -49,7 +47,7 @@ class WebGpuHostExecutor {
       callOp: (opName: string, args: Record<string, RuntimeValue>) => {
         const handler = OpRegistry[opName as keyof typeof OpRegistry];
         if (handler) {
-          return handler(this.context, args);
+          return handler(this.context, args as any); // any cast is valid, since Zod has already validated these args match the op.
         }
         console.warn(`JIT Warning: implementation of '${opName}' not found or not registered.`);
         return 0;

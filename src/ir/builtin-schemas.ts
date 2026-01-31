@@ -111,30 +111,31 @@ const RenderPipelineSchema = z.object({
 
 // --- Generic Argument Interfaces ---
 
-export interface EmptyArgs { }
-export interface ScalarArgs { val: any; }
-export interface VecUnaryArgs { a: any; }
-export interface TernaryArgs { a: any; b: any; c: any; }
-export interface MathDivScalarArgs { val: any; scalar: any; }
-export interface VecGetElementArgs { vec: any; index: any; }
-export interface TextureLoadArgs { tex: string; coords: any; }
-export interface TextureStoreArgs { tex: string; coords: any; value: any; }
-export interface Mat3x3Args { m00: number; m01: number; m02: number; m10: number; m11: number; m12: number; m20: number; m21: number; m22: number; }
-export interface Mat4x4Args { m00: number; m01: number; m02: number; m03: number; m10: number; m11: number; m12: number; m13: number; m20: number; m21: number; m22: number; m23: number; m30: number; m31: number; m32: number; m33: number; }
-export interface MatIdentityArgs { size: any; }
-export interface QuatSlerpArgs { a: any; b: any; t: any; }
-export interface QuatRotateArgs { vec: any; q: any; }
-export interface ConstGetArgs { name: string; }
-export interface LoopIndexArgs { loop: string; }
-export interface FlowBranchArgs { cond: any; true: string; false: string; }
+export interface EmptyArgs { [key: string]: any; }
+export interface ScalarArgs { val: any;[key: string]: any; }
+export interface VecUnaryArgs { a: any;[key: string]: any; }
+export interface MadArgs { a: any; b: any; c: any;[key: string]: any; }
+export interface ColorMixArgs { a: any; b: any; t: any;[key: string]: any; }
+export interface MathDivScalarArgs { val: any; scalar: any;[key: string]: any; }
+export interface VecGetElementArgs { vec: any; index: any;[key: string]: any; }
+export interface TextureLoadArgs { tex: string; coords: any;[key: string]: any; }
+export interface TextureStoreArgs { tex: string; coords: any; value: any;[key: string]: any; }
+export interface Mat3x3Args { m00?: number; m01?: number; m02?: number; m10?: number; m11?: number; m12?: number; m20?: number; m21?: number; m22?: number; cols?: any; vals?: any;[key: string]: any; }
+export interface Mat4x4Args { m00?: number; m01?: number; m02?: number; m03?: number; m10?: number; m11?: number; m12?: number; m13?: number; m20?: number; m21?: number; m22?: number; m23?: number; m30?: number; m31?: number; m32?: number; m33?: number; cols?: any; vals?: any;[key: string]: any; }
+export interface MatIdentityArgs { size: any;[key: string]: any; }
+export interface QuatSlerpArgs { a: any; b: any; t: any;[key: string]: any; }
+export interface QuatRotateArgs { v: any; q: any;[key: string]: any; }
+export interface ConstGetArgs { name: string;[key: string]: any; }
+export interface LoopIndexArgs { loop: string;[key: string]: any; }
+export interface FlowBranchArgs { cond: any; true: string; false: string;[key: string]: any; }
 export interface CallFuncArgs { func: string;[key: string]: any; }
-export interface CmdResizeResourceArgs { resource: string; size: any; clear?: any; }
-export interface FuncReturnArgs { val: any; value?: any; }
-export interface QuatToMatArgs { q: any; }
+export interface CmdResizeResourceArgs { resource: string; size: any; clear?: any;[key: string]: any; }
+export interface FuncReturnArgs { val: any; value?: any;[key: string]: any; }
+export interface QuatToMatArgs { q: any;[key: string]: any; }
 
 // --- Math ---
 
-export interface MathBinaryArgs { a: any; b: any; }
+export interface MathBinaryArgs { a: any; b: any;[key: string]: any; }
 export const MathBinarySchema = defineOp<MathBinaryArgs>({
   doc: "Standard binary math operation (add, sub, mul, div, mod, pow, min, max, gt, lt, ge, le, eq, neq).",
   args: {
@@ -143,7 +144,7 @@ export const MathBinarySchema = defineOp<MathBinaryArgs>({
   }
 });
 
-export interface MathUnaryArgs { val: any; }
+export interface MathUnaryArgs { val: any;[key: string]: any; }
 export const MathUnarySchema = defineOp<MathUnaryArgs>({
   doc: "Standard unary math operation (abs, ceil, floor, sqrt, exp, log, sin, cos, tan, etc.).",
   args: {
@@ -151,7 +152,7 @@ export const MathUnarySchema = defineOp<MathUnaryArgs>({
   }
 });
 
-export interface MathClampArgs { val: any; min: any; max: any; }
+export interface MathClampArgs { val: any; min: any; max: any;[key: string]: any; }
 export const MathClampSchema = defineOp<MathClampArgs>({
   doc: "Clamp a value between min and max.",
   args: {
@@ -161,7 +162,7 @@ export const MathClampSchema = defineOp<MathClampArgs>({
   }
 });
 
-export interface LiteralArgs { val: any; }
+export interface LiteralArgs { val: any;[key: string]: any; }
 export const LiteralSchema = defineOp<LiteralArgs>({
   doc: "Constant literal value.",
   args: { val: { type: z.any(), doc: "The literal value (scalar, vector, matrix, array, etc.)" } }
@@ -175,6 +176,7 @@ export interface CmdDrawArgs {
   fragment: string;
   count: any;
   pipeline?: any;
+  [key: string]: any;
 }
 
 export const CmdDrawSchema = defineOp<CmdDrawArgs>({
@@ -188,7 +190,9 @@ export const CmdDrawSchema = defineOp<CmdDrawArgs>({
   }
 });
 
-export interface CmdDispatchArgs { func: string; dispatch: any; }
+export interface DynamicArgs { [key: string]: any; }
+
+export interface CmdDispatchArgs { func: string; dispatch: any;[key: string]: any; }
 export const CmdDispatchSchema = defineOp<CmdDispatchArgs>({
   doc: "Dispatch a compute shader.",
   args: {
@@ -199,25 +203,25 @@ export const CmdDispatchSchema = defineOp<CmdDispatchArgs>({
 
 // --- Vectors ---
 
-export interface Float2Args { x: any; y: any; }
+export interface Float2Args { x: any; y: any;[key: string]: any; }
 export const Float2ConstructorSchema = defineOp<Float2Args>({
   doc: "Construct a float2 from scalars.",
   args: { x: { type: RefableFloat, doc: "X component" }, y: { type: RefableFloat, doc: "Y component" } }
 });
 
-export interface Float3Args { x: any; y: any; z: any; }
+export interface Float3Args { x: any; y: any; z: any;[key: string]: any; }
 export const Float3ConstructorSchema = defineOp<Float3Args>({
   doc: "Construct a float3 from scalars.",
   args: { x: { type: RefableFloat, doc: "X component" }, y: { type: RefableFloat, doc: "Y component" }, z: { type: RefableFloat, doc: "Z component" } }
 });
 
-export interface Float4Args { x: any; y: any; z: any; w: any; }
+export interface Float4Args { x: any; y: any; z: any; w: any;[key: string]: any; }
 export const Float4ConstructorSchema = defineOp<Float4Args>({
   doc: "Construct a float4 from scalars.",
   args: { x: { type: RefableFloat, doc: "X component" }, y: { type: RefableFloat, doc: "Y component" }, z: { type: RefableFloat, doc: "Z component" }, w: { type: RefableFloat, doc: "W component" } }
 });
 
-export interface VecSwizzleArgs { vec: any; channels: string; }
+export interface VecSwizzleArgs { vec: any; channels: string;[key: string]: any; }
 export const VecSwizzleSchema = defineOp<VecSwizzleArgs>({
   doc: "Swizzle vector components (e.g. 'xy', 'rgba').",
   args: {
@@ -226,7 +230,7 @@ export const VecSwizzleSchema = defineOp<VecSwizzleArgs>({
   }
 });
 
-export interface VecMixArgs { a: any; b: any; t: any; }
+export interface VecMixArgs { a: any; b: any; t: any;[key: string]: any; }
 export const VecMixSchema = defineOp<VecMixArgs>({
   doc: "Linearly interpolate between two vectors.",
   args: {
@@ -238,13 +242,13 @@ export const VecMixSchema = defineOp<VecMixArgs>({
 
 // --- Matrices ---
 
-export interface MatMulArgs { a: any; b: any; }
+export interface MatMulArgs { a: any; b: any;[key: string]: any; }
 export const MatMulSchema = defineOp<MatMulArgs>({
   doc: "Multiply matrices or matrix and vector.",
   args: { a: { type: z.any(), doc: "First operand" }, b: { type: z.any(), doc: "Second operand" } }
 });
 
-export interface MatUnaryArgs { val: any; }
+export interface MatUnaryArgs { val: any;[key: string]: any; }
 export const MatUnarySchema = defineOp<MatUnaryArgs>({
   doc: "Matrix unary operation (transpose, inverse).",
   args: { val: { type: literalOrRef(AnyMat), doc: "Input matrix" } }
@@ -252,13 +256,13 @@ export const MatUnarySchema = defineOp<MatUnaryArgs>({
 
 // --- Quaternions ---
 
-export interface QuatArgs { x: any; y: any; z: any; w: any; }
+export interface QuatArgs { x: any; y: any; z: any; w: any;[key: string]: any; }
 export const QuatSchema = defineOp<QuatArgs>({
   doc: "Construct a quaternion.",
   args: { x: { type: RefableFloat, doc: "X" }, y: { type: RefableFloat, doc: "Y" }, z: { type: RefableFloat, doc: "Z" }, w: { type: RefableFloat, doc: "W" } }
 });
 
-export interface QuatMulArgs { a: any; b: any; }
+export interface QuatMulArgs { a: any; b: any;[key: string]: any; }
 export const QuatMulSchema = defineOp<QuatMulArgs>({
   doc: "Multiply quaternions.",
   args: { a: { type: RefableVec4, doc: "First quat" }, b: { type: RefableVec4, doc: "Second quat" } }
@@ -266,19 +270,19 @@ export const QuatMulSchema = defineOp<QuatMulArgs>({
 
 // --- Structs & Arrays ---
 
-export interface StructExtractArgs { struct: any; field: string; }
+export interface StructExtractArgs { struct: any; field: string;[key: string]: any; }
 export const StructExtractSchema = defineOp<StructExtractArgs>({
   doc: "Extract a field from a struct.",
   args: { struct: { type: z.any(), doc: "Struct instance" }, field: { type: z.string(), doc: "Field name" } }
 });
 
-export interface ArraySetArgs { array: string; index: any; val: any; }
+export interface ArraySetArgs { array: any; index: any; value: any;[key: string]: any; }
 export const ArraySetSchema = defineOp<ArraySetArgs>({
   doc: "Set an element in an array.",
-  args: { array: { type: z.string(), doc: "Array variable name" }, index: { type: RefableInt, doc: "Index" }, val: { type: z.any(), doc: "Value" } }
+  args: { array: { type: z.string(), doc: "Array variable name" }, index: { type: RefableInt, doc: "Index" }, value: { type: z.any(), doc: "Value" } }
 });
 
-export interface ArrayExtractArgs { array: any; index: any; }
+export interface ArrayExtractArgs { array: any; index: any;[key: string]: any; }
 export const ArrayExtractSchema = defineOp<ArrayExtractArgs>({
   doc: "Extract an element from an array.",
   args: { array: { type: z.union([z.array(z.any()), z.string()]), doc: "Array" }, index: { type: RefableInt, doc: "Index" } }
@@ -286,7 +290,7 @@ export const ArrayExtractSchema = defineOp<ArrayExtractArgs>({
 
 // --- Resources ---
 
-export interface TextureSampleArgs { tex: string; uv: any; }
+export interface TextureSampleArgs { tex: string; uv: any;[key: string]: any; }
 export const TextureSampleSchema = defineOp<TextureSampleArgs>({
   doc: "Sample a texture at the given UV coordinates.",
   args: {
@@ -295,7 +299,7 @@ export const TextureSampleSchema = defineOp<TextureSampleArgs>({
   }
 });
 
-export interface BufferLoadArgs { buffer: string; index: any; }
+export interface BufferLoadArgs { buffer: string; index: any;[key: string]: any; }
 export const BufferLoadSchema = defineOp<BufferLoadArgs>({
   doc: "Load a value from a buffer resource.",
   args: {
@@ -304,7 +308,7 @@ export const BufferLoadSchema = defineOp<BufferLoadArgs>({
   }
 });
 
-export interface BufferStoreArgs { buffer: string; index: any; value: any; }
+export interface BufferStoreArgs { buffer: string; index: any; value: any;[key: string]: any; }
 export const BufferStoreSchema = defineOp<BufferStoreArgs>({
   doc: "Store a value into a buffer resource.",
   args: {
@@ -314,7 +318,7 @@ export const BufferStoreSchema = defineOp<BufferStoreArgs>({
   }
 });
 
-export interface ResourceMetaArgs { resource: string; }
+export interface ResourceMetaArgs { resource: string;[key: string]: any; }
 export const ResourceMetaSchema = defineOp<ResourceMetaArgs>({
   doc: "Get resource metadata (size, format).",
   args: { resource: { type: z.string(), doc: "Resource ID" } }
@@ -322,7 +326,7 @@ export const ResourceMetaSchema = defineOp<ResourceMetaArgs>({
 
 // --- Logic & Control ---
 
-export interface VarSetArgs { var: string; val: any; }
+export interface VarSetArgs { var: string; val: any;[key: string]: any; }
 export const VarSetSchema = defineOp<VarSetArgs>({
   doc: "Set the value of a local variable.",
   args: {
@@ -331,7 +335,7 @@ export const VarSetSchema = defineOp<VarSetArgs>({
   }
 });
 
-export interface VarGetArgs { var: string; }
+export interface VarGetArgs { var: string;[key: string]: any; }
 export const VarGetSchema = defineOp<VarGetArgs>({
   doc: "Get the value of a local variable.",
   args: {
@@ -339,7 +343,7 @@ export const VarGetSchema = defineOp<VarGetArgs>({
   }
 });
 
-export interface FlowLoopArgs { count?: any; start?: any; end?: any; body?: string; }
+export interface FlowLoopArgs { count?: any; start?: any; end?: any; body?: string;[key: string]: any; }
 export const FlowLoopSchema = defineOp<FlowLoopArgs>({
   doc: "Control flow loop.",
   args: {
@@ -382,7 +386,7 @@ export const OpSchemas: Partial<Record<BuiltinOp, z.ZodObject<any>>> = {
   'vec_normalize': defineOp<VecUnaryArgs>({ doc: "Normalize vector", args: { a: { type: literalOrRef(AnyVector), doc: "Vector" } } }),
 
   // Special Math
-  'math_mad': defineOp<TernaryArgs>({ doc: "a * b + c", args: { a: { type: AnyData, doc: "a" }, b: { type: AnyData, doc: "b" }, c: { type: AnyData, doc: "c" } } }),
+  'math_mad': defineOp<MadArgs>({ doc: "a * b + c", args: { a: { type: AnyData, doc: "a" }, b: { type: AnyData, doc: "b" }, c: { type: AnyData, doc: "c" } } }),
   'math_clamp': MathClampSchema,
   'literal': LiteralSchema,
   'math_pi': defineOp<EmptyArgs>({ doc: "Pi constant", args: {} }),
@@ -425,12 +429,16 @@ export const OpSchemas: Partial<Record<BuiltinOp, z.ZodObject<any>>> = {
   'quat_mul': QuatMulSchema,
   'quat_slerp': defineOp<QuatSlerpArgs>({ doc: "Slerp quats", args: { a: { type: RefableVec4, doc: "a" }, b: { type: RefableVec4, doc: "b" }, t: { type: RefableFloat, doc: "t" } } }),
   'quat_to_float4x4': defineOp<QuatToMatArgs>({ doc: "Quat to mat4", args: { q: { type: RefableVec4, doc: "q" } } }),
-  'quat_rotate': defineOp<QuatRotateArgs>({ doc: "Rotate vec by quat", args: { vec: { type: RefableVec3, doc: "vec" }, q: { type: RefableVec4, doc: "q" } } }),
+  'quat_rotate': defineOp<QuatRotateArgs>({ doc: "Rotate vec by quat", args: { v: { type: RefableVec3, doc: "vec" }, q: { type: RefableVec4, doc: "q" } } }),
+  'color_mix': defineOp<ColorMixArgs>({ doc: "Mix colors", args: { a: { type: RefableVec4, doc: "a" }, b: { type: RefableVec4, doc: "b" }, t: { type: RefableFloat, doc: "t" } } }),
+  'math_flush_subnormal': defineOp<MathUnaryArgs>({ doc: "Flush subnormal", args: { val: { type: AnyData, doc: "val" } } }),
+  'math_mantissa': defineOp<MathUnaryArgs>({ doc: "Get mantissa", args: { val: { type: AnyData, doc: "val" } } }),
+  'math_exponent': defineOp<MathUnaryArgs>({ doc: "Get exponent", args: { val: { type: AnyData, doc: "val" } } }),
 
   // Structs & Arrays
-  'struct_construct': defineOp<EmptyArgs>({ doc: "Construct struct", args: {} }),
+  'struct_construct': defineOp<DynamicArgs>({ doc: "Construct struct", args: {} }),
   'struct_extract': StructExtractSchema,
-  'array_construct': defineOp<EmptyArgs>({ doc: "Construct array", args: {} }),
+  'array_construct': defineOp<DynamicArgs>({ doc: "Construct array", args: {} }),
   'array_set': ArraySetSchema,
   'array_extract': ArrayExtractSchema,
   'array_length': defineOp<{ array: any }>({ doc: "Array length", args: { array: { type: z.union([z.array(z.any()), z.string()]), doc: "Array" } } }),
@@ -476,7 +484,7 @@ export type OpArgs = {
   'math_not': MathUnaryArgs;
   'vec_length': VecUnaryArgs;
   'vec_normalize': VecUnaryArgs;
-  'math_mad': TernaryArgs;
+  'math_mad': MadArgs;
   'math_clamp': MathClampArgs;
   'literal': LiteralArgs;
   'math_pi': EmptyArgs;
@@ -510,12 +518,16 @@ export type OpArgs = {
   'quat_slerp': QuatSlerpArgs;
   'quat_to_float4x4': QuatToMatArgs;
   'quat_rotate': QuatRotateArgs;
-  'struct_construct': EmptyArgs;
+  'color_mix': ColorMixArgs;
+  'math_flush_subnormal': MathUnaryArgs;
+  'math_mantissa': MathUnaryArgs;
+  'math_exponent': MathUnaryArgs;
+  'struct_construct': DynamicArgs;
   'struct_extract': StructExtractArgs;
-  'array_construct': EmptyArgs;
+  'array_construct': DynamicArgs;
   'array_set': ArraySetArgs;
   'array_extract': ArrayExtractArgs;
-  'array_length': { array: any };
+  'array_length': { array: any;[key: string]: any; };
   'cmd_draw': CmdDrawArgs;
   'cmd_dispatch': CmdDispatchArgs;
   'cmd_resize_resource': CmdResizeResourceArgs;

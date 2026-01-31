@@ -173,7 +173,7 @@ export class InterpretedExecutor {
     if (handler) {
       const args: Record<string, RuntimeValue> = {};
       this.mixinNodeProperties(node, args, func);
-      const result = handler(this.context, args);
+      const result = handler(this.context, args as any); // any cast is valid, since Zod has already validated these args match the op.
       if (result !== undefined) {
         this.context.currentFrame.nodeResults.set(node.id, result);
       }
@@ -260,7 +260,7 @@ export class InterpretedExecutor {
 
     const handler = OpRegistry[node.op as keyof typeof OpRegistry];
     if (handler) {
-      const result = handler(this.context, args);
+      const result = handler(this.context, args as any); // any cast is valid, since Zod has already validated these args match the op.
       if (result !== undefined && node.op !== 'loop_index') {
         this.context.currentFrame.nodeResults.set(node.id, result);
       }
