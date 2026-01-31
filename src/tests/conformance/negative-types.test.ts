@@ -1,7 +1,7 @@
 
 import { describe, it, expect } from 'vitest';
-import { validateIR } from '../../../ir/validator';
-import { IRDocument } from '../../../ir/types';
+import { validateIR } from '../../ir/validator';
+import { IRDocument } from '../../ir/types';
 
 describe('Compliance: Negative Data Type Validation', () => {
   const baseDoc: IRDocument = {

@@ -7,9 +7,9 @@ if (typeof global !== 'undefined' && !global.GPUBufferUsage) {
 
 import type { TestBackend } from './types';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
-import { WebGpuExecutor } from '../../interpreter/webgpu-executor';
+import { WebGpuExecutor } from '../../webgpu/webgpu-executor';
 import { IRDocument, Node, FunctionDef, TextureFormatFromId, RenderPipelineDef } from '../../ir/types';
-import { CpuJitCompiler } from '../../interpreter/cpu-jit';
+import { CpuJitCompiler } from '../../webgpu/cpu-jit';
 import { OpRegistry } from '../../interpreter/ops';
 
 class WebGpuHostExecutor {

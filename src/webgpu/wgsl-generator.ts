@@ -1,5 +1,5 @@
 
-import { FunctionDef, Node, Edge, DataType, ResourceDef, IRDocument } from '../../ir/types';
+import { FunctionDef, Node, Edge, DataType, ResourceDef, IRDocument } from '../ir/types';
 
 /**
  * WGSL Generator

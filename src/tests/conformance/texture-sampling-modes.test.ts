@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
-import { ComputeTestBackend } from '../conformance/compute-test-backend';
+import { ComputeTestBackend } from './compute-test-backend';
 import { IRDocument } from '../../ir/types';
 
 describe('Compliance: Texture Sampling Modes', () => {

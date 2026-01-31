@@ -1,11 +1,11 @@
 import { IRDocument, DataType, ResourceDef } from '../../ir/types';
 import { validateIR, inferFunctionTypes } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
-import { WgslGenerator } from '../../compiler/wgsl/wgsl-generator';
 import { InterpretedExecutor } from '../../interpreter/executor';
 import { globals } from 'webgpu';
 import { TestBackend } from './types';
 import { WebGpuBackend } from './webgpu-backend';
+import { WgslGenerator } from '../../webgpu/wgsl-generator';
 
 // Ensure globals
 if (typeof global !== 'undefined' && !global.GPUBufferUsage) {

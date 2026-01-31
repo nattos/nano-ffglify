@@ -1,9 +1,10 @@
-import { IRDocument, FunctionDef, ResourceDef } from '../ir/types';
-import { EvaluationContext, RuntimeValue } from './context';
+import { FunctionDef, ResourceDef } from '../ir/types';
+import { EvaluationContext, RuntimeValue } from '../interpreter/context';
 import { globals } from 'webgpu';
 import { CpuJitCompiler } from './cpu-jit';
-import { OpRegistry } from './ops';
-import { BuiltinOp, TextureFormatValues, TextureFormatFromId, TextureFormat, RenderPipelineDef } from '../ir/types';
+import { OpRegistry } from '../interpreter/ops';
+import { BuiltinOp, TextureFormatFromId, RenderPipelineDef } from '../ir/types';
+import { WgslGenerator } from './wgsl-generator';
 
 // Helper to polyfill if needed, similar to test
 function ensureGpuGlobals() {
@@ -31,7 +32,7 @@ export class WebGpuExecutor {
    */
   async initialize() {
     const ir = this.context.ir;
-    const generator = new (await import('../compiler/wgsl/wgsl-generator')).WgslGenerator();
+    const generator = new WgslGenerator();
 
     for (const func of ir.functions) {
       if (func.type !== 'shader') continue;
@@ -284,7 +285,7 @@ export class WebGpuExecutor {
     const key = `${vertexId}|${fragmentId}|${JSON.stringify(def)}`;
     if (this.renderPipelineCache.has(key)) return this.renderPipelineCache.get(key)!;
 
-    const generator = new (await import('../compiler/wgsl/wgsl-generator')).WgslGenerator();
+    const generator = new WgslGenerator();
     const ir = this.context.ir;
 
     // Options (Need to populate resources for bindings)
