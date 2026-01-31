@@ -1,8 +1,5 @@
-import { FunctionDef, ResourceDef } from '../ir/types';
-import { EvaluationContext, RuntimeValue } from '../interpreter/context';
-import { globals } from 'webgpu';
-import { CpuJitCompiler } from './cpu-jit';
-import { OpRegistry } from '../interpreter/ops';
+import { FunctionDef, ResourceDef, StructDef } from '../ir/types';
+import { RuntimeValue, ResourceState } from '../ir/resource-store';
 import { BuiltinOp, TextureFormatFromId, RenderPipelineDef } from '../ir/types';
 import { WgslGenerator } from './wgsl-generator';
 import { GpuCache } from './gpu-cache';
@@ -12,15 +9,18 @@ import { GpuCache } from './gpu-cache';
 
 export class WebGpuExecutor {
   device: GPUDevice;
-  context: EvaluationContext;
+  resources: Map<string, ResourceState>;
+  inputs: Map<string, RuntimeValue>;
 
   private activePipelines: Map<string, GPUComputePipeline> = new Map();
   private activeRenderPipelines: Map<string, GPURenderPipeline> = new Map();
+  private allFunctions: FunctionDef[] = [];
+  private allStructs: StructDef[] = [];
 
-  constructor(device: GPUDevice, context: EvaluationContext) {
+  constructor(device: GPUDevice, resources: Map<string, ResourceState>, inputs: Map<string, RuntimeValue>) {
     this.device = device;
-    this.context = context;
-    // ensureGpuGlobals() is now handled by the backends or singleton
+    this.resources = resources;
+    this.inputs = inputs;
   }
 
   destroy() {
@@ -31,39 +31,34 @@ export class WebGpuExecutor {
   /**
    * Pre-compile all shaders in the IR document.
    */
-  async initialize() {
-    const ir = this.context.ir;
+  async initialize(functions: FunctionDef[], allResources: ResourceDef[], structs: StructDef[] = []) {
+    this.allFunctions = functions;
+    this.allStructs = structs;
     const generator = new WgslGenerator();
 
-    for (const func of ir.functions) {
+    for (const func of functions) {
       if (func.type !== 'shader') continue;
 
-      try {
-        // Options for compilation
-        // We use binding 0 for globals (if needed) and binding 1 for inputs
-        const options = {
-          inputBinding: 1,
-          resourceBindings: new Map<string, number>(),
-          resourceDefs: new Map<string, ResourceDef>(),
-        };
+      // Options for compilation
+      // We use binding 0 for globals (if needed) and binding 1 for inputs
+      const options: any = {
+        inputBinding: 1,
+        resourceBindings: new Map<string, number>(),
+        resourceDefs: new Map<string, ResourceDef>(),
+      };
 
-        // Map resources used in this function to bindings starting from index 2
-        let bindingIdx = 2;
-        ir.resources.forEach(res => {
-          options.resourceBindings!.set(res.id, bindingIdx++);
-          options.resourceDefs!.set(res.id, res);
-        });
+      // Map resources used in this function to bindings starting from index 2
+      let bindingIdx = 2;
+      allResources.forEach(res => {
+        options.resourceBindings!.set(res.id, bindingIdx++);
+        options.resourceDefs!.set(res.id, res);
+      });
 
-        const code = generator.compile(ir, func.id, options);
-        // Use Global Cache
-        const pipeline = await GpuCache.getComputePipeline(this.device, code);
-        this.activePipelines.set(func.id, pipeline);
-      } catch (e: any) {
-        console.error(`Failed to compile shader ${func.id}:`);
-        console.error(e.message);
-        // If it was a compilation info error, we already printed it? No, creating module doesn't throw usually.
-        // Pipeline creation might.
-      }
+      const code = generator.compileFunctions(functions, func.id, options, { structs });
+      console.log(`[WebGpuExecutor] Generated WGSL for ${func.id}:\n${code}`);
+      // Use Global Cache
+      const pipeline = await GpuCache.getComputePipeline(this.device, code);
+      this.activePipelines.set(func.id, pipeline);
     }
   }
 
@@ -77,32 +72,41 @@ export class WebGpuExecutor {
   /**
    * Execute a "Compute" function on the GPU.
    */
-  async executeShader(funcId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue> = {}) {
-    const func = this.context.ir.functions.find(f => f.id === funcId);
-    if (!func) throw new Error(`Function '${funcId}' not found`);
-    if (func.type !== 'shader') throw new Error(`Function '${funcId}' is not a shader`);
+  async executeShader(func: FunctionDef, workgroups: [number, number, number], args: Record<string, RuntimeValue> = {}) {
+    const funcId = func.id;
 
     // 1. Get Pipeline
     const pipeline = this.activePipelines.get(funcId);
     if (!pipeline) {
-      console.warn(`[WebGpuExecutor] No pre-compiled pipeline for ${funcId}, falling back to CPU JIT`);
-      return this.executeShaderCpu(funcId, workgroups, args);
+      throw new Error(`[WebGpuExecutor] No pre-compiled pipeline for ${funcId}`);
     }
 
     // 2. Prepare Inputs Buffer
     let bindGroup: GPUBindGroup | undefined;
     const nonBuiltinInputs = func.inputs.filter(i => !i.builtin);
+    // WGSL rule: Runtime-sized arrays MUST be the last member of a struct.
+    // We MUST use the same sorting logic as WgslGenerator.
+    const sortedInputs = [...nonBuiltinInputs].sort((a, b) => {
+      const aIsArr = a.type.includes('[]') || (a.type.startsWith('array<') && !a.type.includes(','));
+      const bIsArr = b.type.includes('[]') || (b.type.startsWith('array<') && !b.type.includes(','));
+      if (aIsArr && !bIsArr) return 1;
+      if (!aIsArr && bIsArr) return -1;
+      return 0;
+    });
 
     const entries: GPUBindGroupEntry[] = [];
     const stagingBuffers: { id: string, staging: GPUBuffer, isTexture?: boolean }[] = [];
     let inputBuffer: GPUBuffer | undefined;
 
-    if (nonBuiltinInputs.length > 0) {
-      const bufferData = this.packArguments(nonBuiltinInputs, args);
+    if (sortedInputs.length > 0) {
+      const bufferData = this.packArguments(sortedInputs, args);
+      // Force STORAGE usage to match WgslGenerator's address space for Inputs struct.
+      const usage = (globalThis as any).GPUBufferUsage.STORAGE;
+
       inputBuffer = this.device.createBuffer({
         label: `${funcId}_inputs`,
         size: bufferData.byteLength,
-        usage: (globalThis as any).GPUBufferUsage.UNIFORM | (globalThis as any).GPUBufferUsage.COPY_DST
+        usage: usage | (globalThis as any).GPUBufferUsage.COPY_DST
       });
       this.device.queue.writeBuffer(inputBuffer, 0, bufferData);
 
@@ -110,13 +114,13 @@ export class WebGpuExecutor {
     }
 
     // 3. Create BindGroup with ONLY used resources
-    const usedResources = WgslGenerator.findUsedResources(func, this.context.ir);
+    const usedResources = WgslGenerator.findUsedResources(func, Array.from(this.resources.values()).map(r => r.def));
 
-    this.context.ir.resources.forEach((res, idx) => {
+    Array.from(this.resources.values()).forEach((state, idx) => {
+      const res = state.def;
       if (!usedResources.has(res.id)) return; // Skip unused resources for this shader
 
       const binding = 2 + idx;
-      const state = this.context.getResource(res.id);
 
       if (res.type === 'texture2d') {
         const tex = this.ensureTexture(res.id);
@@ -155,8 +159,8 @@ export class WebGpuExecutor {
     pass.end();
 
     // 5. Read-back (Important for conformance tests)
-    this.context.ir.resources.forEach(res => {
-      const state = this.context.getResource(res.id);
+    this.resources.forEach((state, id) => {
+      const res = state.def;
       if (res.type === 'texture2d') {
         const gpuTexture = (state as any).gpuTexture as GPUTexture;
         if (gpuTexture) {
@@ -190,7 +194,7 @@ export class WebGpuExecutor {
     // 6. Wait for results and sync to Context
     await Promise.all(stagingBuffers.map(async ({ id, staging, isTexture }) => {
       await staging.mapAsync((globalThis as any).GPUMapMode.READ);
-      const state = this.context.getResource(id);
+      const state = this.resources.get(id);
       if (state) {
         if (isTexture) {
           const data = new Uint8Array(staging.getMappedRange());
@@ -206,14 +210,17 @@ export class WebGpuExecutor {
           }
           state.data = reshaped;
         } else {
-          const data = new Float32Array(staging.getMappedRange());
+          const mapped = staging.getMappedRange();
+          const data = new Float32Array(mapped);
           const compCount = this.getComponentCount(state.def.dataType || 'float');
           if (compCount > 1) {
             const reshaped = [];
-            for (let i = 0; i < data.length; i += compCount) reshaped.push(Array.from(data.slice(i, i + compCount)));
+            for (let i = 0; i < data.length && reshaped.length < state.width; i += compCount) {
+              reshaped.push(Array.from(data.slice(i, i + compCount)));
+            }
             state.data = reshaped;
           } else {
-            state.data = Array.from(data);
+            state.data = Array.from(data).slice(0, state.width);
           }
         }
       }
@@ -234,10 +241,11 @@ export class WebGpuExecutor {
     vertexId: string,
     fragmentId: string,
     vertexCount: number,
-    pipelineDef: RenderPipelineDef
+    pipelineDef: RenderPipelineDef,
+    allResources: ResourceDef[]
   ) {
     // 1. Prepare Pipeline
-    const pipeline = await this.prepareRenderPipeline(vertexId, fragmentId, pipelineDef);
+    const pipeline = await this.prepareRenderPipeline(vertexId, fragmentId, pipelineDef, allResources);
 
     // 2. Prepare Target Texture
     const texture = this.ensureTexture(targetId);
@@ -293,7 +301,7 @@ export class WebGpuExecutor {
     await stagingBuffer.mapAsync((globalThis as any).GPUMapMode.READ);
     const data = new Uint8Array(stagingBuffer.getMappedRange());
 
-    const res = this.context.getResource(targetId);
+    const res = this.resources.get(targetId);
     if (res) {
       const reshaped = [];
       for (let y = 0; y < texture.height; y++) {
@@ -311,12 +319,11 @@ export class WebGpuExecutor {
     stagingBuffer.destroy();
   }
 
-  private async prepareRenderPipeline(vertexId: string, fragmentId: string, def: RenderPipelineDef): Promise<GPURenderPipeline> {
+  private async prepareRenderPipeline(vertexId: string, fragmentId: string, def: RenderPipelineDef, allResources: ResourceDef[]): Promise<GPURenderPipeline> {
     const key = `${vertexId}|${fragmentId}|${JSON.stringify(def)}`;
     if (this.activeRenderPipelines.has(key)) return this.activeRenderPipelines.get(key)!;
 
     const generator = new WgslGenerator();
-    const ir = this.context.ir;
 
     // Options (Need to populate resources for bindings)
     const options = {
@@ -337,7 +344,7 @@ export class WebGpuExecutor {
     // And resources starting at 2.
 
     let bindingIdx = 2;
-    ir.resources.forEach(res => {
+    allResources.forEach(res => {
       options.resourceBindings!.set(res.id, bindingIdx++);
       options.resourceDefs!.set(res.id, res);
     });
@@ -345,8 +352,9 @@ export class WebGpuExecutor {
     const vsOptions = { ...options, stage: 'vertex' as const, inputBinding: 1, excludeIds: [fragmentId] };
     const fsOptions = { ...options, stage: 'fragment' as const, inputBinding: 1, excludeIds: [vertexId] };
 
-    const vsCode = generator.compile(ir, vertexId, vsOptions);
-    const fsCode = generator.compile(ir, fragmentId, fsOptions);
+    // Note: compileFunctions should be used here too if dependencies are needed
+    const vsCode = generator.compileFunctions(this.allFunctions, vertexId, vsOptions, { structs: this.allStructs });
+    const fsCode = generator.compileFunctions(this.allFunctions, fragmentId, fsOptions, { structs: this.allStructs });
 
     const vsModule = this.device.createShaderModule({ code: vsCode, label: vertexId });
     const fsModule = this.device.createShaderModule({ code: fsCode, label: fragmentId });
@@ -388,7 +396,7 @@ export class WebGpuExecutor {
   }
 
   private ensureTexture(id: string): GPUTexture | undefined {
-    const state = this.context.getResource(id);
+    const state = this.resources.get(id);
     if (!state) return undefined;
     if (state.def.type !== 'texture2d') return undefined; // Only textures
 
@@ -468,10 +476,10 @@ export class WebGpuExecutor {
     // 'executeDraw' doesn't pass inputs yet.
     // Let's assume no inputs for now or fix later.
     // Just bind resources.
-    this.context.ir.resources.forEach((res, idx) => {
+    Array.from(this.resources.values()).forEach((state, idx) => {
+      const res = state.def;
       if (excludeIds.includes(res.id)) return;
       const binding = 2 + idx;
-      const state = this.context.getResource(res.id);
       // If buffer, bind buffer. If texture, bind texture view?
       // Generator assumes 'texture_2d<f32>' for texture resources?
       // If so, `resource: view`.
@@ -514,167 +522,122 @@ export class WebGpuExecutor {
     for (const input of inputs) {
       if (input.builtin) continue;
       const align = this.getAlignment(input.type);
-      const size = this.getSize(input.type);
       offset = Math.ceil(offset / align) * align;
-      packedData.push({ offset, value: args[input.id], type: input.type });
+      const val = args[input.id];
+      packedData.push({ offset, value: val, type: input.type });
+
+      const size = this.getPackedSize(input.type, val);
       offset += size;
     }
 
-    const buffer = new ArrayBuffer(Math.ceil(offset / 16) * 16);
+    // Storage buffer alignment for total size (usually 16)
+    const buffer = new ArrayBuffer(Math.max(16, Math.ceil(offset / 16) * 16));
     const view = new DataView(buffer);
     for (const item of packedData) {
+      console.log(`[WebGpuExecutor] Packing ${item.type} at offset ${item.offset}. Value:`, item.value);
       this.writeToBuffer(view, item.offset, item.value, item.type);
     }
+    console.log(`[WebGpuExecutor] Final buffer data:`, new Float32Array(buffer));
     return buffer;
   }
 
   private getAlignment(type: string): number {
-    if (type === 'float' || type === 'int' || type === 'bool' || type === 'f32' || type === 'i32') return 4;
-    if (type === 'float2' || type === 'vec2<f32>') return 8;
-    return 16; // vec3, vec4, mat, etc.
+    const t = type.toLowerCase();
+    if (t === 'float' || t === 'int' || t === 'bool' || t === 'f32' || t === 'i32' || t === 'u32') return 4;
+    if (t === 'float2' || t === 'vec2<f32>') return 8;
+    if (t === 'float3' || t === 'vec3<f32>' || t === 'float4' || t === 'vec4<f32>' || t === 'quat') return 16;
+    if (t === 'float3x3' || t === 'mat3x3<f32>' || t === 'float4x4' || t === 'mat4x4<f32>') return 16;
+
+    if (t.includes('[') || t.startsWith('array<')) {
+      const inner = t.replace('[]', '').replace('array<', '').split(',')[0].replace('>', '').trim();
+      return this.getAlignment(inner);
+    }
+
+    const struct = this.allStructs.find(s => s.id.toLowerCase() === type.toLowerCase());
+    if (struct) {
+      let maxAlign = 4;
+      for (const m of struct.members) maxAlign = Math.max(maxAlign, this.getAlignment(m.type));
+      return maxAlign;
+    }
+    return 16;
   }
 
-  private getSize(type: string): number {
-    if (type === 'float' || type === 'int' || type === 'bool' || type === 'f32' || type === 'i32') return 4;
-    if (type === 'float2' || type === 'vec2<f32>') return 8;
-    if (type === 'float3' || type === 'vec3<f32>' || type === 'float4' || type === 'vec4<f32>') return 16;
-    if (type === 'float3x3' || type === 'mat3x3<f32>') return 48;
-    if (type === 'float4x4' || type === 'mat4x4<f32>') return 64;
-    return 4;
+  private getPackedSize(type: string, val?: RuntimeValue): number {
+    const t = type.toLowerCase();
+    if (t === 'float' || t === 'int' || t === 'bool' || t === 'f32' || t === 'i32' || t === 'u32') return 4;
+    if (t === 'float2' || t === 'vec2<f32>') return 8;
+    if (t === 'float3' || t === 'vec3<f32>') return 12;
+    if (t === 'float4' || t === 'vec4<f32>' || t === 'quat') return 16;
+    if (t === 'float3x3' || t === 'mat3x3<f32>') return 48; // 3 x 16-stride columns
+    if (t === 'float4x4' || t === 'mat4x4<f32>') return 64; // 4 x 16-stride columns
+
+    if (t.includes('[') || t.startsWith('array<')) {
+      if (Array.isArray(val)) {
+        const inner = t.replace('[]', '').replace('array<', '').split(',')[0].replace('>', '').trim();
+        const elemSize = this.getPackedSize(inner);
+        const elemAlign = this.getAlignment(inner);
+        const stride = Math.ceil(elemSize / elemAlign) * elemAlign;
+        return val.length * stride;
+      }
+      return 0;
+    }
+
+    const struct = this.allStructs.find(s => s.id.toLowerCase() === t);
+    if (struct) {
+      let structOffset = 0;
+      let maxAlign = 4;
+      for (const m of struct.members) {
+        const mAlign = this.getAlignment(m.type);
+        maxAlign = Math.max(maxAlign, mAlign);
+        structOffset = Math.ceil(structOffset / mAlign) * mAlign;
+        structOffset += this.getPackedSize(m.type);
+      }
+      return Math.ceil(structOffset / maxAlign) * maxAlign;
+    }
+    return 16;
   }
 
   private writeToBuffer(view: DataView, offset: number, val: RuntimeValue, type: string) {
+    const t = type.toLowerCase();
     if (typeof val === 'number') {
-      if (type === 'int' || type === 'i32') view.setInt32(offset, val, true);
+      if (t === 'int' || t === 'i32') view.setInt32(offset, val, true);
+      else if (t === 'u32' || t === 'uint') view.setUint32(offset, val, true);
       else view.setFloat32(offset, val, true);
     } else if (typeof val === 'boolean') {
-      view.setInt32(offset, val ? 1 : 0, true);
+      view.setUint32(offset, val ? 1 : 0, true);
     } else if (Array.isArray(val)) {
-      if (type.startsWith('mat')) {
-        const dim = type.includes('3x3') ? 3 : 4;
+      if (t.startsWith('mat') || (t.startsWith('float') && t.includes('x'))) {
+        const dim = (t.includes('3x3') || t.includes('3')) ? 3 : 4;
         for (let c = 0; c < dim; c++) {
           for (let r = 0; r < dim; r++) {
             view.setFloat32(offset + (c * 16) + (r * 4), val[c * dim + r] as number, true);
           }
         }
+      } else if (t.includes('[') || t.startsWith('array<')) {
+        const inner = type.replace('[]', '').replace('array<', '').split(',')[0].replace('>', '').trim();
+        const elemSize = this.getPackedSize(inner);
+        const elemAlign = this.getAlignment(inner);
+        const stride = Math.ceil(elemSize / elemAlign) * elemAlign;
+        for (let i = 0; i < val.length; i++) {
+          this.writeToBuffer(view, offset + (i * stride), val[i] as RuntimeValue, inner);
+        }
       } else {
+        // float2/3/4
         for (let i = 0; i < val.length; i++) {
           view.setFloat32(offset + (i * 4), val[i] as number, true);
         }
       }
-    }
-  }
-
-  private executeShaderCpu(funcId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue> = {}) {
-    const func = this.context.ir.functions.find(f => f.id === funcId);
-    if (!func) throw new Error(`Function '${funcId}' not found`);
-
-    const jit = new CpuJitCompiler();
-    const compiled = jit.compile(func);
-    let globalId = [0, 0, 0];
-
-    // Set variables in context for function arguments
-    this.context.pushFrame(funcId);
-    for (const [key, val] of Object.entries(args)) {
-      if (key !== 'func' && key !== 'dispatch' && key !== 'comment' && typeof val === 'string') {
-        throw new Error(`Runtime Error: String marshalling to shader not supported (arg: ${key})`);
-      }
-      this.context.setVar(key, val);
-    }
-
-    const shaderGlobals = {
-      callOp: (op: string, args: any) => {
-        const handler = OpRegistry[op as BuiltinOp];
-        if (!handler) throw new Error(`Op not found: ${op}`);
-        return handler(this.context, args);
-      },
-      resolveString: (val: string) => {
-        const v = this.context.getVar(val);
-        if (v !== undefined) return v;
-        try {
-          return this.context.getInput(val);
-        } catch {
-          return val;
-        }
-      },
-      resolveVar: (val: string) => {
-        // Builtins
-        if (val === 'GlobalInvocationID') return [...globalId];
-
-        const v = this.context.getVar(val);
-        if (v !== undefined) return v;
-        try {
-          return this.context.getInput(val);
-        } catch {
-          throw new Error(`Runtime Error: Variable '${val}' is not defined`);
-        }
-      },
-      resize: (resId: string, size: number | number[], format?: string | number, clear?: number | number[]) => {
-        // Same logic as HostExecutor
-        const res = this.context.getResource(resId);
-        if (res.def.type === 'buffer') {
-          const newSize = typeof size === 'number' ? size : size[0];
-          if (res.data && res.data.length === newSize) return;
-          res.width = newSize;
-          res.data = new Array(newSize).fill(0);
-          if (this.context.logAction) {
-            this.context.logAction('resize', resId, { size: newSize, format: 'buffer' });
-          }
-        } else if (res.def.type === 'texture2d') {
-          const width = Array.isArray(size) ? size[0] : size as number;
-          const height = Array.isArray(size) ? size[1] : 1;
-          if (res.width !== width || res.height !== height) {
-            res.width = width;
-            res.height = height;
-            if (res.def.persistence.clearOnResize) {
-              const v = res.def.persistence.clearValue ?? [0, 0, 0, 0];
-              res.data = new Array(width * height).fill(v);
-            }
-            if (this.context.logAction) {
-              this.context.logAction('resize', resId, { size: [width, height], format: res.def.format });
-            }
-          }
-
-          if (format !== undefined) {
-            if (typeof format === 'number') {
-              const strFmt = TextureFormatFromId[format];
-              if (strFmt) res.def.format = strFmt;
-            } else {
-              res.def.format = format as any;
-            }
-          }
-
-          if (clear !== undefined) {
-            const v = clear;
-            res.data = new Array(width * height).fill(v);
-          }
-        }
-      },
-      bufferLoad: (bufId: string, idx: number) => {
-        const res = this.context.getResource(bufId);
-        if (!res.data) return 0;
-        if (idx < 0 || idx >= res.width) throw new Error('Runtime Error: buffer_load OOB');
-        return res.data[idx] ?? 0;
-      },
-      callFunc: (targetId: string, args: any) => {
-        throw new Error('Recursion in shader emulation not fully implemented');
-      },
-      dispatch: (targetId: string, wg: any) => {
-        return this.executeShader(targetId, wg);
-      }
-    };
-
-    const [gx, gy, gz] = workgroups;
-    // Emulate Dispatch Loop
-    for (let z = 0; z < gz; z++) {
-      for (let y = 0; y < gy; y++) {
-        for (let x = 0; x < gx; x++) {
-          globalId = [x, y, z];
-          compiled(this.context, this.context.resources, shaderGlobals);
+    } else if (typeof val === 'object' && val !== null) {
+      const struct = this.allStructs.find(s => s.id.toLowerCase() === t);
+      if (struct) {
+        let memberOffset = 0;
+        for (const m of struct.members) {
+          const mAlign = this.getAlignment(m.type);
+          memberOffset = Math.ceil(memberOffset / mAlign) * mAlign;
+          this.writeToBuffer(view, offset + memberOffset, (val as any)[m.name], m.type);
+          memberOffset += this.getPackedSize(m.type);
         }
       }
     }
-
-    this.context.popFrame();
   }
 }

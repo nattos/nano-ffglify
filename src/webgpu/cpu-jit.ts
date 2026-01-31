@@ -1,36 +1,51 @@
-import { FunctionDef, Node, Edge } from '../ir/types';
+import { FunctionDef, Node } from '../ir/types';
+import { RuntimeGlobals } from './host-interface';
 
 /**
- * CPU JIT Compiler
- * Compiles IR Functions into "ASM.js-like" flat JavaScript for high-performance execution.
+ * CPU JIT Compiler for WebGPU Host
+ * Compiles IR Functions into flat JavaScript for high-performance execution.
  */
 export class CpuJitCompiler {
 
-  compile(func: FunctionDef): Function {
+  /**
+   * Compiles an IR function into a native JS function.
+   * Signature: (resources: Map<string, ResourceState>, inputs: Map<string, RuntimeValue>, globals: RuntimeGlobals) => Promise<RuntimeValue>
+   */
+  compile(func: FunctionDef, allFunctions: FunctionDef[] = []): Function {
     const lines: string[] = [];
 
     lines.push(`"use strict";`);
     lines.push(`// Compiled Function: ${func.id}`);
 
+    const sanitizeId = (id: string) => `v_${id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+    const nodeResId = (id: string) => `n_${id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+
     // 1. Local Variables
     // Declared at top level of function scope
-    const locVars = func.localVars.map(v => `let l_${v.id} = ${JSON.stringify(v.initialValue ?? 0)};`);
-    if (locVars.length) {
+    if (func.localVars.length) {
       lines.push(`// Locals`);
-      lines.push(...locVars);
+      for (const v of func.localVars) {
+        const init = v.initialValue !== undefined ? JSON.stringify(v.initialValue) : '0';
+        lines.push(`let ${sanitizeId(v.id)} = ${init};`);
+      }
     }
 
-
-
-    // 2. Result Variables for Executable Nodes that return data (e.g. call_func)
-    // We declare them at top level to ensure scope visibility.
+    // 2. Result Variables for all nodes that return data
     const resultVars = func.nodes
-      .filter(n => n.op === 'call_func' || n.op === 'array_set' || n.op === 'array_construct' || n.op === 'struct_construct')
-      .map(n => `let r_${n.id};`);
+      .filter(n => this.hasResult(n.op))
+      .map(n => `let ${nodeResId(n.id)};`);
 
     if (resultVars.length) {
       lines.push(`// Node Results`);
       lines.push(...resultVars);
+    }
+
+    // 2.5. Evaluate Pure Nodes (those not in the execution chain)
+    lines.push(`// Pure Nodes`);
+    for (const node of func.nodes) {
+      if (this.hasResult(node.op) && !this.isExecutable(node.op)) {
+        lines.push(`${nodeResId(node.id)} = ${this.compileExpression(node, func, sanitizeId, nodeResId, allFunctions, true)};`);
+      }
     }
 
     // 3. Find Entry Nodes
@@ -41,15 +56,14 @@ export class CpuJitCompiler {
 
     // 4. Emit Body
     for (const entry of entryNodes) {
-      this.emitChain(entry, func, lines, new Set());
+      this.emitChain(entry, func, lines, new Set(), sanitizeId, nodeResId, allFunctions);
     }
 
-
     const body = lines.join('\n');
-    // console.log("--- JIT CODE ---\n", body);
     try {
+      // Compiled functions are always async since they might dispatch GPU shaders
       const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
-      return new AsyncFunction('ctx', 'resources', 'globals', body);
+      return new AsyncFunction('resources', 'variables', 'globals', 'state', body);
     } catch (e) {
       console.error("JIT Compilation Failed:\n", body);
       throw e;
@@ -57,184 +71,132 @@ export class CpuJitCompiler {
   }
 
   private isExecutable(op: string) {
-    return op.startsWith('cmd_') || op.startsWith('flow_') || op.startsWith('var_') ||
-      op.startsWith('buffer_') || op.startsWith('texture_') || op === 'call_func' || op === 'func_return' || op === 'array_set' ||
-      op === 'array_construct' || op === 'struct_construct';
+    return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
+      op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set';
   }
 
-  private emitChain(startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>) {
+  private hasResult(op: string) {
+    const valueOps = [
+      'float', 'int', 'uint', 'bool',
+      'float2', 'float3', 'float4',
+      'float3x3', 'float4x4',
+      'mat_mul', 'mat_extract',
+      'static_cast_float', 'static_cast_int', 'static_cast_uint', 'static_cast_bool',
+      'struct_construct', 'struct_extract',
+      'array_construct', 'array_extract', 'array_set',
+      'var_get', 'buffer_load', 'texture_load', 'call_func'
+    ];
+    return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
+  }
+
+  private emitChain(startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, allFunctions: FunctionDef[]) {
     let curr: Node | undefined = startNode;
 
     while (curr) {
-      if (visited.has(curr.id) && curr.op !== 'flow_loop') { // Allow loops to be re-visited if we were doing true CFG logic, but for simple emission we stop.
-        // HOWEVER, loops handle their own body. Re-visiting usually implies cycle or merge.
-        // For JIT of structured graph, merge points are tricky.
-        // But our IR uses `exec_out` -> ...
-        // If two branches merge, they point to same node.
-        // We need to detect if node has multiple incoming.
-        // MVP: Don't handle complex merges (diamond problem) optimally (code duplication) unless structured.
-        lines.push(`// Re-visiting ${curr.id} (possible merge point execution)`);
-        // Break if visited? Or duplicate code?
-        // Duplicate is safer for now.
+      if (visited.has(curr.id) && curr.op !== 'flow_loop') {
+        lines.push(`// Merge point: ${curr.id}`);
       }
       visited.add(curr.id);
 
       if (curr.op === 'flow_branch') {
-        this.emitBranch(curr, func, lines, visited);
-        return; // Execution continues in branches
+        this.emitBranch(curr, func, lines, visited, sanitizeId, nodeResId, allFunctions);
+        return;
       } else if (curr.op === 'flow_loop') {
-        this.emitLoop(curr, func, lines, visited);
-        // Loop handles continuation via 'exec_completed'
-        // But emitLoop should call emitChain for 'exec_completed'
+        this.emitLoop(curr, func, lines, visited, sanitizeId, nodeResId, allFunctions);
         return;
       } else if (curr.op === 'func_return') {
-        lines.push(`return ${this.resolveArg(curr, 'val', func)};`);
+        lines.push(`return ${this.resolveArg(curr, 'val', func, sanitizeId, nodeResId, allFunctions)};`);
         return;
       } else {
-        this.emitNode(curr, func, lines);
+        this.emitNode(curr, func, lines, sanitizeId, nodeResId, allFunctions);
       }
 
-      // Next Node
       curr = this.getNextNode(curr, 'exec_out', func);
     }
   }
 
-  private emitBranch(node: Node, func: FunctionDef, lines: string[], visited: Set<string>) {
-    const cond = this.resolveArg(node, 'cond', func);
+  private emitBranch(node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, allFunctions: FunctionDef[]) {
+    const cond = this.resolveArg(node, 'cond', func, sanitizeId, nodeResId, allFunctions);
     lines.push(`if (${cond}) {`);
     const trueNode = this.getNextNode(node, 'exec_true', func);
-    if (trueNode) this.emitChain(trueNode, func, lines, new Set(visited));
+    if (trueNode) this.emitChain(trueNode, func, lines, new Set(visited), sanitizeId, nodeResId, allFunctions);
     lines.push(`} else {`);
     const falseNode = this.getNextNode(node, 'exec_false', func);
-    if (falseNode) this.emitChain(falseNode, func, lines, new Set(visited));
+    if (falseNode) this.emitChain(falseNode, func, lines, new Set(visited), sanitizeId, nodeResId, allFunctions);
     lines.push(`}`);
   }
 
-  private emitLoop(node: Node, func: FunctionDef, lines: string[], visited: Set<string>) {
-    const start = this.resolveArg(node, 'start', func);
-    const end = this.resolveArg(node, 'end', func);
-    // Loop variable isn't explicitly declared in IR Node usually?
-    // Interpreter sets `LOOP_INDEX` in context.
-    // We should use a temp JS var.
-    const loopVar = `loop_${node.id}`;
+  private emitLoop(node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, allFunctions: FunctionDef[]) {
+    const start = this.resolveArg(node, 'start', func, sanitizeId, nodeResId, allFunctions);
+    const end = this.resolveArg(node, 'end', func, sanitizeId, nodeResId, allFunctions);
+    const loopVar = `loop_${node.id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
     lines.push(`for (let ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
-    // Expose loop variable to body?
-    // `loop_index` op reads it. We need a way to map `loop_index` op to this var.
-    // We can use a map `nodeId -> expression`.
-    // But `loop_index` takes `loop` ID as arg.
-    // Implementation of `loop_index`: return `loop_${loopId}`.
 
     const bodyNode = this.getNextNode(node, 'exec_body', func);
-    if (bodyNode) this.emitChain(bodyNode, func, lines, new Set(visited));
+    if (bodyNode) this.emitChain(bodyNode, func, lines, new Set(visited), sanitizeId, nodeResId, allFunctions);
     lines.push(`}`);
 
-    // Continuation
     const nextNode = this.getNextNode(node, 'exec_completed', func);
-    if (nextNode) this.emitChain(nextNode, func, lines, visited);
+    if (nextNode) this.emitChain(nextNode, func, lines, visited, sanitizeId, nodeResId, allFunctions);
   }
 
-  private emitNode(node: Node, func: FunctionDef, lines: string[]) {
-    // Op Handling
+  private emitNode(node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string) => string, nodeResId: (id: string) => string, allFunctions: FunctionDef[]) {
     if (node.op === 'cmd_dispatch') {
       const targetId = node['func'];
-      // Dispatch args
-      // 'dispatch' prop might be an array literal or reference?
-      // Node prop is usually literal array in IR for now.
-      // If it's dynamic, we need `resolveArg`.
-      // Let's assume literal for MVP or resolve it.
-      // If `dispatch` is input, resolveArg handles it but it returns a string expression.
-      // We probably need to resolve x, y, z separately if they are dynamic.
-      // Current IR `cmd_dispatch` has `dispatch: [x, y, z]`.
-      // If they are numbers, easy.
-
-      // MVP: Assume literal array or default [1,1,1]
       let dimCode = '[1, 1, 1]';
-      if (Array.isArray(node['dispatch'])) {
-        dimCode = JSON.stringify(node['dispatch']);
+      if (Array.isArray(node['dispatch'])) dimCode = JSON.stringify(node['dispatch']);
+      lines.push(`await globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, allFunctions)});`);
+    }
+    else if (node.op === 'call_func') {
+      const targetId = node['func'];
+      const targetFunc = allFunctions.find(f => f.id === targetId);
+      if (targetFunc?.type === 'shader') {
+        lines.push(`await globals.dispatch('${targetId}', [1, 1, 1], ${this.generateArgsObject(node, func, sanitizeId, nodeResId, allFunctions)});`);
+      } else {
+        lines.push(`${nodeResId(node.id)} = await globals.callOp('call_func', ${this.generateArgsObject(node, func, sanitizeId, nodeResId, allFunctions)});`);
       }
-
-      lines.push(`await globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func)});`);
     }
     else if (node.op === 'cmd_draw') {
       const target = node['target'];
       const vertex = node['vertex'];
       const fragment = node['fragment'];
-      const count = this.resolveArg(node, 'count', func);
+      const count = this.resolveArg(node, 'count', func, sanitizeId, nodeResId, allFunctions);
       const pipeline = JSON.stringify(node['pipeline'] || {});
       lines.push(`await globals.draw('${target}', '${vertex}', '${fragment}', ${count}, ${pipeline});`);
     }
     else if (node.op === 'cmd_resize_resource') {
       const resId = node['resource'];
-      const size = this.resolveArg(node, 'size', func);
-
+      const size = this.resolveArg(node, 'size', func, sanitizeId, nodeResId, allFunctions);
       const resolveRaw = (key: string) => {
         const edge = func.edges.find(e => e.to === node.id && e.portIn === key && e.type === 'data');
-        if (edge || node[key] !== undefined) return this.resolveArg(node, key, func);
+        if (edge || node[key] !== undefined) return this.resolveArg(node, key, func, sanitizeId, nodeResId, allFunctions);
         return 'undefined';
       };
       const format = resolveRaw('format');
-      const clear = resolveRaw('clear'); // TODO: Check if 'clear' implies vector or scalar
-
+      const clear = resolveRaw('clear');
       lines.push(`globals.resize('${resId}', ${size}, ${format}, ${clear});`);
     }
-    else if (node.op === 'array_construct' || node.op === 'struct_construct') {
-      lines.push(`r_${node.id} = globals.callOp('${node.op}', ${this.generateArgsObject(node, func)});`);
-    }
-    else if (node.op === 'call_func') {
-      const targetId = node['func'];
-      lines.push(`r_${node.id} = globals.callFunc('${targetId}', ${this.generateArgsObject(node, func)});`);
-    }
-    else if (node.op === 'array_set') {
-      lines.push(`r_${node.id} = globals.callOp('array_set', ${this.generateArgsObject(node, func)});`);
-    }
-    else if (node.op === 'texture_store') {
-      lines.push(`globals.callOp('texture_store', ${this.generateArgsObject(node, func)});`);
-    }
-    else if (node.op === 'func_return') {
-      const val = this.resolveArg(node, 'value', func);
-      lines.push(`return ${val};`);
-    }
-
     else if (node.op === 'var_set') {
-      const val = this.resolveArg(node, 'val', func);
-      const varId = node['var']; // String ID
+      const val = this.resolveArg(node, 'val', func, sanitizeId, nodeResId, allFunctions);
+      const varId = node['var'];
       if (func.localVars.some(v => v.id === varId)) {
-        lines.push(`l_${varId} = ${val};`);
-        lines.push(`ctx.setVar('${varId}', l_${varId});`);
+        lines.push(`${sanitizeId(varId)} = ${val};`);
       } else {
-        lines.push(`ctx.setVar('${varId}', ${val});`);
+        lines.push(`variables.set('${varId}', ${val});`);
       }
     }
-    else if (node.op === 'var_get') {
-      // usually purely data node, handled by resolution.
-      // But if it is in execution chain? No, it's data.
-      // Only executable nodes are in chain.
-    }
     else if (node.op === 'buffer_store') {
-      const bufferId = node['buffer']; // We need mechanism to access buffer by ID.
-      // `resources[bufferId]`?
-      // We pass `resources` map to compiled function.
-      // `ctx.getResource(id)`
-      // Optimization: `resources['${bufferId}'].data[index] = val;`
-      const idx = this.resolveArg(node, 'index', func);
-      const val = this.resolveArg(node, 'value', func);
-      // Assuming ctx is passed. Using ctx for resources is slower than direct map.
-      // But `resources` arg can be a pre-built map of TypedArrays.
-      lines.push(`ctx.getResource('${bufferId}').data[${idx}] = ${val};`);
+      const bufferId = node['buffer'];
+      const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, allFunctions);
+      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, allFunctions);
+      lines.push(`resources.get('${bufferId}').data[${idx}] = ${val};`);
     }
-    else if (node.op === 'math_add') {
-      // Calculation node.
-      // In Interpreter, `math_add` IS executable?
-      // WAIT. In our IR, `math_add` is usually PURE DATA.
-      // It is NOT in the execution chain execution edges.
-      // It is pulled by `var_set` or `buffer_store`.
-      // So `emitNode` is strictly for side-effect nodes (store, set, call).
-      // Calculation is handled in `resolveArg` recursively!
-      // EXCEPT if we want to JIT calculations into temp variables to avoid re-calc.
-      // For MVP, inline calculations.
+    else if (this.hasResult(node.op)) {
+      // Calculation node in execution chain
+      lines.push(`${nodeResId(node.id)} = await globals.callOp('${node.op}', ${this.generateArgsObject(node, func, sanitizeId, nodeResId, allFunctions)});`);
     }
     else {
-      lines.push(`// Unknown Executable Op: ${node.op}`);
+      lines.push(`// Not implemented or pure node in chain: ${node.op}`);
     }
   }
 
@@ -244,118 +206,95 @@ export class CpuJitCompiler {
     return func.nodes.find(n => n.id === edge.to);
   }
 
-  private resolveArg(node: Node, key: string, func: FunctionDef): string {
-    // 1. Incoming Edges (Highest Priority)
+  private resolveArg(node: Node, key: string, func: FunctionDef, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, allFunctions: FunctionDef[]): string {
     const edge = func.edges.find(e => e.to === node.id && e.portIn === key && e.type === 'data');
     if (edge) {
       const source = func.nodes.find(n => n.id === edge.from);
-      if (source) return this.compileExpression(source, func);
+      if (source) return this.compileExpression(source, func, sanitizeId, nodeResId, allFunctions);
     }
 
-    // 2. Literal Properties
     if (node[key] !== undefined) {
       const val = node[key];
-      if (typeof val === 'string' && key !== 'var' && key !== 'func') {
-        // Local Variable?
-        if (func.localVars.some(v => v.id === val)) {
-          return `l_${val}`;
-        }
-
-        // Node Reference?
+      if (typeof val === 'string' && key !== 'var' && key !== 'func' && key !== 'resource' && key !== 'buffer') {
+        if (func.localVars.some(v => v.id === val)) return sanitizeId(val);
         const targetNode = func.nodes.find(n => n.id === val);
-        if (targetNode && targetNode.id !== node.id) {
-          return this.compileExpression(targetNode, func);
-        }
-
-        // Input?
-        // We generally assume strings not matching locals are Inputs.
-        // But some ops take string literals (e.g. swizzle channels).
-        // The Interpreter tries to resolve input, suppresses error if missing, and uses literal.
+        if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, allFunctions);
         return `globals.resolveString('${val}')`;
       }
       return JSON.stringify(val);
     }
-
-    return '0'; // Default
+    return '0';
   }
 
-  private isEdgeConnection(node: Node, key: string) {
-    // Check if there's an incoming edge overriding this prop
-    // Actually resolveArg logic covers this Priority (Edge > Prop?).
-    // Interpreter: Prop if undefined, else Edge? No.
-    // Interpreter: Prop is used if Edge NOT present.
-    // My logic above handles it correctly (Check Prop, but wait... Edge should override Prop?)
-    // Actually `mixinNodeProperties` says: "If args[key] is undefined" (initially empty).
-    // It populates from Props.
-    // Then overwrites from Edges.
-    // So Edge > Prop.
-    return false; // Helper not really needed if we change order.
-  }
-
-  private compileExpression(node: Node, func: FunctionDef): string {
-    // Recursive expression compilation
-
+  private compileExpression(node: Node, func: FunctionDef, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, allFunctions: FunctionDef[], forceEmit: boolean = false): string {
+    if (!forceEmit && this.hasResult(node.op)) {
+      return nodeResId(node.id);
+    }
     if (node.op === 'var_get') {
       const varId = node['var'];
-      if (func.localVars.some(v => v.id === varId)) {
-        return `l_${varId}`;
-      }
-      return `globals.resolveVar('${varId}')`;
+      if (func.localVars.some(v => v.id === varId)) return sanitizeId(varId);
+      return `(variables.has('${varId}') ? variables.get('${varId}') : globals.resolveVar('${varId}'))`;
     }
-    if (node.op === 'literal') {
-      return `${node['val']}`;
-    }
+    if (node.op === 'literal') return JSON.stringify(node['val']);
     if (node.op === 'loop_index') {
       const loopId = node['loop'];
-      return `loop_${loopId}`;
+      return `loop_${loopId.replace(/[^a-zA-Z0-9_]/g, '_')}`;
     }
-
     if (node.op === 'buffer_load') {
       const bufferId = node['buffer'];
-      return `globals.bufferLoad('${bufferId}', ${this.resolveArg(node, 'index', func)})`;
-    }
-    if (node.op === 'call_func' || node.op === 'array_set' || node.op === 'array_construct' || node.op === 'struct_construct') {
-      return `r_${node.id}`;
+      const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, allFunctions);
+      return `(resources.get('${bufferId}') ? resources.get('${bufferId}').data[${idx}] : 0)`;
     }
 
-    if (node.op.startsWith('texture_') || node.op.startsWith('resource_')) {
-      return `globals.callOp('${node.op}', ${this.generateArgsObject(node, func)})`;
-    }
-    if (node.op === 'array_set') {
-      return `r_${node.id}`;
-    }
-
-    // Generic Op Handling via Registry
-    return `globals.callOp('${node.op}', ${this.generateArgsObject(node, func)})`;
+    // Generic Built-in Op
+    return `globals.callOp('${node.op}', ${this.generateArgsObject(node, func, sanitizeId, nodeResId, allFunctions)})`;
   }
 
-  private generateArgsObject(node: Node, func: FunctionDef): string {
+  private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, allFunctions: FunctionDef[]): string {
     const parts: string[] = [];
 
-    // 1. Edges targeting this node
+    if (node.op === 'call_func' || node.op === 'cmd_dispatch') {
+      const targetId = node['func'];
+      const targetFunc = allFunctions.find(f => f.id === targetId);
+      const posArgs = node['args'];
+      if (targetFunc && Array.isArray(posArgs)) {
+        posArgs.forEach((argVal, idx) => {
+          const input = targetFunc.inputs[idx];
+          if (input) {
+            // Positional arg might be a node ID or literal
+            let expr = '0';
+            if (typeof argVal === 'string') {
+              if (func.localVars.some(v => v.id === argVal)) expr = sanitizeId(argVal);
+              else {
+                const targetNode = func.nodes.find(n => n.id === argVal);
+                if (targetNode) expr = this.compileExpression(targetNode, func, sanitizeId, nodeResId, allFunctions);
+                else {
+                  // Fallback to resolving from globals/inputs
+                  expr = `(variables.has('${argVal}') ? variables.get('${argVal}') : globals.resolveVar('${argVal}'))`;
+                }
+              }
+            } else {
+              expr = JSON.stringify(argVal);
+            }
+            parts.push(`'${input.id}': ${expr}`);
+          }
+        });
+        return `{ ${parts.join(', ')} }`;
+      }
+    }
+
     const inputs = func.edges.filter(e => e.to === node.id && e.type === 'data');
     const inputKeys = new Set(inputs.map(e => e.portIn));
 
     for (const edge of inputs) {
       const src = func.nodes.find(n => n.id === edge.from);
-      if (src) {
-        parts.push(`${edge.portIn}: ${this.compileExpression(src, func)}`);
-      }
+      if (src) parts.push(`'${edge.portIn}': ${this.compileExpression(src, func, sanitizeId, nodeResId, allFunctions)}`);
     }
 
-    // 2. Literal Props (if not in edges)
     for (const key of Object.keys(node)) {
       if (['id', 'op', 'metadata', 'const_data'].includes(key)) continue;
-      if (inputKeys.has(key)) continue; // Edge overrides prop
-
-      // resolveArg logic handles resolving literals, but compileExpression/resolveArg handles specific keys.
-      // Here we just want the value.
-      // If it's a string looking like local var?
-      // reused `resolveArg` logic?
-      // Yes: `resolveArg` handles all this.
-      // So we just iterate keys?
-      // But `resolveArg` needs a `key`.
-      parts.push(`${key}: ${this.resolveArg(node, key, func)}`);
+      if (inputKeys.has(key)) continue;
+      parts.push(`'${key}': ${this.resolveArg(node, key, func, sanitizeId, nodeResId, allFunctions)}`);
     }
 
     return `{ ${parts.join(', ')} }`;

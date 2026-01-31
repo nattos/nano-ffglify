@@ -1,44 +1,17 @@
-import { IRDocument, ResourceDef, DataType, ResourceSize, TextureFormat } from '../ir/types';
+import { IRDocument, ResourceDef, TextureFormat } from '../ir/types';
+import { RuntimeValue, ResourceState, ActionLogEntry } from '../ir/resource-store';
 
-// ------------------------------------------------------------------
-// Runtime Values
-// ------------------------------------------------------------------
-// ------------------------------------------------------------------
-// Runtime Values
-// ------------------------------------------------------------------
-export type ScalarValue = number | boolean | string;
-export type VectorValue = number[]; // Supports float2, float3, float4, float3x3, float4x4
-export type MatrixValue = number[]; // Alias for clarity
-export type ArrayValue = (number | boolean | string | number[] | Record<string, any>)[];
-
-// Use an interface to break the circular alias cycle if needed, or simplied recursion
-export interface StructValue { [key: string]: RuntimeValue };
-export type RuntimeValue = ScalarValue | VectorValue | MatrixValue | StructValue | ArrayValue;
+export { RuntimeValue, VectorValue, ScalarValue, MatrixValue, ArrayValue, StructValue, ResourceState, ActionLogEntry } from '../ir/resource-store';
 
 // ------------------------------------------------------------------
 // State
 // ------------------------------------------------------------------
-
-export interface ResourceState {
-  def: ResourceDef;
-  // In the simulator, a "buffer" is just an array of runtime values
-  // A "texture" might just be metadata for now, or a simple 2D array
-  data?: RuntimeValue[];
-  width: number;
-  height: number;
-}
 
 export interface StackFrame {
   name: string; // Function ID or Block
   vars: Map<string, RuntimeValue>;
   loopIndices: Map<string, number>;
   nodeResults: Map<string, RuntimeValue>;
-}
-
-export interface ActionLogEntry {
-  type: 'dispatch' | 'draw' | 'resize' | 'log';
-  target?: string;
-  payload?: any;
 }
 
 export class EvaluationContext {

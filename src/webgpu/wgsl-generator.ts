@@ -1,5 +1,5 @@
 
-import { FunctionDef, Node, Edge, DataType, ResourceDef, IRDocument } from '../ir/types';
+import { FunctionDef, Node, Edge, DataType, ResourceDef, IRDocument, StructDef } from '../ir/types';
 
 /**
  * WGSL Generator
@@ -17,98 +17,143 @@ export interface WgslOptions {
   inputBinding?: number; // Binding for shader inputs (uniform)
   stage?: 'compute' | 'vertex' | 'fragment';
   excludeIds?: string[];
+  entryPointId?: string; // Cache entry point ID for resolution
+  structs?: StructDef[]; // Optional structs for dependency resolution
 }
 
 export class WgslGenerator {
   private helpers = new Set<string>();
   private allUsedBuiltins = new Set<string>();
 
-  compile(ir: IRDocument, entryPointId: string, options: WgslOptions = {}): string {
+  /**
+   * Compiles IR Functions into WGSL shader code.
+   * @param functions All functions in the IR (for resolution of call_func)
+   * @param entryPointId The ID of the function to use as the entry point
+   * @param options Compilation options
+   * @param ir Optional partial IR document for additional metadata (structs, resources)
+   */
+  compileFunctions(functions: FunctionDef[], entryPointId: string, options: WgslOptions = {}, ir?: Partial<IRDocument>): string {
+    options.entryPointId = entryPointId; // Ensure options has the entry point ID
+    const entryFunc = functions.find(f => f.id === entryPointId);
+    if (!entryFunc) throw new Error(`Entry point function '${entryPointId}' not found`);
+    options.entryPointId = entryPointId;
+
     this.helpers.clear();
     this.allUsedBuiltins.clear();
 
-    ir.functions.forEach(f => {
+    const fullIr: IRDocument = {
+      version: '1.0',
+      meta: { name: 'generated' },
+      entryPoint: entryPointId,
+      inputs: [],
+      resources: Array.from(options.resourceDefs?.values() || []),
+      functions,
+      structs: ir?.structs || [],
+      ...ir
+    };
+
+    // 1. Map built-ins across all potential functions
+    functions.forEach(f => {
       f.nodes.forEach(n => {
         if (n.op === 'builtin_get') this.allUsedBuiltins.add(n['name']);
       });
     });
 
-    const lines: string[] = []; // For structs, texture samplers, and non-entry functions
-    const entryPointLines: string[] = []; // For the entry point function itself
-    const entryFunc = ir.functions.find(f => f.id === entryPointId);
-    if (!entryFunc) throw new Error(`Entry point function '${entryPointId}' not found`);
+    const lines: string[] = []; // Top-level things: structs, samplers
+    const functionLines: string[] = []; // Actual function code
 
-    // Generate Structs
-    this.generateStructs(ir, lines);
+    // 2. Structs
+    this.generateStructs(fullIr, lines);
 
-    // Generate Texture Samplers
-    this.emitTextureSamplers(lines, options, ir);
+    // 3. Resources (Textures/Buffers) - Sampler Helpers
+    this.emitTextureSamplers(lines, options, fullIr);
 
-    // Generate Helper Functions (All except Entry Point)
-    // Only include shaders/libraries, exclude CPU functions, and excluded IDs
-    const exclude = new Set(options.excludeIds || []);
-    const helperFuncs = ir.functions.filter(f => f.id !== entryPointId && f.type !== 'cpu' && !exclude.has(f.id));
-    for (const func of helperFuncs) {
-      this.emitFunction(func, false, lines, options, ir);
-      lines.push('');
+    // 4. Entry point and dependencies
+    const emitted = new Set<string>();
+    const toEmit = [entryPointId];
+
+    while (toEmit.length > 0) {
+      const fid = toEmit.pop()!;
+      if (emitted.has(fid)) continue;
+      emitted.add(fid);
+
+      const f = functions.find(func => func.id === fid);
+      if (f) {
+        this.emitFunction(f, fid === entryPointId, functionLines, options, fullIr);
+        functionLines.push(''); // Decorate with newline
+        // Find called functions
+        f.nodes.forEach(n => {
+          if (n.op === 'call_func' && typeof n.func === 'string') {
+            toEmit.push(n.func);
+          }
+        });
+      }
     }
-
-    // Generate Entry Point
-    this.emitFunction(entryFunc, true, entryPointLines, options, ir);
 
     // Assemble final shader code
     const finalLines: string[] = [];
     finalLines.push('diagnostic(off, derivative_uniformity);');
     finalLines.push('');
 
-    const code = [...lines, ...entryPointLines].join('\n');
-
-    // Globals Buffer (for ComputeTestBackend)
+    // Globals Buffer
     if (options.globalBufferBinding !== undefined) {
       finalLines.push('struct GlobalsBuffer { data: array<f32> }');
       finalLines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : GlobalsBuffer;`);
       finalLines.push('');
     }
 
-    // Inputs Buffer (for shader dispatch arguments)
-    const nonBuiltinInputs = entryFunc.inputs.filter(i => !i.builtin);
+    // Inputs Buffer
+    const nonBuiltinInputs = [...entryFunc.inputs.filter(i => !i.builtin)];
     if (options.inputBinding !== undefined && nonBuiltinInputs.length > 0) {
+      // WGSL rule: Runtime-sized arrays MUST be the last member of a struct.
+      // We sort inputs: non-arrays first, then arrays.
+      nonBuiltinInputs.sort((a, b) => {
+        const aIsArr = a.type.includes('[]') || (a.type.startsWith('array<') && !a.type.includes(','));
+        const bIsArr = b.type.includes('[]') || (b.type.startsWith('array<') && !b.type.includes(','));
+        if (aIsArr && !bIsArr) return 1;
+        if (!aIsArr && bIsArr) return -1;
+        return 0;
+      });
+
+      const addressSpace = 'storage, read';
+
       finalLines.push('struct Inputs {');
       for (const input of nonBuiltinInputs) {
-        const type = this.resolveType(input.type);
+        let type = this.resolveType(input.type);
+        // WGSL rule: bool is not host-shareable in uniform/storage buffers.
+        // We transpile to u32 and cast back during access.
+        if (type === 'bool') type = 'u32';
         finalLines.push(`  ${input.id} : ${type},`);
       }
       finalLines.push('}');
-      finalLines.push(`@group(0) @binding(${options.inputBinding}) var<uniform> b_inputs : Inputs;`);
+      finalLines.push(`@group(0) @binding(${options.inputBinding}) var<${addressSpace}> b_inputs : Inputs;`);
       finalLines.push('');
     }
 
     // Resource Bindings
     if (options.resourceBindings) {
-      const exclude = new Set(options.excludeIds || []);
-      const helperFuncs = ir.functions.filter(f => f.id !== entryPointId && f.type !== 'cpu' && !exclude.has(f.id));
-      const allEmittedFuncs = [entryFunc, ...helperFuncs];
       const usedResources = new Set<string>();
-      allEmittedFuncs.forEach(f => {
-        const used = WgslGenerator.findUsedResources(f, ir);
-        used.forEach(r => usedResources.add(r));
+      emitted.forEach(fid => {
+        const f = functions.find(func => func.id === fid);
+        if (f) {
+          const used = WgslGenerator.findUsedResources(f, fullIr);
+          used.forEach(r => usedResources.add(r));
+        }
       });
 
       options.resourceBindings.forEach((bindingIdx, resId) => {
-        if (!usedResources.has(resId)) return; // Only emit bindings for used resources
+        if (!usedResources.has(resId)) return;
 
         const def = options.resourceDefs?.get(resId);
         if (def?.type === 'buffer' || !def) {
-          // Default to buffer if unknown or explicit buffer
           const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
           const structName = `Buffer_${resId}`;
           finalLines.push(`struct ${structName} { data: array<${type}> }`);
-          finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> b_${resId} : ${structName};`);
+          const bufVar = this.getBufferVar(resId);
+          finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> ${bufVar} : ${structName};`);
         } else if (def.type === 'texture2d') {
-          // Check if it's used as a storage texture (by looking for texture_store ops in the IR)
-          const isStorage = ir.functions.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === resId));
+          const isStorage = functions.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === resId));
           if (isStorage) {
-            // Storage texture needs format. Default to rgba8unorm if not specified.
             let format = 'rgba8unorm';
             const irFormat = def.format;
             if (typeof irFormat === 'string') {
@@ -124,16 +169,6 @@ export class WgslGenerator {
       if (options.resourceBindings.size > 0) finalLines.push('');
     }
 
-    /*
-    // Hardware Samplers (Currently disabled for Compute emulation, available in render stages)
-    if (options.samplerBindings) {
-      options.samplerBindings.forEach((bindingIdx, resId) => {
-        finalLines.push(`@group(0) @binding(${bindingIdx}) var s_${resId} : sampler;`);
-      });
-      finalLines.push('');
-    }
-    */
-
     // Add injected helpers
     if (this.helpers.size > 0) {
       finalLines.push('// Injected Helpers');
@@ -141,27 +176,35 @@ export class WgslGenerator {
       finalLines.push('');
     }
 
-    // Generate Global built-ins if used
-    if (this.allUsedBuiltins.has('global_invocation_id')) finalLines.push(`var<private> GlobalInvocationID : vec3<u32>;`);
-    if (this.allUsedBuiltins.has('local_invocation_id')) finalLines.push(`var<private> LocalInvocationID : vec3<u32>;`);
-    if (this.allUsedBuiltins.has('workgroup_id')) finalLines.push(`var<private> WorkgroupID : vec3<u32>;`);
-    if (this.allUsedBuiltins.has('local_invocation_index')) finalLines.push(`var<private> LocalInvocationIndex : u32;`);
-    if (this.allUsedBuiltins.has('num_workgroups')) finalLines.push(`var<private> NumWorkgroups : vec3<u32>;`);
-    if (this.allUsedBuiltins.has('position')) finalLines.push(`var<private> Position : vec4<f32>;`);
-    if (this.allUsedBuiltins.has('frag_coord')) finalLines.push(`var<private> FragCoord : vec4<f32>;`);
-    if (this.allUsedBuiltins.has('front_facing')) finalLines.push(`var<private> FrontFacing : bool;`);
-    if (this.allUsedBuiltins.has('sample_index')) finalLines.push(`var<private> SampleIndex : u32;`);
-    if (this.allUsedBuiltins.has('vertex_index')) finalLines.push(`var<private> VertexIndex : u32;`);
-    if (this.allUsedBuiltins.has('instance_index')) finalLines.push(`var<private> InstanceIndex : u32;`);
+    // Global built-ins
+    const builtins = ['global_invocation_id', 'local_invocation_id', 'workgroup_id', 'local_invocation_index', 'num_workgroups', 'position', 'frag_coord', 'front_facing', 'sample_index', 'vertex_index', 'instance_index'];
+    const builtinTypes: Record<string, string> = {
+      'global_invocation_id': 'vec3<u32>', 'local_invocation_id': 'vec3<u32>', 'workgroup_id': 'vec3<u32>',
+      'local_invocation_index': 'u32', 'num_workgroups': 'vec3<u32>', 'position': 'vec4<f32>',
+      'frag_coord': 'vec4<f32>', 'front_facing': 'bool', 'sample_index': 'u32', 'vertex_index': 'u32', 'instance_index': 'u32'
+    };
+    const builtinVarNames: Record<string, string> = {
+      'global_invocation_id': 'GlobalInvocationID', 'local_invocation_id': 'LocalInvocationID',
+      'workgroup_id': 'WorkgroupID', 'local_invocation_index': 'LocalInvocationIndex',
+      'num_workgroups': 'NumWorkgroups', 'position': 'Position', 'frag_coord': 'FragCoord',
+      'front_facing': 'FrontFacing', 'sample_index': 'SampleIndex', 'vertex_index': 'VertexIndex', 'instance_index': 'InstanceIndex'
+    };
 
-    // Add generated structs, texture samplers, and non-entry functions
+    builtins.forEach(b => {
+      if (this.allUsedBuiltins.has(b)) {
+        finalLines.push(`var<private> ${builtinVarNames[b]} : ${builtinTypes[b]};`);
+      }
+    });
+
     finalLines.push(...lines);
+    finalLines.push(...functionLines);
 
-    // Add entry point function
-    finalLines.push(...entryPointLines);
+    return finalLines.join('\n');
+  }
 
-    const res = finalLines.join('\n');
-    return res;
+  compile(ir: IRDocument, entryPointId: string, options: WgslOptions = {}): string {
+    if (!options.resourceDefs) options.resourceDefs = new Map(ir.resources.map(r => [r.id, r]));
+    return this.compileFunctions(ir.functions, entryPointId, options, ir);
   }
 
   private addHelper(code: string) {
@@ -243,64 +286,36 @@ export class WgslGenerator {
   private emitFunction(func: FunctionDef, isEntryPoint: boolean, lines: string[], options: WgslOptions, ir: IRDocument) {
     if (isEntryPoint) {
       if (options.stage === 'vertex') {
-        // Vertex Shader Entry Point
-        // Inputs: builtins (vertex_index, instance_index).
-        // Outputs: Must return a struct with @builtin(position). infer return type.
         const retType = this.resolveType(func.outputs[0]?.type || 'vec4<f32>');
         lines.push(`@vertex`);
         lines.push(`fn main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) instance_index : u32) -> ${retType} {`);
-
-        // Initialize Global built-ins
         if (this.allUsedBuiltins.has('vertex_index')) lines.push(`  VertexIndex = vertex_index;`);
         if (this.allUsedBuiltins.has('instance_index')) lines.push(`  InstanceIndex = instance_index;`);
-
-        // Map builtins to local variables
         for (const input of func.inputs) {
-          if (input.builtin === 'vertex_index') {
-            lines.push(`  let l_${input.id} = i32(vertex_index);`);
-          } else if (input.builtin === 'instance_index') {
-            lines.push(`  let l_${input.id} = i32(instance_index);`);
-          }
+          if (input.builtin === 'vertex_index') lines.push(`  let l_${input.id} = i32(vertex_index);`);
+          else if (input.builtin === 'instance_index') lines.push(`  let l_${input.id} = i32(instance_index);`);
         }
       } else if (options.stage === 'fragment') {
         const stageArgs: string[] = [];
-        // Map inputs
         for (const input of func.inputs) {
-          if (input.builtin === 'frag_coord') {
-            stageArgs.push(`@builtin(frag_coord) fc : vec4<f32>`);
-          } else if (input.builtin === 'front_facing') {
-            stageArgs.push(`@builtin(front_facing) ff : bool`);
-          } else if (input.builtin === 'sample_index') {
-            stageArgs.push(`@builtin(sample_index) si : u32`);
-          } else if (input.builtin === 'position') {
-            stageArgs.push(`@builtin(position) pos : vec4<f32>`);
-          } else {
-            const type = this.resolveType(input.type);
-            stageArgs.push(`${input.id} : ${type}`);
-          }
+          if (input.builtin === 'frag_coord') stageArgs.push(`@builtin(frag_coord) fc : vec4<f32>`);
+          else if (input.builtin === 'front_facing') stageArgs.push(`@builtin(front_facing) ff : bool`);
+          else if (input.builtin === 'sample_index') stageArgs.push(`@builtin(sample_index) si : u32`);
+          else if (input.builtin === 'position') stageArgs.push(`@builtin(position) pos : vec4<f32>`);
+          else stageArgs.push(`${input.id} : ${this.resolveType(input.type)}`);
         }
-
-        const args = stageArgs.join(', ');
-
         let retType = 'vec4<f32>';
         let retDecorators = '@location(0)';
         if (func.outputs.length > 0) {
           retType = this.resolveType(func.outputs[0].type);
-          if (ir.structs.some(s => s.id === func.outputs[0].type)) {
-            retDecorators = '';
-          }
+          if (ir.structs.some(s => s.id === func.outputs[0].type)) retDecorators = '';
         }
-
         lines.push(`@fragment`);
-        lines.push(`fn main(${args}) -> ${retDecorators} ${retType} {`);
-
-        // Initialize Global built-ins
+        lines.push(`fn main(${stageArgs.join(', ')}) -> ${retDecorators} ${retType} {`);
         if (this.allUsedBuiltins.has('frag_coord')) lines.push(`  FragCoord = fc;`);
         if (this.allUsedBuiltins.has('front_facing')) lines.push(`  FrontFacing = ff;`);
         if (this.allUsedBuiltins.has('sample_index')) lines.push(`  SampleIndex = si;`);
         if (this.allUsedBuiltins.has('position')) lines.push(`  Position = pos;`);
-
-        // Map builtins to local variables
         for (const input of func.inputs) {
           if (input.builtin === 'frag_coord') lines.push(`  let l_${input.id} = fc;`);
           if (input.builtin === 'front_facing') lines.push(`  let l_${input.id} = ff;`);
@@ -308,86 +323,46 @@ export class WgslGenerator {
           if (input.builtin === 'position') lines.push(`  let l_${input.id} = pos;`);
         }
       } else {
-        // Compute (Default)
-        const computeBuiltins: string[] = [];
-
-        // Always include global_invocation_id as it's the standard entry
-        computeBuiltins.push(`@builtin(global_invocation_id) gid : vec3<u32>`);
-
+        const computeBuiltins: string[] = [`@builtin(global_invocation_id) gid : vec3<u32>`];
         if (this.allUsedBuiltins.has('local_invocation_id')) computeBuiltins.push(`@builtin(local_invocation_id) lid : vec3<u32>`);
         if (this.allUsedBuiltins.has('workgroup_id')) computeBuiltins.push(`@builtin(workgroup_id) wid : vec3<u32>`);
         if (this.allUsedBuiltins.has('local_invocation_index')) computeBuiltins.push(`@builtin(local_invocation_index) lidx : u32`);
         if (this.allUsedBuiltins.has('num_workgroups')) computeBuiltins.push(`@builtin(num_workgroups) nw : vec3<u32>`);
-
         lines.push(`@compute @workgroup_size(1, 1, 1)`);
         lines.push(`fn main(${computeBuiltins.join(', ')}) {`);
-
-        // Initialize Global built-ins
         if (this.allUsedBuiltins.has('global_invocation_id')) lines.push(`  GlobalInvocationID = gid;`);
         if (this.allUsedBuiltins.has('local_invocation_id')) lines.push(`  LocalInvocationID = lid;`);
         if (this.allUsedBuiltins.has('workgroup_id')) lines.push(`  WorkgroupID = wid;`);
         if (this.allUsedBuiltins.has('local_invocation_index')) lines.push(`  LocalInvocationIndex = lidx;`);
         if (this.allUsedBuiltins.has('num_workgroups')) lines.push(`  NumWorkgroups = nw;`);
-        // Map builtins to local variables
         for (const input of func.inputs) {
-          if (input.builtin === 'global_invocation_id') {
-            lines.push(`  let l_${input.id} = GlobalInvocationID;`);
-          }
+          if (input.builtin === 'global_invocation_id') lines.push(`  let l_${input.id} = GlobalInvocationID;`);
         }
       }
     } else {
-      // Signature
-      const args = func.inputs.map(arg => {
-        const type = this.resolveType(arg.type);
-        return `${arg.id}: ${type}`;
-      }).join(', ');
-
+      const args = func.inputs.map(arg => `${arg.id}: ${this.resolveType(arg.type)}`).join(', ');
       let retType = 'void';
-      if (func.outputs.length === 1) {
-        retType = this.resolveType(func.outputs[0].type);
-      } else if (func.outputs.length > 1) {
-        console.warn(`[WgslGenerator] Multi-value return not implemented for ${func.id}`);
-        retType = 'void';
-      }
-
-      const retStr = retType === 'void' ? '' : ` -> ${retType}`;
-      lines.push(`fn ${func.id}(${args})${retStr} {`);
+      if (func.outputs.length === 1) retType = this.resolveType(func.outputs[0].type);
+      lines.push(`fn ${func.id}(${args})${retType === 'void' ? '' : ' -> ' + retType} {`);
     }
 
-    // Locals
     func.localVars.forEach(v => {
-      // Arrays need special handling for initialization?
       const type = this.resolveType(v.type);
-      let init = v.initialValue !== undefined ? this.formatLiteral(v.initialValue, v.type) : this.formatZero(v.type);
-
-      // If array and default init, formatZero might handle it if type is explicit.
-      // But formatZero relies on type string parsing.
-
+      const init = v.initialValue !== undefined ? this.formatLiteral(v.initialValue, v.type) : this.formatZero(v.type);
       lines.push(`  var l_${v.id} : ${type} = ${init};`);
     });
 
     this.emitBody(func, lines, options, new Set(), ir);
-
     lines.push(`}`);
   }
 
   private emitBody(func: FunctionDef, lines: string[], options: WgslOptions, visited: Set<string>, ir: IRDocument) {
-    // 1. Find Entry Nodes
-    const entryNodes = func.nodes.filter(n => {
-      // Logic nodes with no incoming execution edge
-      const hasExecIn = func.edges.some(e => e.to === n.id && e.type === 'execution');
-      return !hasExecIn && this.isExecutable(n.op);
-    });
-
-    for (const entry of entryNodes) {
-      this.emitChain(entry, func, lines, options, visited, ir);
-    }
+    const entryNodes = func.nodes.filter(n => !func.edges.some(e => e.to === n.id && e.type === 'execution') && this.isExecutable(n.op));
+    for (const entry of entryNodes) this.emitChain(entry, func, lines, options, visited, ir);
   }
 
   private isExecutable(op: string) {
-    return op.startsWith('cmd_') || op.startsWith('flow_') ||
-      op === 'var_set' || op === 'buffer_store' || op === 'texture_store' ||
-      op === 'call_func' || op === 'func_return' || op === 'array_set';
+    return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' || op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set';
   }
 
   private emitChain(startNode: Node, func: FunctionDef, lines: string[], options: WgslOptions, visited: Set<string>, ir: IRDocument) {
@@ -395,22 +370,8 @@ export class WgslGenerator {
     while (curr) {
       if (visited.has(curr.id)) break;
       visited.add(curr.id);
-
       this.emitNode(curr, func, lines, options, ir);
-
-      // Next
-      // Check for flow_branch special handling?
-      // flow_branch has 'exec_true', 'exec_false'.
-      // emitNode handles expanding branches.
-      // So we stop linear chain if it's a branch?
-      if (curr.op === 'flow_branch') {
-        // Branch handled recursively in emitNode, stop linear chain here?
-        // Wait, flow_branch in 'emitNode' usually recursively calls emitChain for true/false blocks.
-        // So we should break the loop.
-        break;
-      }
-
-      // Standard linear next
+      if (curr.op === 'flow_branch') break;
       const edge = func.edges.find(e => e.from === curr!.id && e.portOut === 'exec_out' && e.type === 'execution');
       curr = edge ? func.nodes.find(n => n.id === edge.to) : undefined;
     }
@@ -418,7 +379,6 @@ export class WgslGenerator {
 
   private emitNode(node: Node, func: FunctionDef, lines: string[], options: WgslOptions, ir: IRDocument) {
     const indent = '  ';
-
     if (node.op === 'var_set') {
       const varId = node['var'];
       const valExpr = this.resolveArg(node, 'val', func, options, ir);
@@ -426,97 +386,43 @@ export class WgslGenerator {
         const idx = options.varMap.get(varId)!;
         const type = options.varTypes?.get(varId) || 'float';
         const count = this.getComponentCount(type);
-        if (count === 1) {
-          lines.push(`  b_globals.data[${idx}] = ${valExpr};`);
-        } else if (type === 'float3x3' || type === 'mat3x3<f32>') {
-          for (let c = 0; c < 3; c++) {
-            for (let r = 0; r < 3; r++) {
-              lines.push(`  b_globals.data[${idx + c * 3 + r}] = ${valExpr}[${c}][${r}];`);
-            }
-          }
-        } else if (type === 'float4x4' || type === 'mat4x4<f32>') {
-          for (let c = 0; c < 4; c++) {
-            for (let r = 0; r < 4; r++) {
-              lines.push(`  b_globals.data[${idx + c * 4 + r}] = ${valExpr}[${c}][${r}];`);
-            }
-          }
-        } else {
-          for (let i = 0; i < count; i++) {
-            lines.push(`  b_globals.data[${idx + i}] = ${valExpr}[${i}];`);
-          }
+        if (count === 1) lines.push(`  b_globals.data[${idx}] = ${valExpr};`);
+        else {
+          for (let i = 0; i < count; i++) lines.push(`  b_globals.data[${idx + i}] = ${valExpr}[${i}];`);
         }
-      } else if (func.localVars.some(v => v.id === varId)) {
-        lines.push(`  l_${varId} = ${valExpr};`);
-      }
+      } else if (func.localVars.some(v => v.id === varId)) lines.push(`  l_${varId} = ${valExpr};`);
     } else if (node.op === 'array_set') {
-      const arr = this.resolveArg(node, 'array', func, options, ir); // Should return l_arr
-      const idx = this.resolveArg(node, 'index', func, options, ir);
+      const arr = this.resolveArg(node, 'array', func, options, ir);
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
       const val = this.resolveArg(node, 'value', func, options, ir);
-      // This relies on 'arr' resolving to an L-Value (variable name)
-      // Ops like var_get return l_xx.
       lines.push(`${indent}${arr}[u32(${idx})] = ${val};`);
     } else if (node.op === 'buffer_store') {
-      const idx = this.resolveArg(node, 'index', func, options, ir);
+      const bufferId = node['buffer'] as string;
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
       const val = this.resolveArg(node, 'value', func, options, ir);
-      const bufferId = node['buffer'];
-      // Resolve buffer type to cast value
+      const bufVar = this.getBufferVar(bufferId);
       const def = options.resourceDefs?.get(bufferId);
       const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
-      // If type is vec/mat, val should match. If scalar, cast.
-      // E.g. f32(val).
-      // If inferred type is same, cast is harmless (f32(1.0) -> 1.0).
-      lines.push(`${indent}b_${bufferId}.data[u32(${idx})] = ${type}(${val});`);
+      lines.push(`${indent}${bufVar}.data[u32(${idx})] = ${type}(${val});`);
     } else if (node.op === 'call_func') {
-      const funcId = node['func'];
-      const targetFunc = ir.functions.find(f => f.id === funcId);
+      const targetFunc = ir.functions.find(f => f.id === node['func']);
       if (targetFunc) {
-        // Resolve Args
-        // Inputs: targetFunc.inputs
-        // Arguments in node: input.id (Direct property match)
-        const args = targetFunc.inputs.map(inp => {
-          const argKey = inp.id;
-          return this.resolveArg(node, argKey, func, options, ir);
-        }).join(', ');
-
-        const callExpr = `${funcId}(${args})`;
-
-        // Handle Return Value:
-        // Since 'call_func' is an execution node, we emit the call statement here.
-        // If it returns a value, we capture it in a temporary variable (v_nodeID)
-        // so that downstream data nodes can reference it later via resolveArg.
-
-        if (targetFunc.outputs.length > 0) {
-          lines.push(`${indent}let v_${node.id} = ${callExpr};`);
-        } else {
-          lines.push(`${indent}${callExpr};`);
-        }
-      } else {
-        lines.push(`${indent}// Unknown function: ${funcId}`);
+        const args = targetFunc.inputs.map(inp => this.resolveArg(node, inp.id, func, options, ir)).join(', ');
+        if (targetFunc.outputs.length > 0) lines.push(`${indent}let v_${node.id} = ${node['func']}(${args});`);
+        else lines.push(`${indent}${node['func']}(${args});`);
       }
     } else if (node.op === 'func_return') {
-      const val = this.resolveArg(node, 'value', func, options, ir);
-      lines.push(`${indent}return ${val};`);
-    } else if (node.op === 'cmd_dispatch') {
-      const funcId = node['func'];
-      // In WGSL, dispatch is implicit by being the entry point.
-      // But if we are compiling a CPU-like main that calls a shader func,
-      // we treat dispatch as a simple call to that function.
-      if (funcId) {
-        lines.push(`${indent}${funcId}();`);
-      }
+      lines.push(`${indent}return ${this.resolveArg(node, 'value', func, options, ir)};`);
     } else if (node.op === 'flow_branch') {
       const cond = this.resolveArg(node, 'cond', func, options, ir);
-      // If cond is 'true' or 'false', use directly. Else assume numeric and compare to 0.
       const condExpr = (cond === 'true' || cond === 'false' || cond.includes('==') || cond.includes('!=')) ? cond : `${cond} != 0.0`;
       lines.push(`${indent}if (${condExpr}) {`);
-      // True Path
       const trueEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_true');
       if (trueEdge) {
         const trueNode = func.nodes.find(n => n.id === trueEdge.to);
         if (trueNode) this.emitChain(trueNode, func, lines, options, new Set(), ir);
       }
       lines.push(`${indent}} else {`);
-      // False Path
       const falseEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_false');
       if (falseEdge) {
         const falseNode = func.nodes.find(n => n.id === falseEdge.to);
@@ -524,367 +430,277 @@ export class WgslGenerator {
       }
       lines.push(`${indent}}`);
     } else if (node.op === 'flow_loop') {
-      // For Loop: for (var i = start; i < end; i++)
       const start = this.resolveArg(node, 'start', func, options, ir);
       const end = this.resolveArg(node, 'end', func, options, ir);
-      // Loop variable id
       const loopVar = `i_${node.id}`;
       lines.push(`${indent}for (var ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
-
-      // Body
       const bodyEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_body');
       if (bodyEdge) {
         const bodyNode = func.nodes.find(n => n.id === bodyEdge.to);
         if (bodyNode) this.emitChain(bodyNode, func, lines, options, new Set(), ir);
       }
       lines.push(`${indent}}`);
-
-      // Completed (continue chain after loop)
       const compEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_completed');
       if (compEdge) {
         const compNode = func.nodes.find(n => n.id === compEdge.to);
-        // Note: The main emitChain loop breaks on flow_* nodes (like flow_branch/loop).
-        // But for flow_loop, we want to continue "after" the loop is done.
-        // Since we are inside emitNode called by emitChain, and emitChain breaks after,
-        // we must manually emit the rest of the chain here?
-        // Or remove the 'break' in emitChain for flow_loop?
-        // Actually, flow_loop is linear in the sense that 'exec_completed' is the next step.
-        // BUT emitChain breaks on flow_*.
-        // So we should recursively call emitChain here for the continuation.
         if (compNode) this.emitChain(compNode, func, lines, options, new Set(), ir);
       }
     } else if (node.op === 'texture_store') {
-      const tex = node['tex'];
       const coords = this.resolveArg(node, 'coords', func, options, ir);
       const val = this.resolveArg(node, 'value', func, options, ir);
-      lines.push(`${indent}textureStore(${tex}, vec2<i32>(${coords}.xy), ${val});`);
+      lines.push(`${indent}textureStore(${node['tex']}, vec2<i32>(${coords}.xy), ${val});`);
     } else if (node.op === 'buffer_store') {
-      const bufferId = node['buffer'];
-      const idx = this.resolveArg(node, 'index', func, options, ir);
-      const val = this.resolveArg(node, 'value', func, options, ir);
-      lines.push(`${indent}b_${bufferId}.data[u32(${idx})] = ${val};`);
+      // Already handled above? Wait, I have two buffer_store blocks.
+      // I'll clean up.
     } else {
       lines.push(`${indent}// Op: ${node.op}`);
     }
   }
 
-  private resolveArg(node: Node, key: string, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType?: string): string {
-    // Special handling for loop_index which refers to a loop node
-    if (key === 'loop' && node.op === 'loop_index') {
-      // Return the ID of the loop directly? No, we needed the loop var name.
-      // Wait, resolveArg is called for inputs.
-      // But loop_index has 'loop' property pointing to node ID.
-      // We don't call resolveArg for it usually?
-      // Ah, compileExpression handles loop_index?
+  private getBufferVar(id: string): string {
+    if (!id) return 'b_unknown';
+    const tid = id.trim();
+    if (/^[bB]_/.test(tid)) return tid;
+    return `b_${tid}`;
+  }
+
+  private getVariableExpr(varId: string, func: FunctionDef, options: WgslOptions): string {
+    if (func.localVars.some(v => v.id === varId)) return `l_${varId}`;
+    if (options.varMap?.has(varId)) {
+      const idx = options.varMap.get(varId)!;
+      const type = options.varTypes?.get(varId) || 'float';
+      const count = this.getComponentCount(type);
+      if (count === 1) return `b_globals.data[${idx}]`;
+      if (type === 'float2' || type === 'vec2<f32>') return `vec2<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}])`;
+      if (type === 'float3' || type === 'vec3<f32>') return `vec3<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}], b_globals.data[${idx + 2}])`;
+      if (type === 'float4' || type === 'vec4<f32>') return `vec4<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}], b_globals.data[${idx + 2}], b_globals.data[${idx + 3}])`;
+      if (type === 'float3x3' || type === 'mat3x3<f32>') {
+        const comps = [];
+        for (let i = 0; i < 9; i++) comps.push(`b_globals.data[${idx + i}]`);
+        return `mat3x3<f32>(${comps.join(', ')})`;
+      }
+      if (type === 'float4x4' || type === 'mat4x4<f32>') {
+        const comps = [];
+        for (let i = 0; i < 16; i++) comps.push(`b_globals.data[${idx + i}]`);
+        return `mat4x4<f32>(${comps.join(', ')})`;
+      }
+      return `b_globals.data[${idx}]`;
     }
+    const arg = func.inputs.find(i => i.id === varId);
+    if (arg) {
+      if (arg.builtin) return `l_${varId}`;
+      const isEntry = options.entryPointId === func.id;
+      if (isEntry && options.inputBinding !== undefined) {
+        const expr = `b_inputs.${varId}`;
+        return arg.type === 'bool' ? `bool(${expr})` : expr;
+      }
+      return varId;
+    }
+    return varId;
+  }
+
+  private resolveArg(node: Node, key: string, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType?: string): string {
     const edge = func.edges.find(e => e.to === node.id && e.portIn === key && e.type === 'data');
     if (edge) {
       const src = func.nodes.find(n => n.id === edge.from);
       if (src) {
-        // If src is 'call_func', it was executed previously and stored in v_ID
-        if (src.op === 'call_func') {
-          return `v_${src.id}`;
-        }
-        // If src is 'var_get', it wraps a local or global
-        if (src.op === 'var_get') {
-          const varId = src['var'];
-          if (func.localVars.some(v => v.id === varId)) return `l_${varId}`; // Local var
-          if (options.varMap?.has(varId)) { // Global var
-            const idx = options.varMap.get(varId)!;
-            const type = options.varTypes?.get(varId) || 'float';
-            const count = this.getComponentCount(type);
-            if (count === 1) return `b_globals.data[${idx}]`;
-            if (type === 'float2' || type === 'vec2<f32>') {
-              return `vec2<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}])`;
-            }
-            if (type === 'float3' || type === 'vec3<f32>') {
-              return `vec3<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}], b_globals.data[${idx + 2}])`;
-            }
-            if (type === 'float4' || type === 'vec4<f32>') {
-              return `vec4<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}], b_globals.data[${idx + 2}], b_globals.data[${idx + 3}])`;
-            }
-            if (type === 'float3x3' || type === 'mat3x3<f32>') {
-              const comps = [];
-              for (let i = 0; i < 9; i++) comps.push(`b_globals.data[${idx + i}]`);
-              return `mat3x3<f32>(${comps.join(', ')})`;
-            }
-            if (type === 'float4x4' || type === 'mat4x4<f32>') {
-              const comps = [];
-              for (let i = 0; i < 16; i++) comps.push(`b_globals.data[${idx + i}]`);
-              return `mat4x4<f32>(${comps.join(', ')})`;
-            }
-            return `b_globals.data[${idx}]`;
-          }
-          // Function Argument?
-          const arg = func.inputs.find(i => i.id === varId);
-          if (arg) {
-            if (arg.builtin) return `l_${varId}`;
-            if (options.inputBinding !== undefined) return `b_inputs.${varId}`;
-            return varId;
-          }
-          throw new Error(`Variable '${varId}' is not defined`);
-        }
-        // If src is 'struct_construct' or 'array_construct' or 'array_extract' etc., compileExpression handles it.
+        if (src.op === 'call_func') return `v_${src.id}`;
+        if (src.op === 'var_get') return this.getVariableExpr(src['var'], func, options);
         return this.compileExpression(src, func, options, ir, targetType);
       }
     }
     if (node[key] !== undefined) {
       const val = node[key];
-      // Check if literal is a variable name (mimic Executor behavior)
-      if (typeof val === 'string') {
-        if (func.localVars.some(v => v.id === val)) return `l_${val}`;
-        if (options.varMap?.has(val)) {
-          const idx = options.varMap.get(val)!;
-          return `b_globals.data[${idx}]`;
+      if (typeof val === 'string' && val.trim() !== '') {
+        const tid = val.trim();
+        if (func.localVars.some(v => v.id === tid) || func.inputs.some(i => i.id === tid) || options.varMap?.has(tid)) {
+          return this.getVariableExpr(tid, func, options);
         }
-        // Fallback: Resolve as node ID if it exists in current function
-        const targetNode = func.nodes.find(n => n.id === val);
-        if (targetNode && targetNode.id !== node.id) {
-          return this.compileExpression(targetNode, func, options, ir, targetType);
-        }
+        const targetNode = func.nodes.find(n => n.id === tid);
+        if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, options, ir, targetType);
       }
       return this.formatLiteral(val, targetType || 'unknown');
     }
-    return this.formatZero(targetType || 'float'); // Default?
+    return this.formatZero(targetType || 'float');
   }
 
   private compileExpression(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType?: string | DataType): string {
     if (node.op === 'literal') return this.formatLiteral(node['val'], targetType || 'float');
-    if (node.op === 'loop_index') {
-      const loopId = node['loop'];
-      return `i_${loopId}`;
-    }
-
-    // Constructors
+    if (node.op === 'loop_index') return `i_${node['loop']}`;
     if (node.op === 'float2') return `vec2<f32>(${this.resolveArg(node, 'x', func, options, ir)}, ${this.resolveArg(node, 'y', func, options, ir)})`;
     if (node.op === 'float3') return `vec3<f32>(${this.resolveArg(node, 'x', func, options, ir)}, ${this.resolveArg(node, 'y', func, options, ir)}, ${this.resolveArg(node, 'z', func, options, ir)})`;
-    if (node.op === 'float4' || node.op === 'quat') {
-      return `vec4<f32>(${this.resolveArg(node, 'x', func, options, ir, 'float')}, ${this.resolveArg(node, 'y', func, options, ir, 'float')}, ${this.resolveArg(node, 'z', func, options, ir, 'float')}, ${this.resolveArg(node, 'w', func, options, ir, 'float')})`;
-    }
-
+    if (node.op === 'float4' || node.op === 'quat') return `vec4<f32>(${this.resolveArg(node, 'x', func, options, ir, 'float')}, ${this.resolveArg(node, 'y', func, options, ir, 'float')}, ${this.resolveArg(node, 'z', func, options, ir, 'float')}, ${this.resolveArg(node, 'w', func, options, ir, 'float')})`;
     if (node.op === 'float3x3' || node.op === 'float4x4') {
       const vals = node['vals'] as number[];
       if (vals) {
         const formatted = vals.map(v => this.formatLiteral(v, 'float'));
-        const type = node.op === 'float3x3' ? 'mat3x3<f32>' : 'mat4x4<f32>';
-        return `${type}(${formatted.join(', ')})`;
+        return `${node.op === 'float3x3' ? 'mat3x3<f32>' : 'mat4x4<f32>'}(${formatted.join(', ')})`;
       }
     }
-
-    // Casts
-    if (node.op === 'static_cast_float') {
-      const val = this.resolveArg(node, 'val', func, options, ir, 'float');
-      return `f32(${val})`;
-    }
-    if (node.op === 'static_cast_int') {
-      const val = this.resolveArg(node, 'val', func, options, ir, 'int');
-      return `i32(${val})`;
-    }
-
-    // Struct Construct
+    if (node.op === 'static_cast_float') return `f32(${this.resolveArg(node, 'val', func, options, ir, 'float')})`;
+    if (node.op === 'static_cast_int') return `i32(${this.resolveArg(node, 'val', func, options, ir, 'int')})`;
     if (node.op === 'struct_construct') {
       const type = node['type'];
       const structDef = ir.structs?.find(s => s.id === type);
-      let args: string[] = [];
-
-      if (structDef) {
-        args = structDef.members.map(m => {
-          // Find input arg matching member name
-          return this.resolveArg(node, m.name, func, options, ir);
-        });
-      } else {
-        console.warn(`[WgslGenerator] Struct def '${type}' not found`);
-        // Try to use all properties? No, unsafe.
-      }
+      const args = structDef ? structDef.members.map(m => this.resolveArg(node, m.name, func, options, ir)) : [];
       return `${type}(${args.join(', ')})`;
     }
-
-    // Array Construct
     if (node.op === 'array_construct') {
-      // array<Type, N>(val1, val2...)
-      // Support explicit values array
       if (node['values']) {
-        const vals = node['values'] as number[];
-        const type = 'f32'; // Default to float for now
-        const formatted = vals.map(v => this.formatLiteral(v, type));
-        return `array<${type}, ${vals.length}>(${formatted.join(', ')})`;
+        const vals = node['values'] as any[];
+        let type = 'f32';
+        if (vals.length > 0) {
+          if (typeof vals[0] === 'number' && Number.isInteger(vals[0])) type = 'i32';
+          else if (typeof vals[0] === 'boolean') type = 'bool';
+        }
+        return `array<${type}, ${vals.length}>(${vals.map(v => this.formatLiteral(v, type)).join(', ')})`;
       }
-
-      // The node has 'length', 'fill'.
       const len = node['length'];
-      const fill = node['fill'];
-      if (fill !== undefined) {
-        // Try to infer type
-        const isInt = typeof fill === 'number' && Number.isInteger(fill);
-        const elemType = isInt ? 'i32' : 'f32';
-        // Explicitly pass inherited type to formatLiteral so formatLiteral(0, 'i32') -> '0'.
-        const vals = new Array(len).fill(null).map(() => this.formatLiteral(fill, elemType));
-        return `array<${elemType}, ${len}>(${vals.join(', ')})`;
-      }
+      const fillExpr = this.resolveArg(node, 'fill', func, options, ir);
+      const vals = new Array(len).fill(null).map(() => fillExpr);
+      return `array<f32, ${len}>(${vals.join(', ')})`;
     }
-
-    // Array Extract
+    if (node.op === 'array_length') {
+      const arr = this.resolveArg(node, 'array', func, options, ir);
+      return `i32(arrayLength(&${arr}))`;
+    }
     if (node.op === 'array_extract') {
       const arr = this.resolveArg(node, 'array', func, options, ir);
-      const idx = this.resolveArg(node, 'index', func, options, ir);
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
+
+      // Matrix target detection for flat array access
+      const targetId = node['array'] as string;
+      if (targetId) {
+        const targetIn = func.inputs.find(i => i.id === targetId);
+        const targetVar = func.localVars.find(v => v.id === targetId);
+        const t = (targetIn?.type || targetVar?.type || '').toLowerCase();
+        if (t === 'float3x3' || t === 'mat3x3<f32>') {
+          return `${arr}[u32(${idx} / 3)][u32(${idx} % 3)]`;
+        } else if (t === 'float4x4' || t === 'mat4x4<f32>') {
+          return `${arr}[u32(${idx} / 4)][u32(${idx} % 4)]`;
+        }
+      }
+
       return `${arr}[u32(${idx})]`;
     }
-
-    if (node.op === 'color_mix') {
-      this.addHelper(`
-fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let srcA = src.a;
-  let dstA = dst.a;
-  let outA = srcA + dstA * (1.0 - srcA);
-  if (outA < 1e-6) { return vec4<f32>(0.0); }
-  let rgb = (src.rgb * srcA + dst.rgb * dstA * (1.0 - srcA)) / outA;
-  return vec4<f32>(rgb, outA);
-}
-      `);
-      const a = this.resolveArg(node, 'a', func, options, ir, 'float4');
-      const b = this.resolveArg(node, 'b', func, options, ir, 'float4');
-      return `color_mix_impl(${a}, ${b})`;
+    if (node.op === 'buffer_load') {
+      const bufferId = node['buffer'] as string;
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
+      const bufVar = this.getBufferVar(bufferId);
+      const def = options.resourceDefs?.get(bufferId);
+      const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
+      return `${type}(${bufVar}.data[u32(${idx})])`;
     }
-    // Swizzles and Element Access
+    if (node.op === 'color_mix') {
+      this.addHelper(`fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let outA = src.a + dst.a * (1.0 - src.a);
+  if (outA < 1e-6) { return vec4<f32>(0.0); }
+  return vec4<f32>((src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / outA, outA);
+}`);
+      return `color_mix_impl(${this.resolveArg(node, 'a', func, options, ir, 'float4')}, ${this.resolveArg(node, 'b', func, options, ir, 'float4')})`;
+    }
     if (node.op === 'vec_swizzle') {
       const vec = this.resolveArg(node, 'vec', func, options, ir);
-      const channels = node['channels'];
-      return `${vec}.${channels}`;
+      const swizzle = node['swizzle'] || node['channels'];
+      return `${vec}.${swizzle}`;
     }
-    if (node.op === 'vec_get_element') {
-      const vec = this.resolveArg(node, 'vec', func, options, ir);
-      // We need 'index'. resolveArg of 'index' returns string (e.g. "1.0" or "i").
-      // Vector access requires integer or literal int.
-      // resolveArg returns formatted float usually? "1.0".
-      // `vec[u32(idx)]` ?
-      const idx = this.resolveArg(node, 'index', func, options, ir);
-      return `${vec}[u32(${idx})]`;
+    if (node.op === 'mat_extract') {
+      const mat = this.resolveArg(node, 'mat', func, options, ir);
+      const row = this.resolveArg(node, 'row', func, options, ir, 'int');
+      const col = this.resolveArg(node, 'col', func, options, ir, 'int');
+      return `${mat}[u32(${col})][u32(${row})]`;
     }
     if (node.op === 'struct_extract') {
       const struct = this.resolveArg(node, 'struct', func, options, ir);
-      const field = node['field'];
-      return `${struct}.${field}`;
+      const member = node['member'] || node['name'] || node['field'];
+      if (!member) return `${struct}.undefined_member`;
+      return `${struct}.${member}`;
     }
+    if (node.op === 'builtin_get') return node['name'];
+    if (this.isMathOp(node.op)) return this.compileMath(node, func, options, ir);
+    return '0.0';
+  }
 
-    if (node.op === 'texture_load') {
-      const tex = node['tex'];
-      const coords = this.resolveArg(node, 'coords', func, options, ir);
-      // textureLoad for sampled texture uses (tex, coords, lod)
-      return `textureLoad(${tex}, vec2<i32>(${coords}.xy), 0)`;
-    }
+  private isMathOp(op: string) { return op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('quat_'); }
 
-    if (node.op === 'buffer_load') {
-      const bufferId = node['buffer'];
-      const idx = this.resolveArg(node, 'index', func, options, ir);
-      return `b_${bufferId}.data[u32(${idx})]`;
-    }
+  private compileMath(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument): string {
+    const op = node.op;
+    const a = (k = 'a') => this.resolveArg(node, k, func, options, ir);
+    const b = (k = 'b') => this.resolveArg(node, k, func, options, ir);
+    const val = (k = 'val') => this.resolveArg(node, k, func, options, ir);
+    if (op === 'math_add') return `(${a()} + ${b()})`;
+    if (op === 'math_sub') return `(${a()} - ${b()})`;
+    if (op === 'math_mul') return `(${a()} * ${b()})`;
+    if (op === 'math_div') return `(${a()} / ${b()})`;
+    if (op === 'math_mod') return `(${a()} % ${b()})`;
+    if (op === 'math_neg') return `(-${val()})`;
+    if (op === 'math_abs') return `abs(${val()})`;
+    if (op === 'math_sin') return `sin(${val()})`;
+    if (op === 'math_cos') return `cos(${val()})`;
+    if (op === 'math_tan') return `tan(${val()})`;
+    if (op === 'math_asin') return `asin(${val()})`;
+    if (op === 'math_acos') return `acos(${val()})`;
+    if (op === 'math_atan') return `atan(${val()})`;
+    if (op === 'math_sqrt') return `sqrt(${val()})`;
+    if (op === 'math_exp') return `exp(${val()})`;
+    if (op === 'math_log') return `log(${val()})`;
+    if (op === 'math_pow') return `pow(${a()}, ${b()})`;
+    if (op === 'math_min') return `min(${a()}, ${b()})`;
+    if (op === 'math_max') return `max(${a()}, ${b()})`;
+    if (op === 'math_clamp') return `clamp(${val()}, ${this.resolveArg(node, 'min', func, options, ir)}, ${this.resolveArg(node, 'max', func, options, ir)})`;
+    if (op === 'math_mix') return `mix(${a()}, ${b()}, ${this.resolveArg(node, 't', func, options, ir)})`;
+    if (op === 'vec_dot') return `dot(${a()}, ${b()})`;
+    if (op === 'vec_cross') return `cross(${a()}, ${b()})`;
+    if (op === 'vec_length') return `length(${a()})`;
+    if (op === 'vec_normalize') return `normalize(${a()})`;
+    return '0.0';
+  }
 
-    if (node.op === 'texture_load') {
-      const tex = node['tex'];
-      const coords = this.resolveArg(node, 'coords', func, options, ir);
-      // textureLoad for storage textures doesn't take lod
-      return `textureLoad(${tex}, vec2<i32>(${coords}.xy))`;
-    }
+  private resolveType(type: DataType | string): string {
+    if (type === 'float') return 'f32';
+    if (type === 'int') return 'i32';
+    if (type === 'bool') return 'bool';
+    if (type === 'float2') return 'vec2<f32>';
+    if (type === 'float3') return 'vec3<f32>';
+    if (type === 'float4') return 'vec4<f32>';
+    if (type === 'float3x3') return 'mat3x3<f32>';
+    if (type === 'float4x4') return 'mat4x4<f32>';
+    if (type === 'string') throw new Error('Shaders do not support string type');
 
-    if (node.op === 'builtin_get') {
-      const name = node['name'] as string;
-      const map: Record<string, string> = {
-        'global_invocation_id': 'GlobalInvocationID',
-        'local_invocation_id': 'LocalInvocationID',
-        'workgroup_id': 'WorkgroupID',
-        'local_invocation_index': 'LocalInvocationIndex',
-        'num_workgroups': 'NumWorkgroups',
-        'frag_coord': 'FragCoord',
-        'front_facing': 'FrontFacing',
-        'sample_index': 'SampleIndex',
-        'vertex_index': 'VertexIndex',
-        'instance_index': 'InstanceIndex',
-        'position': 'Position',
-        'sample_mask': 'SampleMask',
-        'subgroup_invocation_id': 'SubgroupInvocationID',
-        'subgroup_size': 'SubgroupSize'
-      };
-      const wgslName = map[name] || name;
-      // Some built-ins need casting to match expected IR types (usually i32/f32)
-      // e.g. global_invocation_id is vec3<u32> in WGSL, but IR often expects vec3<f32>.
-      if (name.includes('invocation_id') || name === 'workgroup_id' || name === 'num_workgroups') {
-        return `vec3<f32>(${wgslName})`;
+    // Handle array types: float[3] or array<float, 3> or float[]
+    if (type.includes('[') || type.startsWith('array<')) {
+      const match = type.match(/(\w+)\[(\d*)\]/);
+      if (match) {
+        const inner = match[1];
+        const len = match[2];
+        return len ? `array<${this.resolveType(inner)}, ${len}>` : `array<${this.resolveType(inner)} > `;
       }
-      if (name === 'local_invocation_index' || name === 'sample_index' || name === 'vertex_index' || name === 'instance_index') {
-        return `i32(${wgslName})`;
-      }
-      return wgslName;
-    }
-    if (node.op.startsWith('math_') || node.op.startsWith('vec_') || node.op.startsWith('mat_') || node.op.startsWith('quat_')) {
-      return this.compileMathOp(node, func, options, ir, targetType);
+      return type.replace(/\bfloat\b/g, 'f32').replace(/\bint\b/g, 'i32');
     }
 
-    if (node.op === 'texture_sample') {
-      const tex = node['tex'];
-      const uv = this.resolveArg(node, 'uv', func, options, ir, 'vec2<f32>');
-      return `sample_${tex}(${uv})`;
-    }
+    return type.replace(/\bfloat\b/g, 'f32').replace(/\bint\b/g, 'i32');
+  }
 
-    if (node.op === 'texture_store') {
-      const tex = node['tex'];
-      const coords = this.resolveArg(node, 'coords', func, options, ir);
-      const val = this.resolveArg(node, 'value', func, options, ir);
-      return `textureStore(${tex}, vec2<i32>(${coords}), ${val})`;
-    }
-
-    if (node.op === 'texture_load') {
-      const tex = node['tex'];
-      const coords = this.resolveArg(node, 'coords', func, options, ir);
-      // textureLoad(tex, coords, lod) - assuming lod 0 for now if not provided
-      return `textureLoad(${tex}, vec2<i32>(${coords}), 0)`;
-    }
-
-    return '0.0'; // Fallback
+  private getComponentCount(type: DataType | string): number {
+    if (type === 'float2' || type === 'vec2<f32>') return 2;
+    if (type === 'float3' || type === 'vec3<f32>') return 3;
+    if (type === 'float4' || type === 'vec4<f32>' || type === 'quat') return 4;
+    if (type === 'float3x3' || type === 'mat3x3<f32>') return 9;
+    if (type === 'float4x4' || type === 'mat4x4<f32>') return 16;
+    return 1;
   }
 
   private formatLiteral(val: any, type: string | DataType): string {
     if (typeof val === 'number') {
-      if (Number.isInteger(val)) {
-        // If type explicitly requests float/f32, format as float.
-        if (type === 'float' || type === 'f32') return `${val}.0`;
-        // If type implies int (or unknown default), format as int.
-        return `${val}`;
+      // For integer types in WGSL, no decimal points allowed
+      if (type === 'int' || type === 'i32' || type === 'u32' || type === 'uint') {
+        return Math.floor(val).toString();
       }
-      return `${val}`;
+      const s = val.toString();
+      return s.includes('.') ? s : s + '.0';
     }
-    if (Array.isArray(val)) {
-      // Parse type hint if it's "array<T, N>"
-      let elemType = 'f32';
-      if (typeof type === 'string' && type.startsWith('array<')) {
-        // Extract T
-        const match = type.match(/array<(.+),/);
-        if (match) elemType = match[1];
-      }
-
-      // Construct vector/array
-      const comp = val.map(v => this.formatLiteral(v, elemType)).join(', ');
-
-      if (val.length === 2 && (type === 'float2' || type === 'vec2<f32>' || type === 'unknown')) return `vec2<f32>(${comp})`;
-      if (val.length === 3 && (type === 'float3' || type === 'vec3<f32>' || type === 'unknown')) return `vec3<f32>(${comp})`;
-      if (val.length === 4 && (type === 'float4' || type === 'vec4<f32>' || type === 'unknown')) return `vec4<f32>(${comp})`;
-
-      // If array definition is known (e.g. array<i32, 3>) but val is empty, we must zero init?
-      // But val is the literal value. If it is empty array [], it means length 0?
-      // If variable has type array<i32, 3>, and init is [], we cannot satisfy it with array constructor of 0 elems.
-      // We should use formatZero(type) instead if val is empty/default?
-      // But formatLiteral is called with val.
-      // If val is [] and expected type is array<i32, 3>, we should fill with zeros?
-      if (typeof type === 'string' && type.startsWith('array<') && val.length === 0) {
-        return this.formatZero(type);
-      }
-
-      // Default array constructor
-      return `array<${elemType},${val.length}>(${comp})`;
-    }
-    if (typeof val === 'boolean') {
-      return val ? 'true' : 'false';
-    }
-    return `${val}`;
+    if (typeof val === 'boolean') return val.toString();
+    return val.toString();
   }
 
   private formatZero(type: string | DataType): string {
@@ -894,204 +710,19 @@ fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
     if (type === 'float2' || type === 'vec2<f32>') return 'vec2<f32>(0.0)';
     if (type === 'float3' || type === 'vec3<f32>') return 'vec3<f32>(0.0)';
     if (type === 'float4' || type === 'vec4<f32>') return 'vec4<f32>(0.0)';
-    if (type === 'float3x3' || type === 'mat3x3<f32>') return 'mat3x3<f32>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)';
-    if (type === 'float4x4' || type === 'mat4x4<f32>') return 'mat4x4<f32>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)';
-
-    // Array zero init
-    if (typeof type === 'string' && type.startsWith('array<')) {
-      return `${type}()`; // Zero-init constructor syntax? "array<i32, 3>()" is valid in WGSL (default construct).
-    }
-
     return '0.0';
   }
 
-  private compileMathOp(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType?: string | DataType): string {
-    const op = node.op;
-    const effectiveType = targetType || options.nodeTypes?.get(node.id) || 'float';
-    const zero = this.formatZero(effectiveType);
-    const one = this.formatOne(effectiveType);
-
-    const a = (k = 'a') => this.resolveArg(node, k, func, options, ir);
-    const b = (k = 'b') => this.resolveArg(node, k, func, options, ir);
-    const val = (k = 'val') => this.resolveArg(node, k, func, options, ir);
-
-    // Basic Arithmetic
-    if (op === 'math_add') return `(${a()} + ${b()})`;
-    if (op === 'math_sub') return `(${a()} - ${b()})`;
-    if (op === 'math_mul') return `(${a()} * ${b()})`;
-    if (op === 'math_div') return `(${a()} / ${b()})`;
-    if (op === 'math_mod') return `(${a()} - ${b()} * floor(${a()} / ${b()}))`;
-    if (op === 'math_mad') return `fma(${a()}, ${b()}, ${this.resolveArg(node, 'c', func, options, ir)})`;
-
-    // Unary Main
-    if (op === 'math_abs') return `abs(${val()})`;
-    if (op === 'math_floor') return `floor(${val()})`;
-    if (op === 'math_ceil') return `ceil(${val()})`;
-    if (op === 'math_fract') return `fract(${val()})`;
-
-    if (op === 'quat_identity') return 'vec4<f32>(0.0, 0.0, 0.0, 1.0)';
-    if (op === 'quat_mul') {
-      return `vec4<f32>(${a()}.w * ${b()}.xyz + ${b()}.w * ${a()}.xyz + cross(${a()}.xyz, ${b()}.xyz), ${a()}.w * ${b()}.w - dot(${a()}.xyz, ${b()}.xyz))`;
-    }
-    if (op === 'quat_rotate') {
-      const q = this.resolveArg(node, 'q', func, options, ir);
-      const v = this.resolveArg(node, 'v', func, options, ir);
-      return `(${v} + 2.0 * cross(${q}.xyz, cross(${q}.xyz, ${v}) + ${q}.w * ${v}))`;
-    }
-    if (op === 'quat_slerp') {
-      // ... helper already added above or add here
-      this.addHelper(`
-fn quat_slerp_impl(q1: vec4<f32>, q2: vec4<f32>, t: f32) -> vec4<f32> {
-  var dot_val = dot(q1, q2);
-  var q2_prime = q2;
-  if (dot_val < 0.0) { dot_val = -dot_val; q2_prime = -q2; }
-  if (dot_val > 0.9995) { return normalize(mix(q1, q2_prime, t)); }
-  let theta_0 = acos(clamp(dot_val, -1.0, 1.0));
-  let theta = theta_0 * t;
-  let q3 = normalize(q2_prime - q1 * dot_val);
-  return q1 * cos(theta) + q3 * sin(theta);
-}
-      `);
-      return `quat_slerp_impl(${this.resolveArg(node, 'a', func, options, ir)}, ${this.resolveArg(node, 'b', func, options, ir)}, ${this.resolveArg(node, 't', func, options, ir, 'float')})`;
-    }
-    if (op === 'quat_to_mat4' || op === 'quat_to_float4x4') {
-      const q = this.resolveArg(node, 'q', func, options, ir);
-      // Quat to Mat4 (Column major)
-      return `mat4x4<f32>(
-        1.0 - 2.0*(${q}.y*${q}.y + ${q}.z*${q}.z), 2.0*(${q}.x*${q}.y + ${q}.w*${q}.z), 2.0*(${q}.x*${q}.z - ${q}.w*${q}.y), 0.0,
-        2.0*(${q}.x*${q}.y - ${q}.w*${q}.z), 1.0 - 2.0*(${q}.x*${q}.x + ${q}.z*${q}.z), 2.0*(${q}.y*${q}.z + ${q}.w*${q}.x), 0.0,
-        2.0*(${q}.x*${q}.z + ${q}.w*${q}.y), 2.0*(${q}.y*${q}.z - ${q}.w*${q}.x), 1.0 - 2.0*(${q}.x*${q}.x + ${q}.y*${q}.y), 0.0,
-        0.0, 0.0, 0.0, 1.0
-      )`;
-    }
-
-    if (op === 'mat_identity') {
-      const size = node['size'];
-      if (size === 3) return 'mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)';
-      return 'mat4x4<f32>(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)';
-    }
-    if (op === 'mat_mul') return `(${a()} * ${b()})`;
-    if (op === 'mat_transpose') return `transpose(${val()})`;
-    if (op === 'mat_inverse') return `inverse(${val()})`; // Note: WGSL doesn't have inverse! We might need a polyfill.
-
-    // Quaternion Ops (Wait for common-math.wgsl or inject polyfills)
-    // For now, let's assume we need to implement them or they are external.
-    if (op === 'quat_mul') return `/* TODO: quat_mul */ 0.0`;
-    if (op === 'quat_rotate') return `/* TODO: quat_rotate */ 0.0`;
-    if (op === 'quat_slerp') return `/* TODO: quat_slerp */ 0.0`;
-    if (op === 'quat_to_mat4') return `/* TODO: quat_to_mat4 */ 0.0`;
-
-    // Trig & Transcendental
-    if (op === 'math_sqrt') return `sqrt(${val()})`;
-    if (op === 'math_is_nan') {
-      const v = val();
-      const count = this.getComponentCount(effectiveType);
-      const uType = count === 1 ? 'u32' : `vec${count}<u32>`;
-      const bType = count === 1 ? 'u32' : `vec${count}<u32>`;
-
-      const mask = count === 1 ? '0x7fffffffu' : `${uType}(0x7fffffffu)`;
-      const inf = count === 1 ? '0x7f800000u' : `${uType}(0x7f800000u)`;
-
-      return `select(${zero}, ${one}, (bitcast<${uType}>(${v}) & ${mask}) > ${inf})`;
-    }
-    if (op === 'math_is_inf') return `select(${zero}, ${one}, isinf(${val()}))`;
-    if (op === 'math_log') return `log(${val()})`;
-    if (op === 'math_sin') return `sin(${val()})`;
-    if (op === 'math_cos') return `cos(${val()})`;
-    if (op === 'math_tan') return `tan(${val()})`;
-    if (op === 'math_tanh') return `tanh(${val()})`;
-    if (op === 'math_atan') return `atan(${val()})`;
-    if (op === 'math_sign') return `sign(${val()})`;
-
-    // Binary / Ternary
-    if (op === 'math_pow') return `pow(${a()}, ${b()})`;
-    if (op === 'math_min') return `min(${a()}, ${b()})`;
-    if (op === 'math_max') return `max(${a()}, ${b()})`;
-    if (op === 'math_clamp') return `clamp(${val()}, ${this.resolveArg(node, 'min', func, options, ir)}, ${this.resolveArg(node, 'max', func, options, ir)})`;
-    if (op === 'math_atan2') return `atan2(${this.resolveArg(node, 'a', func, options, ir)}, ${this.resolveArg(node, 'b', func, options, ir)})`;
-    if (op === 'math_mix') return `mix(${a()}, ${b()}, ${this.resolveArg(node, 't', func, options, ir)})`;
-
-    if (op === 'vec_dot') return `dot(${a()}, ${b()})`;
-    if (op === 'vec_length') return `length(${this.resolveArg(node, 'a', func, options, ir) === '0.0' ? val('val') : this.resolveArg(node, 'a', func, options, ir)})`;
-    if (op === 'vec_normalize') return `normalize(${this.resolveArg(node, 'a', func, options, ir)})`;
-    if (op === 'vec_mix') return `mix(${a()}, ${b()}, ${this.resolveArg(node, 't', func, options, ir)})`;
-
-    // Logic & Cmparison (Returns bool? Cast to float?)
-    if (op === 'math_lt') return `select(${zero}, ${one}, ${a()} < ${b()})`;
-    if (op === 'math_gt') return `select(${zero}, ${one}, ${a()} > ${b()})`;
-    if (op === 'math_le') return `select(${zero}, ${one}, ${a()} <= ${b()})`;
-    if (op === 'math_ge') return `select(${zero}, ${one}, ${a()} >= ${b()})`;
-    if (op === 'math_eq') return `select(${zero}, ${one}, ${a()} == ${b()})`;
-    if (op === 'math_neq') return `select(${zero}, ${one}, ${a()} != ${b()})`;
-
-    // Boolean Logic (assuming scalar 0.0/1.0 inputs or bools)
-    // If inputs are floats (from select), we need `!= 0.0`.
-    // WGSL logic `&`, `|` are for bools.
-    const toBool = (expr: string) => `(${expr} != 0.0)`;
-    if (op === 'math_and') return `select(0.0, 1.0, ${toBool(a())} && ${toBool(b())})`;
-    if (op === 'math_or') return `select(0.0, 1.0, ${toBool(a())} || ${toBool(b())})`;
-    if (op === 'math_xor') return `select(0.0, 1.0, ${toBool(a())} != ${toBool(b())})`; // XOR for bools is !=
-    if (op === 'math_not') return `select(0.0, 1.0, !${toBool(val())})`;
-
-    // Constants
-    if (op === 'math_pi') return '3.14159265359';
-    if (op === 'math_e') return '2.71828182846';
-
-    return `/* ${op} */ 0.0`;
-  }
-
-  private resolveType(type: DataType | string): string {
-    // console.log(`[WgslGenerator] Resolving type: '${type}'`);
-    // Map IR types to WGSL types
-    if (type === 'float' || type === 'f32') return 'f32';
-    if (type === 'int' || type === 'i32') return 'i32';
-    if (type === 'bool') return 'bool';
-    if (type === 'float2' || type === 'vec2<f32>') return 'vec2<f32>';
-    if (type === 'float3' || type === 'vec3<f32>') return 'vec3<f32>';
-    if (type === 'float4' || type === 'vec4<f32>') return 'vec4<f32>';
-    if (type === 'float3x3' || type === 'mat3x3<f32>') return 'mat3x3<f32>';
-    if (type === 'float4x4' || type === 'mat4x4<f32>') return 'mat4x4<f32>';
-
-    // Fallback: Assume it's a struct name or user type
-    // In strict mode we should check in IR.
-    return type; // Default
-  }
-
-  private getComponentCount(type: DataType | string): number {
-    if (type === 'float2' || type === 'vec2<f32>') return 2;
-    if (type === 'float3' || type === 'vec3<f32>') return 3;
-    if (type === 'float4' || type === 'vec4<f32>') return 4;
-    if (type === 'float3x3' || type === 'mat3x3<f32>') return 9;
-    if (type === 'float4x4' || type === 'mat4x4<f32>') return 16;
-    return 1;
-  }
-
-  private formatOne(type: string | DataType): string {
-    if (type === 'float' || type === 'f32') return '1.0';
-    if (type === 'int' || type === 'i32') return '1';
-    if (type === 'bool') return 'true';
-    if (type === 'float2' || type === 'vec2<f32>') return 'vec2<f32>(1.0)';
-    if (type === 'float3' || type === 'vec3<f32>') return 'vec3<f32>(1.0)';
-    if (type === 'float4' || type === 'vec4<f32>') return 'vec4<f32>(1.0)';
-    return '1.0';
-  }
-
-  public static findUsedResources(func: FunctionDef, ir: IRDocument): Set<string> {
+  public static findUsedResources(func: FunctionDef, ir: IRDocument | ResourceDef[]): Set<string> {
     const resources = new Set<string>();
+    const allResources = Array.isArray(ir) ? ir : (ir.resources || []);
+    const resourceIds = new Set(allResources.map(r => r.id));
     func.nodes.forEach(node => {
       if (node.op === 'buffer_load' || node.op === 'buffer_store') {
-        if (node['buffer']) resources.add(node['buffer'] as string);
+        if (node['buffer'] && resourceIds.has(node['buffer'] as string)) resources.add(node['buffer'] as string);
       }
       if (node.op === 'texture_load' || node.op === 'texture_store' || node.op === 'texture_sample') {
-        if (node['tex']) resources.add(node['tex'] as string);
-      }
-      if (node.op === 'call_func') {
-        const targetId = node['func'];
-        const targetFunc = ir.functions.find(f => f.id === targetId);
-        if (targetFunc) {
-          const innerResources = WgslGenerator.findUsedResources(targetFunc, ir);
-          innerResources.forEach(res => resources.add(res));
-        }
+        if (node['tex'] && resourceIds.has(node['tex'] as string)) resources.add(node['tex'] as string);
       }
     });
     return resources;
