@@ -15,25 +15,17 @@ import { RuntimeValue, ResourceState } from '../../ir/resource-store';
 
 class WebGpuHostExecutor {
   webGpuExec: WebGpuExecutor;
-  resources: Map<string, ResourceState>;
-  inputs: Map<string, RuntimeValue>;
-  variables: Map<string, RuntimeValue>;
+  ctx: EvaluationContext;
   jit: CpuJitCompiler;
   compiledCache: Map<string, Function> = new Map();
-  logAction?: (type: string, id: string, payload: any) => void;
-  device: GPUDevice;
 
-  constructor(resources: Map<string, ResourceState>, inputs: Map<string, RuntimeValue>, variables: Map<string, RuntimeValue>, webGpuExec: WebGpuExecutor, logAction?: any) {
-    this.resources = resources;
-    this.inputs = inputs;
-    this.variables = variables;
+  constructor(ctx: EvaluationContext, webGpuExec: WebGpuExecutor) {
+    this.ctx = ctx;
     this.webGpuExec = webGpuExec;
-    this.logAction = logAction;
     this.jit = new CpuJitCompiler();
-    this.device = webGpuExec.device;
   }
 
-  async executeFunction(func: FunctionDef, functions: FunctionDef[]) {
+  async executeFunction(func: FunctionDef, functions: FunctionDef[]): Promise<RuntimeValue> {
     let compiled = this.compiledCache.get(func.id);
     if (!compiled) {
       compiled = this.jit.compile(func, functions);
@@ -47,25 +39,13 @@ class WebGpuHostExecutor {
         await this.webGpuExec.executeShader(targetFunc, dim, args);
       },
       draw: async (targetId, vertexId, fragmentId, count, pipeline) => {
-        await this.webGpuExec.executeDraw(targetId, vertexId, fragmentId, count, pipeline, Array.from(this.resources.values()).map(r => r.def));
-      },
-      callOp: (opName, args) => {
-        const handler = (HostOps as any)[opName];
-        if (handler) return handler(args);
-        console.warn(`JIT Warning: Host implementation of '${opName}' not found. Available:`, Object.keys(HostOps));
-        return 0;
-      },
-      resolveString: (val) => {
-        if (this.inputs.has(val)) return this.inputs.get(val)!;
-        return val;
-      },
-      resolveVar: (val) => {
-        if (this.inputs.has(val)) return this.inputs.get(val)!;
-        throw new Error(`Runtime Error: Input variable '${val}' is not defined`);
+        const resources = Array.from(this.ctx.resources.values()).map(r => r.def);
+        await this.webGpuExec.executeDraw(targetId, vertexId, fragmentId, count, pipeline, resources);
       },
       resize: (resId, size, format, clear) => {
-        const res = this.resources.get(resId);
+        const res = this.ctx.resources.get(resId);
         if (!res) throw new Error(`Resource '${resId}' not found`);
+
         if (res.def.type === 'buffer') {
           const newSize = typeof size === 'number' ? size : size[0];
           if (res.data && res.data.length === newSize) return;
@@ -74,10 +54,9 @@ class WebGpuHostExecutor {
         } else if (res.def.type === 'texture2d') {
           const width = Array.isArray(size) ? size[0] : size;
           const height = Array.isArray(size) ? size[1] : 1;
-          if (res.width !== width || res.height !== height) {
-            res.width = width;
-            res.height = height;
-          }
+          res.width = width;
+          res.height = height;
+
           if (format !== undefined) {
             if (typeof format === 'number') {
               const strFmt = TextureFormatFromId[format];
@@ -90,16 +69,17 @@ class WebGpuHostExecutor {
             res.data = new Array(width * height).fill(clear);
           }
         }
-        if (this.logAction) this.logAction('resize', resId, { size, format });
+        if (this.ctx.logAction) this.ctx.logAction('resize', resId, { size, format });
       },
       log: (msg, payload) => {
         console.log(`[JIT Log] ${msg}`, payload);
-        if (this.logAction) this.logAction('log', msg, payload);
+        if (this.ctx.logAction) this.ctx.logAction('log', msg, payload);
       }
     };
 
-    // Execute
-    return await compiled(this.resources, this.inputs, globals, this.variables);
+    // Compiled signature: (resources, inputs, globals, variables)
+    // We use context resources, global inputs, and current frame variables
+    return await compiled(this.ctx.resources, this.ctx.inputs, globals, this.ctx.currentFrame.vars);
   }
 
   destroy() {
@@ -139,7 +119,7 @@ export const WebGpuBackend: TestBackend = {
       // 3. Execute
       if (func.type === 'cpu') {
         ctx.pushFrame(entryPoint);
-        hostExec = new WebGpuHostExecutor(ctx.resources, ctx.inputs, ctx.currentFrame.vars, gpuExec, ctx.logAction?.bind(ctx));
+        hostExec = new WebGpuHostExecutor(ctx, gpuExec);
         await hostExec.executeFunction(func, ctx.ir.functions);
       } else {
         // Direct shader execution

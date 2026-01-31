@@ -113,10 +113,12 @@ export class WgslGenerator {
     }
 
     // 2.5. Inputs Buffer (Uniforms / Non-Stage IO)
-    // Only generate for compute shaders or if specifically requested.
-    // In Render pipelines, inputs are often handled via vertex buffers or separate uniforms.
-    if (options.stage === 'compute' && options.inputBinding !== undefined && fullIr.inputs.length > 0) {
-      const docInputs = [...fullIr.inputs];
+    // For shaders, we use the function's own inputs. For direct execution of a graph, we might use global inputs.
+    const inputSource = (entryFunc.type === 'shader') ? entryFunc.inputs : fullIr.inputs;
+    const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin);
+
+    if (options.stage === 'compute' && options.inputBinding !== undefined && nonBuiltinInputs.length > 0) {
+      const docInputs = [...nonBuiltinInputs];
       docInputs.sort((a, b) => {
         const aIsArr = a.type.includes('[]') || (a.type.startsWith('array<') && !a.type.includes(','));
         const bIsArr = b.type.includes('[]') || (b.type.startsWith('array<') && !b.type.includes(','));

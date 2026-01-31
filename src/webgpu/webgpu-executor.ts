@@ -40,10 +40,16 @@ export class WebGpuExecutor {
     const computeShaders = new Set<string>();
     const renderShaders = new Set<string>();
 
+    console.log(`[WebGpuExecutor] Initializing with ${functions.length} functions and ${allResources.length} resources`);
+
     for (const f of functions) {
       if (f.type !== 'cpu') continue;
+      console.log(`[WebGpuExecutor] Scanning CPU function ${f.id} for dispatches`);
       for (const node of f.nodes) {
-        if (node.op === 'cmd_dispatch' && node.func) computeShaders.add(node.func);
+        if (node.op === 'cmd_dispatch' && node.func) {
+          console.log(`[WebGpuExecutor] Found dispatch to ${node.func} in ${f.id}`);
+          computeShaders.add(node.func);
+        }
         if (node.op === 'cmd_draw') {
           if (node.vertex) renderShaders.add(node.vertex);
           if (node.fragment) renderShaders.add(node.fragment);
@@ -52,10 +58,14 @@ export class WebGpuExecutor {
     }
 
     for (const func of functions) {
-      if (func.type !== 'shader') continue;
+      if (func.type !== 'shader') {
+        console.log(`[WebGpuExecutor] Skipping ${func.id} (type: ${func.type})`);
+        continue;
+      }
 
       // If it's a render shader, we don't create a compute pipeline for it
       const isCompute = computeShaders.has(func.id) || (!renderShaders.has(func.id));
+      console.log(`[WebGpuExecutor] Function ${func.id}: isCompute=${isCompute}, in computeShaders=${computeShaders.has(func.id)}, in renderShaders=${renderShaders.has(func.id)}`);
       if (!isCompute) continue;
 
       // Options for compilation
@@ -268,6 +278,7 @@ export class WebGpuExecutor {
     pipelineDef: RenderPipelineDef,
     allResources: ResourceDef[]
   ) {
+    console.log(`[WebGpuExecutor] executeDraw: target=${targetId}, VS=${vertexId}, FS=${fragmentId}, count=${vertexCount}`);
     // 1. Prepare Pipeline
     const pipeline = await this.prepareRenderPipeline(vertexId, fragmentId, pipelineDef, allResources);
 
@@ -288,14 +299,7 @@ export class WebGpuExecutor {
       }]
     });
 
-    // 4. Bind Resources (Group 0)
-    // We reuse the same logic as Compute? We need a bindgroup covering needed resources.
-    // For now, let's look for a single bind group that covers relevant buffers?
-    // Or just create a new one for this pass?
-    // Simplified: Create a bindgroup with ALL resources (Compute style) for now.
-    // This assumes specific layout compatibility.
-    // We must exclude the render target (output) from bindings if not used as input.
-    // TODO: Improve bind group management.
+    console.log(`[WebGpuExecutor] Creating universal bind group for render...`);
     const bindGroup = await this.createUniversalBindGroup(pipeline, [targetId]);
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);

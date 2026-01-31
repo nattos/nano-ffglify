@@ -3,13 +3,15 @@ import { BuiltinOp, RenderPipelineDef } from '../ir/types';
 
 /**
  * Interface for the host environment provided to JIT-compiled CPU code.
+ *
+ * ARCHITECTURAL PRINCIPLE:
+ * The compiled JS must NOT call back into this interface for any logic, math,
+ * or data resolution. All math, vector operations, and struct management
+ * must be inlined or handled via local helpers emitted in the JIT function.
+ *
+ * This ensures the JIT code behaves like a standalone "kernel", similar to WGSL.
  */
 export interface RuntimeGlobals {
-  /**
-   * Invokes a built-in operation (e.g., math, vector, matrix).
-   */
-  callOp(op: BuiltinOp, args: Record<string, any>): RuntimeValue;
-
   /**
    * Dispatches a GPU compute shader.
    */
@@ -21,22 +23,12 @@ export interface RuntimeGlobals {
   draw(targetId: string, vertexId: string, fragmentId: string, vertexCount: number, pipeline: RenderPipelineDef): Promise<void>;
 
   /**
-   * Resizes a resource (buffer or texture).
+   * Resizes a resource (buffer or texture) in the execution context.
    */
   resize(resId: string, size: number | number[], format?: string | number, clear?: any): void;
 
   /**
-   * Logs a message or action for debugging.
+   * Logs a message or action for debugging/profiling.
    */
   log(message: string, payload?: any): void;
-
-  /**
-   * Resolves a string that could be an input name or a literal.
-   */
-  resolveString(val: string): RuntimeValue;
-
-  /**
-   * Resolves a variable that could be a builtin or global input.
-   */
-  resolveVar(id: string): RuntimeValue;
 }
