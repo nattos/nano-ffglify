@@ -5,6 +5,7 @@ import { WebGpuBackend } from './webgpu-backend';
 import { ComputeTestBackend } from './compute-test-backend';
 import { TestBackend } from './types';
 import { InterpreterBackend } from './interpreter-backend';
+import { GpuCache } from '../../webgpu/gpu-cache';
 
 const backends = [InterpreterBackend, WebGpuBackend, ComputeTestBackend];
 

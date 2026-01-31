@@ -1,10 +1,8 @@
 import { globals } from 'webgpu';
-import { getSharedDevice } from './gpu-singleton';
+import { getSharedDevice, gpuSemaphore } from './gpu-singleton';
 
 // Ensure globals
-if (typeof global !== 'undefined' && !global.GPUBufferUsage) {
-  Object.assign(global, globals);
-}
+// WebGPU Globals are managed in gpu-singleton.ts
 
 import type { TestBackend } from './types';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
@@ -179,24 +177,31 @@ export const WebGpuBackend: TestBackend = {
   },
 
   run: async (ctx: EvaluationContext, entryPoint: string) => {
-    const device = (ctx as any).device as GPUDevice;
-    if (!device) throw new Error('Context missing GPUDevice');
+    await gpuSemaphore.acquire();
+    let hostExec;
+    try {
+      const device = (ctx as any).device as GPUDevice;
+      if (!device) throw new Error('Context missing GPUDevice');
 
-    const gpuExec = new WebGpuExecutor(device, ctx);
-    await gpuExec.initialize();
-    const hostExec = new WebGpuHostExecutor(ctx, gpuExec);
+      const gpuExec = new WebGpuExecutor(device, ctx);
+      await gpuExec.initialize();
+      hostExec = new WebGpuHostExecutor(ctx, gpuExec);
 
-    const func = ctx.ir.functions.find(f => f.id === entryPoint);
-    if (!func) throw new Error(`Entry point '${entryPoint}' not found`);
+      const func = ctx.ir.functions.find(f => f.id === entryPoint);
+      if (!func) throw new Error(`Entry point '${entryPoint}' not found`);
 
-    // Only support CPU entry point for now (Host Logic)
-    if (func.type === 'cpu') {
-      ctx.pushFrame(entryPoint);
-      await hostExec.executeFunction(func);
-    } else {
-      // Direct shader execution - usually tests use a wrapper 'main'
-      // If entry point is shader, we dispatch (1,1,1)?
-      await gpuExec.executeShader(entryPoint, [1, 1, 1]);
+      // Only support CPU entry point for now (Host Logic)
+      if (func.type === 'cpu') {
+        ctx.pushFrame(entryPoint);
+        await hostExec.executeFunction(func);
+      } else {
+        // Direct shader execution - usually tests use a wrapper 'main'
+        // If entry point is shader, we dispatch (1,1,1)?
+        await gpuExec.executeShader(entryPoint, [1, 1, 1]);
+      }
+    } finally {
+      hostExec?.destroy();
+      gpuSemaphore.release();
     }
   },
 

@@ -91,10 +91,12 @@ if (!(globalThis as any).showDirectoryPicker) {
 }
 
 // Mock document.queryCommandSupported and execCommand for Monaco
-document.queryCommandSupported = document.queryCommandSupported || (() => false);
+if (typeof document !== 'undefined') {
+  (document as any).queryCommandSupported = (document as any).queryCommandSupported || (() => false);
+}
 
 // Mock Web MIDI API
-if (!navigator.requestMIDIAccess) {
+if (typeof navigator !== 'undefined' && !navigator.requestMIDIAccess) {
   Object.defineProperty(navigator, 'requestMIDIAccess', {
     value: vi.fn().mockResolvedValue({
       inputs: new Map(),

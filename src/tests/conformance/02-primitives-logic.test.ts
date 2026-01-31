@@ -1,7 +1,13 @@
+/**
+ * @vitest-environment node
+ *
+ * NOTE: This file was split from 02-primitives.test.ts to avoid Vitest worker crashes
+ * caused by the cumulative load of many WebGPU test definitions in a single process.
+ */
 import { describe, expect } from 'vitest';
 import { runParametricTest, availableBackends } from './test-runner';
 
-describe('Conformance: Primitives and Operators', () => {
+describe('Conformance: Logic and WGSL Edge Cases', () => {
 
   const bufferDef = {
     id: 'b_result',
@@ -19,7 +25,6 @@ describe('Conformance: Primitives and Operators', () => {
 
   const runBatchTest = (suiteName: string, cases: TestCase[]) => {
     availableBackends.forEach(backend => {
-      // Logic for calculating offsets and data types
       let currentOffset = 0;
       const nodesWithMeta = cases.map((c, i) => {
         const size = Array.isArray(c.expected) ? c.expected.length : 1;
@@ -31,49 +36,37 @@ describe('Conformance: Primitives and Operators', () => {
         const nodeOffset = currentOffset;
         currentOffset += size;
 
-        // If Logic tests return boolean, we treat as float (0/1) storage size 1
         if (typeof c.expected === 'boolean') {
-          dataType = 'bool'; // Generator maps bool -> f32 storage anyway
+          dataType = 'bool';
         }
 
         return { index: i, offset: nodeOffset, dataType, ...c };
       });
 
-      // Construct Nodes
       const nodes = nodesWithMeta.flatMap((meta) => {
         const ops = [];
-        // Primary Op
         ops.push({ id: `op_${meta.index}`, op: meta.op, ...meta.args });
 
-        // Storage
         let storeValueId = `op_${meta.index}`;
         if (typeof meta.expected === 'boolean') {
-          // Add cast node for storage
           ops.push({ id: `cast_${meta.index}`, op: 'static_cast_float', val: storeValueId });
           storeValueId = `cast_${meta.index}`;
         }
 
         if (meta.dataType.startsWith('vec') || meta.dataType.startsWith('float2') || meta.dataType.startsWith('float3') || meta.dataType.startsWith('float4')) {
-          // Vector: Decompose -> Store
           const size = Array.isArray(meta.expected) ? meta.expected.length : 1;
           const channels = ['x', 'y', 'z', 'w'];
           for (let k = 0; k < size; k++) {
-            // Extract component
             const compId = `comp_${meta.index}_${k}`;
-            // Use swizzle for extraction (supported by all backends easily)
             ops.push({ id: compId, op: 'vec_swizzle', vec: storeValueId, channels: channels[k] });
-            // Store component
             ops.push({ id: `store_${meta.index}_${k}`, op: 'buffer_store', buffer: 'b_result', index: meta.offset + k, value: compId });
           }
         } else {
-          // Scalar: Direct Store
           ops.push({ id: `store_${meta.index}_0`, op: 'buffer_store', buffer: 'b_result', index: meta.offset, value: storeValueId });
         }
         return ops;
       });
 
-      // Construct Execution Chain Edges (store_prev_last -> store_curr_0 -> store_curr_1 ...)
-      // We need to flatten the list of stores to chain them.
       const storeNodes = nodes.filter(n => n.op === 'buffer_store');
 
       const execEdges = storeNodes.map((node, i) => {
@@ -96,11 +89,9 @@ describe('Conformance: Primitives and Operators', () => {
           try {
             if (Array.isArray(expected)) {
               if (Array.isArray(valAtOffset)) {
-                // Interpreter: Sparse storage of Arrays
                 expect(valAtOffset).toHaveLength(expected.length);
                 (valAtOffset as number[]).forEach((v, idx) => expect(v).toBeCloseTo(expected[idx], 5));
               } else {
-                // Compute/WebGPU: Flattened storage of Numbers
                 const slice = res.data?.slice(offset, offset + expected.length) || [];
                 expect(slice).toHaveLength(expected.length);
                 (slice as number[]).forEach((v, idx) => expect(v).toBeCloseTo(expected[idx], 5));
@@ -109,11 +100,9 @@ describe('Conformance: Primitives and Operators', () => {
               expect(valAtOffset).toBeCloseTo(expected, 5);
             } else if (typeof expected === 'boolean') {
               if (typeof valAtOffset === 'number') {
-                // GPU: 0/1
                 const boolVal = valAtOffset !== 0;
                 expect(boolVal).toEqual(expected);
               } else {
-                // Interpreter: boolean
                 expect(valAtOffset).toEqual(expected);
               }
             } else {
@@ -130,95 +119,6 @@ describe('Conformance: Primitives and Operators', () => {
     });
   };
 
-  runBatchTest('Unary Operators', [
-    { op: 'math_abs', args: { val: -5 }, expected: 5 },
-    { op: 'math_abs', args: { val: 5 }, expected: 5 },
-    { op: 'math_floor', args: { val: 5.9 }, expected: 5 },
-    { op: 'math_floor', args: { val: -5.1 }, expected: -6 },
-    { op: 'math_ceil', args: { val: 5.1 }, expected: 6 },
-    { op: 'math_ceil', args: { val: -5.9 }, expected: -5 },
-    // Vector Unary Support (Ops must handle arrays)
-    { op: 'math_abs', args: { val: [-1, -2] }, expected: [1, 2] },
-    { op: 'math_floor', args: { val: [1.9, 2.1] }, expected: [1, 2] },
-    { op: 'vec_length', args: { a: [3, 4] }, expected: 5 },
-    { op: 'vec_normalize', args: { a: [3, 4] }, expected: [0.6, 0.8] },
-  ]);
-
-  runBatchTest('Binary Operators', [
-    { op: 'math_add', args: { a: 10, b: 20 }, expected: 30 },
-    { op: 'math_sub', args: { a: 10, b: 20 }, expected: -10 },
-    { op: 'math_mul', args: { a: 6, b: 7 }, expected: 42 },
-    { op: 'math_div', args: { a: 20, b: 4 }, expected: 5 },
-    { op: 'math_mod', args: { a: 7, b: 4 }, expected: 3 },
-    { op: 'math_gt', args: { a: 10, b: 5 }, expected: true },
-    { op: 'math_gt', args: { a: 5, b: 10 }, expected: false },
-    { op: 'math_min', args: { a: 10, b: 20 }, expected: 10 },
-    { op: 'math_max', args: { a: 10, b: 20 }, expected: 20 },
-    { op: 'math_pow', args: { a: 2, b: 3 }, expected: 8 },
-    { op: 'math_pow', args: { a: 2, b: 3 }, expected: 8 },
-    { op: 'math_atan2', args: { a: 10, b: 0 }, expected: Math.PI / 2 },
-    // Vector
-    { op: 'vec_dot', args: { a: [1, 0, 0], b: [0, 1, 0] }, expected: 0 },
-    { op: 'vec_dot', args: { a: [1, 2], b: [3, 4] }, expected: 11 },
-  ]);
-
-  runBatchTest('Transcendental & Constants', [
-    // Constants
-    { op: 'math_pi', args: {}, expected: Math.PI },
-    { op: 'math_e', args: {}, expected: Math.E },
-    // Trigonometry
-    { op: 'math_sin', args: { val: 0 }, expected: 0 },
-    { op: 'math_sin', args: { val: Math.PI / 2 }, expected: 1 },
-    { op: 'math_cos', args: { val: 0 }, expected: 1 },
-    { op: 'math_cos', args: { val: Math.PI }, expected: -1 },
-    { op: 'math_tan', args: { val: 0 }, expected: 0 },
-    // Hyperbolic
-    { op: 'math_tanh', args: { val: 0 }, expected: 0 }, // Squash function
-    { op: 'math_tanh', args: { val: 100 }, expected: 1 },
-    // Exponential / Log / Sqrt
-    { op: 'math_exp', args: { val: 1 }, expected: Math.E },
-    { op: 'math_log', args: { val: Math.E }, expected: 1 },
-    { op: 'math_sqrt', args: { val: 16 }, expected: 4 },
-    // Sign
-    { op: 'math_sign', args: { val: -5 }, expected: -1 },
-    { op: 'math_sign', args: { val: 5 }, expected: 1 },
-    { op: 'math_sign', args: { val: 0 }, expected: 0 },
-    // Vector Transcendentals (Broadcasting)
-    { op: 'math_sqrt', args: { val: [4, 9, 16] }, expected: [2, 3, 4] },
-    { op: 'math_sin', args: { val: [0, Math.PI / 2] }, expected: [0, 1] }
-  ]);
-
-  runBatchTest('Ternary Operators', [
-    { op: 'math_clamp', args: { val: 10, min: 0, max: 5 }, expected: 5 },
-    { op: 'math_clamp', args: { val: -10, min: 0, max: 5 }, expected: 0 },
-    { op: 'math_clamp', args: { val: 3, min: 0, max: 5 }, expected: 3 },
-    { op: 'math_mad', args: { a: 2, b: 3, c: 4 }, expected: 10 }, // 2*3 + 4
-    { op: 'vec_mix', args: { a: [0, 0], b: [10, 10], t: 0.5 }, expected: [5, 5] },
-  ]);
-
-  runBatchTest('Color Operations', [
-    {
-      op: 'color_mix',
-      args: { a: [1, 0, 0, 1], b: [0, 1, 0, 0.5] },
-      expected: [0.5, 0.5, 0, 1]
-    },
-    {
-      op: 'color_mix',
-      args: { a: [0, 0, 0, 0], b: [0, 0, 1, 0.5] },
-      expected: [0, 0, 1, 0.5]
-    }
-  ]);
-
-  runBatchTest('Constructors and Swizzles', [
-    { op: 'float2', args: { x: 1, y: 2 }, expected: [1, 2] },
-    { op: 'float3', args: { x: 1, y: 2, z: 3 }, expected: [1, 2, 3] },
-    { op: 'float4', args: { x: 1, y: 2, z: 3, w: 4 }, expected: [1, 2, 3, 4] },
-    { op: 'vec_swizzle', args: { vec: [1, 2, 3, 4], channels: 'x' }, expected: 1 },
-    { op: 'vec_swizzle', args: { vec: [1, 2, 3, 4], channels: 'wzyx' }, expected: [4, 3, 2, 1] },
-    { op: 'vec_swizzle', args: { vec: [1, 2], channels: 'yxy' }, expected: [2, 1, 2] },
-    { op: 'vec_get_element', args: { vec: [10, 20, 30], index: 1 }, expected: 20 },
-  ]);
-
   runBatchTest('Logic & Comparison', [
     { op: 'math_lt', args: { a: 5, b: 10 }, expected: true },
     { op: 'math_lt', args: { a: 10, b: 5 }, expected: false },
@@ -230,7 +130,6 @@ describe('Conformance: Primitives and Operators', () => {
     { op: 'math_eq', args: { a: 5, b: 6 }, expected: false },
     { op: 'math_neq', args: { a: 5, b: 6 }, expected: true },
     { op: 'math_neq', args: { a: 5, b: 5 }, expected: false },
-    // Logical
     { op: 'math_and', args: { a: true, b: true }, expected: true },
     { op: 'math_and', args: { a: true, b: false }, expected: false },
     { op: 'math_or', args: { a: false, b: true }, expected: true },
@@ -242,23 +141,17 @@ describe('Conformance: Primitives and Operators', () => {
   ]);
 
   runBatchTest('WGSL Generator Edge Cases', [
-    // Scope Isolation: Multiple vector stores in sequence
-    // This verifies that the generator correctly scopes 'let v_store' variables
     { op: 'float2', args: { x: 1, y: 2 }, expected: [1, 2] },
     { op: 'float2', args: { x: 3, y: 4 }, expected: [3, 4] },
-
-    // Color Mix: Zero Alpha (Check for NaN avoidance)
-    // If srcA and dstA are 0, outA is 0. Division by zero check should return transparent black.
     {
       op: 'color_mix',
       args: { a: [0, 0, 0, 0], b: [0, 0, 0, 0] },
       expected: [0, 0, 0, 0]
     },
-    // Color Mix: Low Alpha (Check for stability)
     {
       op: 'color_mix',
       args: { a: [1, 0, 0, 0.001], b: [0, 1, 0, 0.001] },
-      expected: [0.49975, 0.50025, 0, 0.001999] // Correct Straight Alpha result (~0.5)
+      expected: [0.49975, 0.50025, 0, 0.001999]
     }
   ]);
 

@@ -196,13 +196,26 @@ export class EvaluationContext {
    * Cleanup backend resources
    */
   destroy() {
-    // Note: We don't destroy the device here because it might be shared (e.g. in tests)
-    // or managed by a higher-level executor.
-    this.device = undefined;
+    // 1. Cleanup Resource Handles (GPU Buffers/Textures)
+    this.resources.forEach(state => {
+      if ((state as any).gpuBuffer && typeof (state as any).gpuBuffer.destroy === 'function') {
+        (state as any).gpuBuffer.destroy();
+        (state as any).gpuBuffer = undefined;
+      }
+      if ((state as any).gpuTexture && typeof (state as any).gpuTexture.destroy === 'function') {
+        (state as any).gpuTexture.destroy();
+        (state as any).gpuTexture = undefined;
+      }
+    });
 
+    // 2. Cleanup Backend Specific
     if (this.webGpuExec && typeof this.webGpuExec.destroy === 'function') {
       this.webGpuExec.destroy();
       this.webGpuExec = undefined;
     }
+
+    // Note: We don't destroy the device here because it might be shared (e.g. in tests)
+    // or managed by a higher-level executor.
+    this.device = undefined;
   }
 }

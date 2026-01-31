@@ -5,26 +5,27 @@ import { CpuJitCompiler } from './cpu-jit';
 import { OpRegistry } from '../interpreter/ops';
 import { BuiltinOp, TextureFormatFromId, RenderPipelineDef } from '../ir/types';
 import { WgslGenerator } from './wgsl-generator';
+import { GpuCache } from './gpu-cache';
 
 // Helper to polyfill if needed, similar to test
-function ensureGpuGlobals() {
-  if (typeof global !== 'undefined' && !global.GPUBufferUsage) {
-    Object.assign(global, globals);
-  }
-}
+// WebGPU Globals are managed in gpu-singleton.ts
 
 export class WebGpuExecutor {
   device: GPUDevice;
   context: EvaluationContext;
 
-  private shaderCache: Map<string, GPUShaderModule> = new Map();
-  private pipelineCache: Map<string, GPUComputePipeline> = new Map();
-  private renderPipelineCache: Map<string, GPURenderPipeline> = new Map();
+  private activePipelines: Map<string, GPUComputePipeline> = new Map();
+  private activeRenderPipelines: Map<string, GPURenderPipeline> = new Map();
 
   constructor(device: GPUDevice, context: EvaluationContext) {
     this.device = device;
     this.context = context;
-    ensureGpuGlobals();
+    // ensureGpuGlobals() is now handled by the backends or singleton
+  }
+
+  destroy() {
+    this.activePipelines.clear();
+    this.activeRenderPipelines.clear();
   }
 
   /**
@@ -54,19 +55,9 @@ export class WebGpuExecutor {
         });
 
         const code = generator.compile(ir, func.id, options);
-        const module = this.device.createShaderModule({
-          label: func.id,
-          code: code
-        });
-
-        const pipeline = await this.device.createComputePipelineAsync({
-          label: `${func.id}_pipeline`,
-          layout: 'auto',
-          compute: { module, entryPoint: 'main' }
-        });
-
-        this.shaderCache.set(func.id, module);
-        this.pipelineCache.set(func.id, pipeline);
+        // Use Global Cache
+        const pipeline = await GpuCache.getComputePipeline(this.device, code);
+        this.activePipelines.set(func.id, pipeline);
       } catch (e: any) {
         console.error(`Failed to compile shader ${func.id}:`);
         console.error(e.message);
@@ -92,7 +83,7 @@ export class WebGpuExecutor {
     if (func.type !== 'shader') throw new Error(`Function '${funcId}' is not a shader`);
 
     // 1. Get Pipeline
-    const pipeline = this.pipelineCache.get(funcId);
+    const pipeline = this.activePipelines.get(funcId);
     if (!pipeline) {
       console.warn(`[WebGpuExecutor] No pre-compiled pipeline for ${funcId}, falling back to CPU JIT`);
       return this.executeShaderCpu(funcId, workgroups, args);
@@ -103,13 +94,15 @@ export class WebGpuExecutor {
     const nonBuiltinInputs = func.inputs.filter(i => !i.builtin);
 
     const entries: GPUBindGroupEntry[] = [];
+    const stagingBuffers: { id: string, staging: GPUBuffer, isTexture?: boolean }[] = [];
+    let inputBuffer: GPUBuffer | undefined;
 
     if (nonBuiltinInputs.length > 0) {
       const bufferData = this.packArguments(nonBuiltinInputs, args);
-      const inputBuffer = this.device.createBuffer({
+      inputBuffer = this.device.createBuffer({
         label: `${funcId}_inputs`,
         size: bufferData.byteLength,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        usage: (globalThis as any).GPUBufferUsage.UNIFORM | (globalThis as any).GPUBufferUsage.COPY_DST
       });
       this.device.queue.writeBuffer(inputBuffer, 0, bufferData);
 
@@ -127,9 +120,6 @@ export class WebGpuExecutor {
 
       if (res.type === 'texture2d') {
         const tex = this.ensureTexture(res.id);
-        // Sync texture from CPU if it exists and might have changed
-        // (Simplified: always write if gpuTexture exists and we have data)
-        // ... (Existing ensureTexture already handles initial write)
         if (tex) entries.push({ binding, resource: tex.createView() });
       } else {
         // Ensure GPU buffer exists
@@ -137,7 +127,7 @@ export class WebGpuExecutor {
           (state as any).gpuBuffer = this.device.createBuffer({
             label: res.id,
             size: Math.max(state.width * 4, 16),
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+            usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_SRC | (globalThis as any).GPUBufferUsage.COPY_DST
           });
         }
         // Always sync data to GPU before dispatch if it exists in CPU memory
@@ -165,7 +155,6 @@ export class WebGpuExecutor {
     pass.end();
 
     // 5. Read-back (Important for conformance tests)
-    const stagingBuffers: { id: string, staging: GPUBuffer, isTexture?: boolean }[] = [];
     this.context.ir.resources.forEach(res => {
       const state = this.context.getResource(res.id);
       if (res.type === 'texture2d') {
@@ -174,7 +163,7 @@ export class WebGpuExecutor {
           const bytesPerRow = Math.ceil((state.width * 4) / 256) * 256;
           const staging = this.device.createBuffer({
             size: bytesPerRow * state.height,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+            usage: (globalThis as any).GPUBufferUsage.MAP_READ | (globalThis as any).GPUBufferUsage.COPY_DST
           });
           encoder.copyTextureToBuffer(
             { texture: gpuTexture },
@@ -188,7 +177,7 @@ export class WebGpuExecutor {
         if (gpuBuffer) {
           const staging = this.device.createBuffer({
             size: gpuBuffer.size,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+            usage: (globalThis as any).GPUBufferUsage.MAP_READ | (globalThis as any).GPUBufferUsage.COPY_DST
           });
           encoder.copyBufferToBuffer(gpuBuffer, 0, staging, 0, gpuBuffer.size);
           stagingBuffers.push({ id: res.id, staging });
@@ -200,7 +189,7 @@ export class WebGpuExecutor {
 
     // 6. Wait for results and sync to Context
     await Promise.all(stagingBuffers.map(async ({ id, staging, isTexture }) => {
-      await staging.mapAsync(GPUMapMode.READ);
+      await staging.mapAsync((globalThis as any).GPUMapMode.READ);
       const state = this.context.getResource(id);
       if (state) {
         if (isTexture) {
@@ -229,7 +218,12 @@ export class WebGpuExecutor {
         }
       }
       staging.unmap();
+      staging.destroy();
     }));
+
+    if (inputBuffer) {
+      inputBuffer.destroy();
+    }
   }
 
   /**
@@ -284,7 +278,7 @@ export class WebGpuExecutor {
     const bytesPerRow = Math.ceil((texture.width * 4) / 256) * 256;
     const stagingBuffer = this.device.createBuffer({
       size: bytesPerRow * texture.height,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      usage: (globalThis as any).GPUBufferUsage.COPY_DST | (globalThis as any).GPUBufferUsage.MAP_READ
     });
 
     encoder.copyTextureToBuffer(
@@ -296,7 +290,7 @@ export class WebGpuExecutor {
     this.device.queue.submit([encoder.finish()]);
 
     // Wait and Map
-    await stagingBuffer.mapAsync(GPUMapMode.READ);
+    await stagingBuffer.mapAsync((globalThis as any).GPUMapMode.READ);
     const data = new Uint8Array(stagingBuffer.getMappedRange());
 
     const res = this.context.getResource(targetId);
@@ -314,11 +308,12 @@ export class WebGpuExecutor {
     }
 
     stagingBuffer.unmap();
+    stagingBuffer.destroy();
   }
 
   private async prepareRenderPipeline(vertexId: string, fragmentId: string, def: RenderPipelineDef): Promise<GPURenderPipeline> {
     const key = `${vertexId}|${fragmentId}|${JSON.stringify(def)}`;
-    if (this.renderPipelineCache.has(key)) return this.renderPipelineCache.get(key)!;
+    if (this.activeRenderPipelines.has(key)) return this.activeRenderPipelines.get(key)!;
 
     const generator = new WgslGenerator();
     const ir = this.context.ir;
@@ -388,7 +383,7 @@ export class WebGpuExecutor {
       }
     });
 
-    this.renderPipelineCache.set(key, pipeline);
+    this.activeRenderPipelines.set(key, pipeline);
     return pipeline;
   }
 
@@ -489,7 +484,7 @@ export class WebGpuExecutor {
         if (!(state as any).gpuBuffer) {
           (state as any).gpuBuffer = this.device.createBuffer({
             size: Math.max(state.width * 4, 16),
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+            usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_SRC | (globalThis as any).GPUBufferUsage.COPY_DST
           });
         }
         entries.push({ binding, resource: { buffer: (state as any).gpuBuffer } });

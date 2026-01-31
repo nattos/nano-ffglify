@@ -154,8 +154,45 @@ export interface DynamicArgs { [key: string]: any; }
 // --- Math ---
 
 export interface MathBinaryArgs { a: any; b: any;[key: string]: any; }
-export const MathBinaryDef = defineOp<MathBinaryArgs>({
-  doc: "Standard binary math operation (add, sub, mul, div, mod, pow, min, max, gt, lt, ge, le, eq, neq).",
+
+/**
+ * Numeric binary ops (add, sub, mul, div, mod, pow, min, max, atan2, vec_dot)
+ */
+export const MathNumericBinaryDef = defineOp<MathBinaryArgs>({
+  doc: "Standard numeric binary math operation.",
+  args: {
+    a: { type: AnyData, doc: "First operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] },
+    b: { type: AnyData, doc: "Second operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] }
+  }
+});
+
+/**
+ * Logic binary ops (and, or, xor)
+ */
+export const MathLogicBinaryDef = defineOp<MathBinaryArgs>({
+  doc: "Standard logic binary operation.",
+  args: {
+    a: { type: AnyData, doc: "First operand", refable: true, literalTypes: ['bool', 'float', 'int'] },
+    b: { type: AnyData, doc: "Second operand", refable: true, literalTypes: ['bool', 'float', 'int'] }
+  }
+});
+
+/**
+ * Comparison ops (gt, lt, ge, le) - numeric inputs
+ */
+export const MathCompareBinaryDef = defineOp<MathBinaryArgs>({
+  doc: "Comparison operation with numeric inputs.",
+  args: {
+    a: { type: AnyData, doc: "First operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] },
+    b: { type: AnyData, doc: "Second operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] }
+  }
+});
+
+/**
+ * Equality ops (eq, neq) - broad inputs
+ */
+export const MathEqualityBinaryDef = defineOp<MathBinaryArgs>({
+  doc: "Equality comparison operation.",
   args: {
     a: { type: AnyData, doc: "First operand", refable: true, literalTypes: ['float', 'int', 'bool', 'float2', 'float3', 'float4'] },
     b: { type: AnyData, doc: "Second operand", refable: true, literalTypes: ['float', 'int', 'bool', 'float2', 'float3', 'float4'] }
@@ -163,10 +200,34 @@ export const MathBinaryDef = defineOp<MathBinaryArgs>({
 });
 
 export interface MathUnaryArgs { val: any;[key: string]: any; }
-export const MathUnaryDef = defineOp<MathUnaryArgs>({
-  doc: "Standard unary math operation (abs, ceil, floor, sqrt, exp, log, sin, cos, tan, etc.).",
+
+/**
+ * Numeric unary ops (abs, ceil, floor, sqrt, exp, log, sin, cos, tan, etc.)
+ */
+export const MathNumericUnaryDef = defineOp<MathUnaryArgs>({
+  doc: "Standard numeric unary math operation.",
   args: {
-    val: { type: AnyData, doc: "Input value", refable: true, literalTypes: ['float', 'int', 'bool', 'float2', 'float3', 'float4'] }
+    val: { type: AnyData, doc: "Input value", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] }
+  }
+});
+
+/**
+ * Logic unary ops (not)
+ */
+export const MathLogicUnaryDef = defineOp<MathUnaryArgs>({
+  doc: "Standard logic unary operation.",
+  args: {
+    val: { type: AnyData, doc: "Input value", refable: true, literalTypes: ['bool', 'float', 'int'] }
+  }
+});
+
+/**
+ * Casting ops (static_cast_int, etc.) - broad inputs
+ */
+export const MathCastUnaryDef = defineOp<MathUnaryArgs>({
+  doc: "Type-casting unary operation.",
+  args: {
+    val: { type: AnyData, doc: "Input value", refable: true, literalTypes: ['float', 'int', 'bool', 'string', 'float2', 'float3', 'float4'] }
   }
 });
 
@@ -465,26 +526,28 @@ export const FlowLoopDef = defineOp<FlowLoopArgs>({
 
 export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   // Math Binary
-  'math_add': MathBinaryDef, 'math_sub': MathBinaryDef, 'math_mul': MathBinaryDef,
-  'math_div': MathBinaryDef, 'math_mod': MathBinaryDef, 'math_pow': MathBinaryDef,
-  'math_min': MathBinaryDef, 'math_max': MathBinaryDef, 'math_gt': MathBinaryDef,
-  'math_lt': MathBinaryDef, 'math_ge': MathBinaryDef, 'math_le': MathBinaryDef,
-  'math_eq': MathBinaryDef, 'math_neq': MathBinaryDef, 'math_atan2': MathBinaryDef,
-  'math_and': MathBinaryDef, 'math_or': MathBinaryDef, 'math_xor': MathBinaryDef,
-  'vec_dot': MathBinaryDef,
+  'math_add': MathNumericBinaryDef, 'math_sub': MathNumericBinaryDef, 'math_mul': MathNumericBinaryDef,
+  'math_div': MathNumericBinaryDef, 'math_mod': MathNumericBinaryDef, 'math_pow': MathNumericBinaryDef,
+  'math_min': MathNumericBinaryDef, 'math_max': MathNumericBinaryDef,
+  'math_gt': MathCompareBinaryDef, 'math_lt': MathCompareBinaryDef,
+  'math_ge': MathCompareBinaryDef, 'math_le': MathCompareBinaryDef,
+  'math_eq': MathEqualityBinaryDef, 'math_neq': MathEqualityBinaryDef,
+  'math_atan2': MathNumericBinaryDef,
+  'math_and': MathLogicBinaryDef, 'math_or': MathLogicBinaryDef, 'math_xor': MathLogicBinaryDef,
+  'vec_dot': MathNumericBinaryDef,
 
   'math_div_scalar': defineOp<MathDivScalarArgs>({ doc: "Divide by scalar", args: { val: { type: AnyData, doc: "Value", refable: true }, scalar: { type: FloatSchema, doc: "Scalar", refable: true } } }),
 
   // Math Unary
-  'math_abs': MathUnaryDef, 'math_ceil': MathUnaryDef, 'math_floor': MathUnaryDef,
-  'math_sqrt': MathUnaryDef, 'math_exp': MathUnaryDef, 'math_log': MathUnaryDef,
-  'math_sin': MathUnaryDef, 'math_cos': MathUnaryDef, 'math_tan': MathUnaryDef,
-  'math_asin': MathUnaryDef, 'math_acos': MathUnaryDef, 'math_atan': MathUnaryDef,
-  'math_sinh': MathUnaryDef, 'math_cosh': MathUnaryDef, 'math_tanh': MathUnaryDef,
-  'math_sign': MathUnaryDef, 'math_fract': MathUnaryDef, 'math_trunc': MathUnaryDef,
-  'math_is_nan': MathUnaryDef, 'math_is_inf': MathUnaryDef, 'math_is_finite': MathUnaryDef,
-  'static_cast_int': MathUnaryDef, 'static_cast_float': MathUnaryDef, 'static_cast_bool': MathUnaryDef,
-  'math_not': MathUnaryDef,
+  'math_abs': MathNumericUnaryDef, 'math_ceil': MathNumericUnaryDef, 'math_floor': MathNumericUnaryDef,
+  'math_sqrt': MathNumericUnaryDef, 'math_exp': MathNumericUnaryDef, 'math_log': MathNumericUnaryDef,
+  'math_sin': MathNumericUnaryDef, 'math_cos': MathNumericUnaryDef, 'math_tan': MathNumericUnaryDef,
+  'math_asin': MathNumericUnaryDef, 'math_acos': MathNumericUnaryDef, 'math_atan': MathNumericUnaryDef,
+  'math_sinh': MathNumericUnaryDef, 'math_cosh': MathNumericUnaryDef, 'math_tanh': MathNumericUnaryDef,
+  'math_sign': MathNumericUnaryDef, 'math_fract': MathNumericUnaryDef, 'math_trunc': MathNumericUnaryDef,
+  'math_is_nan': MathNumericUnaryDef, 'math_is_inf': MathNumericUnaryDef, 'math_is_finite': MathNumericUnaryDef,
+  'static_cast_int': MathCastUnaryDef, 'static_cast_float': MathCastUnaryDef, 'static_cast_bool': MathCastUnaryDef,
+  'math_not': MathLogicUnaryDef,
 
   // Vector Unary
   'vec_length': defineOp<VecUnaryArgs>({ doc: "Vector length", args: { a: { type: AnyVector, doc: "Vector", refable: true } } }),
@@ -536,9 +599,9 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'quat_to_float4x4': QuatToMatDef,
   'quat_rotate': QuatRotateDef,
   'color_mix': ColorMixDef,
-  'math_flush_subnormal': defineOp<MathUnaryArgs>({ doc: "Flush subnormal", args: { val: { type: AnyData, doc: "val", refable: true } } }),
-  'math_mantissa': defineOp<MathUnaryArgs>({ doc: "Get mantissa", args: { val: { type: AnyData, doc: "val", refable: true } } }),
-  'math_exponent': defineOp<MathUnaryArgs>({ doc: "Get exponent", args: { val: { type: AnyData, doc: "val", refable: true } } }),
+  'math_flush_subnormal': MathNumericUnaryDef,
+  'math_mantissa': MathNumericUnaryDef,
+  'math_exponent': MathNumericUnaryDef,
 
   // Structs & Arrays
   'struct_construct': defineOp<DynamicArgs>({ doc: "Construct struct", args: {} }),
