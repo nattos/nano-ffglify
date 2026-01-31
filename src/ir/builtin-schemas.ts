@@ -317,8 +317,8 @@ export const Mat3x3Def = defineOp<Mat3x3Args>({
     m00: { type: FloatSchema, doc: "m00", optional: true }, m01: { type: FloatSchema, doc: "m01", optional: true }, m02: { type: FloatSchema, doc: "m02", optional: true },
     m10: { type: FloatSchema, doc: "m10", optional: true }, m11: { type: FloatSchema, doc: "m11", optional: true }, m12: { type: FloatSchema, doc: "m12", optional: true },
     m20: { type: FloatSchema, doc: "m20", optional: true }, m21: { type: FloatSchema, doc: "m21", optional: true }, m22: { type: FloatSchema, doc: "m22", optional: true },
-    cols: { type: z.any(), doc: "Column vectors", optional: true },
-    vals: { type: z.any(), doc: "Value array", optional: true }
+    cols: { type: z.any(), doc: "Column vectors", refable: true, optional: true },
+    vals: { type: z.any(), doc: "Value array", refable: true, optional: true }
   }
 });
 
@@ -329,8 +329,8 @@ export const Mat4x4Def = defineOp<Mat4x4Args>({
     m10: { type: FloatSchema, doc: "m10", optional: true }, m11: { type: FloatSchema, doc: "m11", optional: true }, m12: { type: FloatSchema, doc: "m12", optional: true }, m13: { type: FloatSchema, doc: "m13", optional: true },
     m20: { type: FloatSchema, doc: "m20", optional: true }, m21: { type: FloatSchema, doc: "m21", optional: true }, m22: { type: FloatSchema, doc: "m22", optional: true }, m23: { type: FloatSchema, doc: "m23", optional: true },
     m30: { type: FloatSchema, doc: "m30", optional: true }, m31: { type: FloatSchema, doc: "m31", optional: true }, m32: { type: FloatSchema, doc: "m32", optional: true }, m33: { type: FloatSchema, doc: "m33", optional: true },
-    cols: { type: z.any(), doc: "Column vectors", optional: true },
-    vals: { type: z.any(), doc: "Value array", optional: true }
+    cols: { type: z.any(), doc: "Column vectors", refable: true, optional: true },
+    vals: { type: z.any(), doc: "Value array", refable: true, optional: true }
   }
 });
 
@@ -354,7 +354,14 @@ export const MatUnaryDef = defineOp<MatUnaryArgs>({
 export interface QuatArgs { axis: any; angle: any;[key: string]: any; }
 export const QuatDef = defineOp<QuatArgs>({
   doc: "Construct a quaternion from axis and angle.",
-  args: { axis: { type: Float3Schema, doc: "Rotation axis", refable: true }, angle: { type: FloatSchema, doc: "Rotation angle", refable: true } }
+  args: {
+    axis: { type: Float3Schema, doc: "Rotation axis", refable: true, optional: true },
+    angle: { type: FloatSchema, doc: "Rotation angle", refable: true, optional: true },
+    x: { type: FloatSchema, doc: "x", refable: true, optional: true },
+    y: { type: FloatSchema, doc: "y", refable: true, optional: true },
+    z: { type: FloatSchema, doc: "z", refable: true, optional: true },
+    w: { type: FloatSchema, doc: "w", refable: true, optional: true }
+  }
 });
 
 export const QuatMulDef = defineOp<QuatMulArgs>({
@@ -387,7 +394,7 @@ export const ColorMixDef = defineOp<ColorMixArgs>({
 export interface StructExtractArgs { struct: any; field: string;[key: string]: any; }
 export const StructExtractDef = defineOp<StructExtractArgs>({
   doc: "Extract a field from a struct.",
-  args: { struct: { type: z.any(), doc: "Struct instance", refable: true }, field: { type: z.string(), doc: "Field name" } }
+  args: { struct: { type: z.any(), doc: "Struct instance", refable: true }, field: { type: z.string(), doc: "Field name", literalTypes: ['string'] } }
 });
 
 export interface ArraySetArgs { array: any; index: any; value: any;[key: string]: any; }
@@ -408,7 +415,7 @@ export interface VarSetArgs { var: string; val: any;[key: string]: any; }
 export const VarSetDef = defineOp<VarSetArgs>({
   doc: "Set the value of a local variable.",
   args: {
-    var: { type: z.string(), doc: "Name of the variable", requiredRef: true },
+    var: { type: z.string(), doc: "Name of the variable", literalTypes: ['string'] },
     val: { type: z.any(), doc: "Value to store", refable: true }
   }
 });
@@ -528,7 +535,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'var_get': VarGetDef,
   'const_get': defineOp<ConstGetArgs>({ doc: "Get constant", args: { name: { type: z.string(), doc: "Name" } } }),
   'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true } } }),
-  'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, true: { type: z.string(), doc: "Node ID for true", requiredRef: true }, false: { type: z.string(), doc: "Node ID for false", requiredRef: true } } }),
+  'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, true: { type: z.string(), doc: "Node ID for true", requiredRef: true, optional: true }, false: { type: z.string(), doc: "Node ID for false", requiredRef: true, optional: true } } }),
   'flow_loop': FlowLoopDef,
   'call_func': defineOp<CallFuncArgs>({ doc: "Call a function", args: { func: { type: z.string(), doc: "Function ID", requiredRef: true } } }),
   'func_return': defineOp<FuncReturnArgs>({ doc: "Return from function", args: { val: { type: z.any(), doc: "Return value", optional: true, refable: true }, value: { type: z.any(), doc: "Return value (alias)", optional: true, refable: true } } }),

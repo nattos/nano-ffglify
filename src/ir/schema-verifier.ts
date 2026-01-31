@@ -1,5 +1,6 @@
 import { OpDefs, IRValueType } from './builtin-schemas';
 import { Node, BuiltinOp, IRDocument, FunctionDef } from './types';
+import { z } from 'zod';
 
 /**
  * Result of the literal/reference verification.
@@ -39,8 +40,8 @@ export function verifyLiteralsOrRefsExist(
 
     // Optional argument handling
     if (value === undefined) {
-      // Check if there is an incoming edge for this port
-      const hasEdge = func?.edges?.some(e => e.to === node.id && e.portIn === key && e.type === 'data');
+      // Check if there is an incoming edge for this port (data or execution)
+      const hasEdge = func?.edges?.some(e => e.to === node.id && e.portIn === key);
       if (!argDef.optional && !hasEdge) {
         errors.push(`Missing required argument '${key}'`);
       }
@@ -54,7 +55,7 @@ export function verifyLiteralsOrRefsExist(
         errors.push(`Argument '${key}' must be a reference (string), but got ${typeof value}`);
       } else if (ir || func) {
         if (!checkReferenceExists(value, ir, func)) {
-          errors.push(`Argument '${key}' references unknown ID '${value}'`);
+          errors.push(`Variable '${value}' is not defined`);
         }
       }
     } else {
@@ -76,7 +77,13 @@ export function verifyLiteralsOrRefsExist(
           }
         } else if (!argDef.refable && isString) {
           // Strict literal that doesn't allow strings, but got a string.
-          errors.push(`Argument '${key}' does not support references, but got string '${value}'`);
+          // EXCEPTION: If the literal type itself is a string, then it's fine.
+          const isActuallyStringLiteral = (argDef.literalTypes as any)?.includes('string') ||
+            (argDef.type instanceof z.ZodString);
+
+          if (!isActuallyStringLiteral) {
+            errors.push(`Argument '${key}' does not support references, but got string '${value}'`);
+          }
         }
       }
     }
@@ -139,6 +146,17 @@ function checkReferenceExists(id: string, ir?: IRDocument, func?: FunctionDef): 
 
   // 6. Special Constants (optional, but keep it clean)
   if (id === 'screen') return true; // Common generic target
+
+  // 7. GPU/Shader Builtins
+  const gpuBuiltins = [
+    'GlobalInvocationID', 'LocalInvocationID', 'WorkgroupID', 'LocalInvocationIndex',
+    'NumWorkgroups', 'FragCoord', 'FrontFacing', 'SampleIndex', 'VertexIndex',
+    'InstanceIndex', 'Position'
+  ];
+  if (gpuBuiltins.includes(id)) return true;
+
+  // 8. Function Inputs
+  if (func?.inputs?.some(i => i.id === id)) return true;
 
   return false;
 }
