@@ -7,6 +7,11 @@ describe('17-render-pipeline', () => {
   // Compute backend usually only supports compute shaders, not full render pipelines
   const backends = availableBackends.filter(b => b.name !== 'Compute');
 
+  if (backends.length === 0) {
+    it.skip('Skipping Render Pipeline tests for current backend', () => { });
+    return;
+  }
+
   // IR Definition
   // Func Main: cmd_draw -> VS, FS
   // Func VS: returns VertexOutput { pos: vec4 }

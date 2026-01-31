@@ -731,8 +731,18 @@ export class WgslGenerator {
     }
 
     if (node.op === 'color_mix') {
-      const a = this.resolveArg(node, 'a', func, options, ir);
-      const b = this.resolveArg(node, 'b', func, options, ir);
+      this.addHelper(`
+fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let srcA = src.a;
+  let dstA = dst.a;
+  let outA = srcA + dstA * (1.0 - srcA);
+  if (outA < 1e-6) { return vec4<f32>(0.0); }
+  let rgb = (src.rgb * srcA + dst.rgb * dstA * (1.0 - srcA)) / outA;
+  return vec4<f32>(rgb, outA);
+}
+      `);
+      const a = this.resolveArg(node, 'a', func, options, ir, 'float4');
+      const b = this.resolveArg(node, 'b', func, options, ir, 'float4');
       return `color_mix_impl(${a}, ${b})`;
     }
     // Swizzles and Element Access
@@ -854,9 +864,9 @@ export class WgslGenerator {
       // Construct vector/array
       const comp = val.map(v => this.formatLiteral(v, elemType)).join(', ');
 
-      if (val.length === 2 && (type === 'float2' || type === 'vec2<f32>')) return `vec2<f32>(${comp})`;
-      if (val.length === 3 && (type === 'float3' || type === 'vec3<f32>')) return `vec3<f32>(${comp})`;
-      if (val.length === 4 && (type === 'float4' || type === 'vec4<f32>')) return `vec4<f32>(${comp})`;
+      if (val.length === 2 && (type === 'float2' || type === 'vec2<f32>' || type === 'unknown')) return `vec2<f32>(${comp})`;
+      if (val.length === 3 && (type === 'float3' || type === 'vec3<f32>' || type === 'unknown')) return `vec3<f32>(${comp})`;
+      if (val.length === 4 && (type === 'float4' || type === 'vec4<f32>' || type === 'unknown')) return `vec4<f32>(${comp})`;
 
       // If array definition is known (e.g. array<i32, 3>) but val is empty, we must zero init?
       // But val is the literal value. If it is empty array [], it means length 0?

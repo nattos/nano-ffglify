@@ -1,4 +1,5 @@
-import { create, globals } from 'webgpu';
+import { globals } from 'webgpu';
+import { getSharedDevice } from './gpu-singleton';
 
 // Ensure globals
 if (typeof global !== 'undefined' && !global.GPUBufferUsage) {
@@ -18,11 +19,13 @@ class WebGpuHostExecutor {
   jit: CpuJitCompiler;
   compiledCache: Map<string, Function> = new Map();
   pending: Promise<any>[] = [];
+  device: GPUDevice;
 
   constructor(context: EvaluationContext, webGpuExec: WebGpuExecutor) {
     this.context = context;
     this.webGpuExec = webGpuExec;
     this.jit = new CpuJitCompiler();
+    this.device = webGpuExec.device;
   }
 
   async executeFunction(func: FunctionDef) {
@@ -149,10 +152,13 @@ class WebGpuHostExecutor {
     // JIT might assume resources is the map itself.
     // JIT code: `ctx.getResource(id).data[...]`
     // So passing `ctx` is sufficient if access ref is compiled as `ctx.getResource`.
-    // My JIT emits `ctx.getResource(...)`.
 
     // Execute
     return await compiled(this.context, this.context.resources, globals);
+  }
+
+  destroy() {
+    this.webGpuExec.destroy();
   }
 }
 
@@ -164,16 +170,10 @@ export const WebGpuBackend: TestBackend = {
     const ctx = new EvaluationContext(ir, inputs);
 
     // 2. Initialize GPU
-    const entry = create([]);
-    const adapter = await entry.requestAdapter();
-    if (!adapter) throw new Error('No WebGPU Adapter found');
-    const device = await adapter.requestDevice();
+    const device = await getSharedDevice();
 
-    // attach device to context for easy access if needed (hacky but effective)
+    // attach device to context for easy access
     (ctx as any).device = device;
-
-    // 3. Initialize Resources on GPU
-    // TODO: allocate buffers
 
     return ctx;
   },

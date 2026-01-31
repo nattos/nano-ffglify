@@ -191,4 +191,18 @@ export class EvaluationContext {
     }
     return val;
   }
+
+  /**
+   * Cleanup backend resources
+   */
+  destroy() {
+    // Note: We don't destroy the device here because it might be shared (e.g. in tests)
+    // or managed by a higher-level executor.
+    this.device = undefined;
+
+    if (this.webGpuExec && typeof this.webGpuExec.destroy === 'function') {
+      this.webGpuExec.destroy();
+      this.webGpuExec = undefined;
+    }
+  }
 }

@@ -24,6 +24,12 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.ts'],
     include: ['../test/**/*.test.ts', '**/*.{test,spec}.?(c|m)[jt]s?(x)'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/.{idea,git,cache,output,temp}/**', '**/e2e/**'],
+    forks: {
+      singleFork: true,
+    },
+    threads: {
+      singleThread: true,
+    },
   },
   define: {
     'import.meta.env.GOOGLE_API_KEY': JSON.stringify(process.env.GOOGLE_API_KEY),

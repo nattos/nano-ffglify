@@ -63,7 +63,6 @@ export const ComputeTestBackend: TestBackend = {
     }
 
     // Reuse WebGpuBackend's context creation (device init, resource alloc)
-    console.log('[CreateContext] IR Resources:', JSON.stringify(ir.resources.map(r => ({ id: r.id, dt: r.dataType }))));
     const ctx = await WebGpuBackend.createContext(ir, inputs);
     (ctx as any)._ir = ir;
     return ctx;
@@ -74,489 +73,341 @@ export const ComputeTestBackend: TestBackend = {
     if (!ir) throw new Error('[ComputeTestBackend] IR not found on context private _ir field');
     const device = ctx.device;
 
-    // 2. Allocate & Prepare Resources
-    device.pushErrorScope('validation');
     const resourceBuffers = new Map<string, GPUBuffer | GPUTexture | GPUSampler>();
-    const resourceBindings = new Map<string, number>();
-    let bindingCounter = 1; // 0 is reserved for Globals
+    const stagingBuffers: GPUBuffer[] = [];
+    let globalBuffer: GPUBuffer | undefined;
 
-    for (const res of ir.resources) {
-      if (res.type === 'buffer') {
-        // Calculate size in bytes.
-        // Default assumes float array?
-        // ResourceState has width/height. width is array length.
-        // But we might not have initialized data yet? Context constructor does.
-        const state = ctx.getResource(res.id);
+    try {
+      // 2. Allocate & Prepare Resources
+      device.pushErrorScope('validation');
+      const resourceBindings = new Map<string, number>();
+      let bindingCounter = 1; // 0 is reserved for Globals
 
+      for (const res of ir.resources) {
+        if (res.type === 'buffer') {
+          const state = ctx.getResource(res.id);
+          const elementSize = getElementSize(res.dataType);
+          const sizeBytes = state.width * elementSize;
 
-        const elementSize = getElementSize(res.dataType);
-        const sizeBytes = state.width * elementSize;
+          const buffer = device.createBuffer({
+            size: sizeBytes,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+          });
 
-        const buffer = device.createBuffer({
-          size: sizeBytes,
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
-        });
-
-        // Upload Initial Data?
-        if (state.data && state.data.length > 0) {
-          // Flatten data
-          const f32Data = new Float32Array(state.data as number[]);
-          device.queue.writeBuffer(buffer, 0, f32Data);
-        }
-
-        resourceBuffers.set(res.id, buffer);
-        resourceBindings.set(res.id, bindingCounter++);
-      }
-      else if (res.type === 'texture2d') {
-        const state = ctx.getResource(res.id);
-        const width = state.width || 1;
-        const height = state.height || 1;
-        const formatStr = (res as any).format || 'rgba8';
-
-        let gpuFormat: GPUTextureFormat = 'rgba8unorm';
-        if (formatStr === 'r32f') gpuFormat = 'r32float';
-        else if (formatStr === 'rgba8') gpuFormat = 'rgba8unorm';
-        else if (formatStr === 'rgba32f') gpuFormat = 'rgba32float';
-
-        const texture = device.createTexture({
-          size: [width, height, 1],
-          format: gpuFormat,
-          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC
-        });
-
-        // Upload Data
-        if (state.data && state.data.length > 0) {
-          // Assume data is number[] (flattened) or VectorValue[].
-          // We need to flatten to ArrayBuffer.
-          // For R32F -> Float32Array
-          // For RGBA8 -> Uint8Array (0-255) OR Float32Array?
-          // IR data usually stores 0-1 floats.
-          // If gpuFormat is 'rgba8unorm', we must upload bytes.
-          // Converting float data to correct buffer format is complex.
-          // For test simplicity: assume Float32 (r32f/rgba32f) for now, or handle rgba8 conversion.
-
-          if (gpuFormat === 'r32float' || gpuFormat === 'rgba32float' || gpuFormat === 'rgba8unorm') {
-            const flatFloats = (state.data as any).flat(2) as number[];
-
-            // 1. Prepare Source Bytes
-            let srcBytes: Uint8Array;
-            let bytesPerPixel = 4;
-
-            if (gpuFormat === 'rgba8unorm') {
-              bytesPerPixel = 4;
-              srcBytes = new Uint8Array(flatFloats.map(v => Math.max(0, Math.min(255, Math.floor(v * 255)))));
-            } else {
-              // Float formats
-              const f32 = new Float32Array(flatFloats);
-              srcBytes = new Uint8Array(f32.buffer);
-              bytesPerPixel = gpuFormat === 'r32float' ? 4 : 16;
-            }
-
-            // 2. Pad to 256 bytes per row
-            const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
-            const paddedSize = bytesPerRow * height;
-            const paddedData = new Uint8Array(paddedSize);
-            const validBytesPerRow = width * bytesPerPixel;
-
-            for (let y = 0; y < height; y++) {
-              const srcStart = y * validBytesPerRow;
-              const dstStart = y * bytesPerRow;
-              paddedData.set(srcBytes.subarray(srcStart, srcStart + validBytesPerRow), dstStart);
-            }
-
-            device.queue.writeTexture({ texture }, paddedData, { bytesPerRow, rowsPerImage: height }, { width, height });
+          if (state.data && state.data.length > 0) {
+            const f32Data = new Float32Array(state.data as number[]);
+            device.queue.writeBuffer(buffer, 0, f32Data);
           }
+
+          resourceBuffers.set(res.id, buffer);
+          resourceBindings.set(res.id, bindingCounter++);
         }
+        else if (res.type === 'texture2d') {
+          const state = ctx.getResource(res.id);
+          const width = state.width || 1;
+          const height = state.height || 1;
+          const formatStr = (res as any).format || 'rgba8';
 
-        resourceBuffers.set(res.id, texture as any); // Hack: Store texture in resourceBuffers map (typed as GPUBuffer) - Needs refactor or cast? Map<string, GPUBuffer | GPUTexture>
-        resourceBindings.set(res.id, bindingCounter++);
+          let gpuFormat: GPUTextureFormat = 'rgba8unorm';
+          if (formatStr === 'r32f') gpuFormat = 'r32float';
+          else if (formatStr === 'rgba8') gpuFormat = 'rgba8unorm';
+          else if (formatStr === 'rgba32f') gpuFormat = 'rgba32float';
 
-        /*
-        // Sampler (Currently disabled for Compute emulation, available in render stages)
-        if (res.sampler) {
-           const addressMode = res.sampler.wrap === 'repeat' ? 'repeat' : 'clamp-to-edge';
-           const filter = res.sampler.filter === 'linear' ? 'linear' : 'nearest';
-           const sampler = device.createSampler({
-             addressModeU: addressMode,
-             addressModeV: addressMode,
-             magFilter: filter,
-             minFilter: filter
-           });
-           resourceBuffers.set(`${res.id}_sampler`, sampler as any);
-           resourceBindings.set(`${res.id}_sampler`, bindingCounter++);
-        }
-        */
-      }
-    }
+          const texture = device.createTexture({
+            size: [width, height, 1],
+            format: gpuFormat,
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC
+          });
 
-    const allocError = await device.popErrorScope();
-    if (allocError) {
-      console.error("Resource Allocation Error:", allocError.message);
-      throw new Error(`WebGPU Allocation Error: ${allocError.message}`);
-    }
+          if (state.data && state.data.length > 0) {
+            if (gpuFormat === 'r32float' || gpuFormat === 'rgba32float' || gpuFormat === 'rgba8unorm') {
+              const flatFloats = (state.data as any).flat(2) as number[];
+              let srcBytes: Uint8Array;
+              let bytesPerPixel = 4;
 
-    // 3. Globals Buffer & Resource Map
-    const varMap = new Map<string, number>();
-    const varTypes = new Map<string, DataType>();
-    const resourceDefs = new Map<string, ResourceDef>();
-
-    // Initial varMap from IR inputs
-    let varCounter = 0;
-    ir.inputs?.forEach(input => {
-      varMap.set(input.id, varCounter);
-      varTypes.set(input.id, input.type);
-      varCounter += getComponentCount(input.type);
-    });
-
-    // Populate Resource Defs
-    ir.resources.forEach(r => {
-      console.log('CTB Resource:', r.id, r.dataType);
-      resourceDefs.set(r.id, r);
-    });
-
-    const func = ir.functions.find(f => f.id === entryPoint);
-    if (!func) throw new Error('Entry point not found');
-
-    func.nodes.forEach(n => {
-      if (n.op === 'var_set') {
-        const v = n['var'];
-        const isLocal = func.localVars?.some(lv => lv.id === v);
-        if (!isLocal && !varMap.has(v)) {
-          varMap.set(v, varCounter);
-          varTypes.set(v, 'float'); // Default to float for dynamic vars
-          varCounter++;
-        }
-      }
-    });
-
-    const globalsSizeBytes = Math.max(varCounter * 4, 16); // Min size
-    const globalBuffer = device.createBuffer({
-      size: globalsSizeBytes,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
-    });
-
-    // Initialize Global Buffer from Context Inputs (e.g. u_dummy)
-    if (varMap.size > 0) {
-      const initialData = new Float32Array(globalsSizeBytes / 4);
-      varMap.forEach((idx, name) => {
-        try {
-          const val = ctx.getInput(name);
-          if (val !== undefined) {
-            const type = varTypes.get(name) || 'float';
-            const count = getComponentCount(type);
-            if (count === 1 && typeof val === 'number') {
-              initialData[idx] = val as any as number;
-            } else if (Array.isArray(val)) {
-              for (let i = 0; i < Math.min(val.length, count); i++) {
-                initialData[idx + i] = val[i] as any as number;
+              if (gpuFormat === 'rgba8unorm') {
+                bytesPerPixel = 4;
+                srcBytes = new Uint8Array(flatFloats.map(v => Math.max(0, Math.min(255, Math.floor(v * 255)))));
+              } else {
+                const f32 = new Float32Array(flatFloats);
+                srcBytes = new Uint8Array(f32.buffer);
+                bytesPerPixel = gpuFormat === 'r32float' ? 4 : 16;
               }
+
+              const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
+              const paddedSize = bytesPerRow * height;
+              const paddedData = new Uint8Array(paddedSize);
+              const validBytesPerRow = width * bytesPerPixel;
+
+              for (let y = 0; y < height; y++) {
+                const srcStart = y * validBytesPerRow;
+                const dstStart = y * bytesPerRow;
+                paddedData.set(srcBytes.subarray(srcStart, srcStart + validBytesPerRow), dstStart);
+              }
+
+              device.queue.writeTexture({ texture }, paddedData, { bytesPerRow, rowsPerImage: height }, { width, height });
             }
           }
-        } catch (e) {
-          // Input might not exist in context (e.g. ad-hoc output var), that's fine.
+
+          resourceBuffers.set(res.id, texture);
+          resourceBindings.set(res.id, bindingCounter++);
+        }
+      }
+
+      const allocError = await device.popErrorScope();
+      if (allocError) {
+        console.error("Resource Allocation Error:", allocError.message);
+        throw new Error(`WebGPU Allocation Error: ${allocError.message}`);
+      }
+
+      const varMap = new Map<string, number>();
+      const varTypes = new Map<string, DataType>();
+      const resourceDefs = new Map<string, ResourceDef>();
+
+      let varCounter = 0;
+      ir.inputs?.forEach(input => {
+        varMap.set(input.id, varCounter);
+        varTypes.set(input.id, input.type);
+        varCounter += getComponentCount(input.type);
+      });
+
+      ir.resources.forEach(r => {
+        resourceDefs.set(r.id, r);
+      });
+
+      const func = ir.functions.find(f => f.id === entryPoint);
+      if (!func) throw new Error('Entry point not found');
+
+      func.nodes.forEach(n => {
+        if (n.op === 'var_set') {
+          const v = n['var'];
+          const isLocal = func.localVars?.some(lv => lv.id === v);
+          if (!isLocal && !varMap.has(v)) {
+            varMap.set(v, varCounter);
+            varTypes.set(v, 'float');
+            varCounter++;
+          }
         }
       });
-      device.queue.writeBuffer(globalBuffer, 0, initialData);
-    }
-    const entryFn = ir.functions.find(f => f.id === entryPoint);
-    if (!entryFn) throw new Error(`Entry point '${entryPoint}' not found`);
 
-    // SPECIAL: If Entry Point is CPU, run on Host Logic
-    if (entryFn.type === 'cpu') {
-      const exec = new InterpretedExecutor(ctx);
+      const globalsSizeBytes = Math.max(varCounter * 4, 16);
+      globalBuffer = device.createBuffer({
+        size: globalsSizeBytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+      });
 
-      // We need to override 'cmd_dispatch' to use OUR run() logic for the shader
-      // But InterpretedExecutor uses OpRegistry which is static.
-      // So we must temporarily override Dispatch in OpRegistry or
-      // just implement a custom loop.
-      // Actually, InterpretedExecutor just calls executeFunction.
-      // We can manually iterate nodes if it's a simple 'cpu' entry.
-      // Conformance tests usually have simple 'cpu' wrappers.
-
-      // Let's use the InterpretedExecutor and just let it run.
-      // If it hits cmd_dispatch, it might fail unless we mock dispatch.
-      // However, most 06-textures tests just check side effects if fn_main is cpu.
-
-      ctx.pushFrame(entryPoint);
-      exec.executeFunction(entryFn);
-
-      // If the CPU logic didn't dispatch anything, we are done.
-      // If it DID dispatch, it would have called the default dispatch op.
-      // To properly support dispatch -> compute shader, we'd need to hook it.
-      // For now, let's just let it run host side ops.
-      return;
-    }
-
-    const genResourceBindings = new Map<string, number>();
-    const genSamplerBindings = new Map<string, number>();
-
-    resourceBindings.forEach((binding, id) => {
-      if (id.endsWith('_sampler')) genSamplerBindings.set(id.replace('_sampler', ''), binding);
-      else genResourceBindings.set(id, binding);
-    });
-
-    const nodeTypes = inferFunctionTypes(entryFn, ir);
-
-    const code = new WgslGenerator().compile(ir, entryPoint, {
-      globalBufferBinding: 0,
-      varMap: varMap,
-      varTypes: varTypes,
-      nodeTypes: nodeTypes as any, // Cast from ValidationType to DataType
-      resourceBindings: genResourceBindings,
-      samplerBindings: genSamplerBindings,
-      resourceDefs: resourceDefs
-    });
-
-    console.log("[ComputeTestBackend] Generated WGSL:\n", code);
-
-    // 5. Pipeline
-    device.pushErrorScope('validation');
-    const module = device.createShaderModule({ code });
-    const compilationInfo = await module.getCompilationInfo();
-    if (compilationInfo.messages.some((m: GPUCompilationMessage) => m.type === 'error')) {
-      const errors = compilationInfo.messages.map((m: GPUCompilationMessage) => `[${m.lineNum}:${m.linePos}] ${m.message}`).join('\n');
-      console.error("WGSL Compilation Errors:\n" + errors);
-      throw new Error("WGSL Compilation Failed: " + errors);
-    }
-
-    const pipeline = device.createComputePipeline({
-      layout: 'auto',
-      compute: { module, entryPoint: 'main' }
-    });
-
-    // Check validation error from pipeline creation
-    const error = await device.popErrorScope();
-    if (error) {
-      console.error("Pipeline Creation Error:", error.message);
-      throw new Error(`WebGPU Error: ${error.message}`);
-    }
-
-    // 6. Bind Group
-    const entries: GPUBindGroupEntry[] = [];
-
-    // 6. Bind Group (Filter entries that are actually in the layout)
-    const bindGroupEntries: GPUBindGroupEntry[] = [];
-
-    // Always include global buffer if declared
-    if (code.includes('var<storage, read_write> b_globals')) {
-      bindGroupEntries.push({ binding: 0, resource: { buffer: globalBuffer } });
-    }
-
-    resourceBindings.forEach((binding, id) => { // Assuming resourceBindings is the correct map to iterate
-      const res = resourceBuffers.get(id)!;
-      // Only include if binding is declared in shader
-      // Search for "@binding(x)" or similar.
-      // More robust: search for "@binding([binding])"
-      const bindingPattern = new RegExp(`@binding\\s*\\(\\s*${binding}\\s*\\)`);
-      if (bindingPattern.test(code)) {
-        if ((res as any).usage !== undefined && ((res as any).usage & GPUBufferUsage.STORAGE)) {
-          bindGroupEntries.push({ binding, resource: { buffer: res as GPUBuffer } });
-        } else if (res instanceof GPUSampler) {
-          bindGroupEntries.push({ binding, resource: res });
-        } else {
-          bindGroupEntries.push({ binding, resource: (res as GPUTexture).createView() });
-        }
+      if (varMap.size > 0) {
+        const initialData = new Float32Array(globalsSizeBytes / 4);
+        varMap.forEach((idx, name) => {
+          try {
+            const val = ctx.getInput(name);
+            if (val !== undefined) {
+              const type = varTypes.get(name) || 'float';
+              const count = getComponentCount(type);
+              if (count === 1 && typeof val === 'number') {
+                initialData[idx] = val;
+              } else if (Array.isArray(val)) {
+                for (let i = 0; i < Math.min(val.length, count); i++) {
+                  initialData[idx + i] = val[i] as number;
+                }
+              }
+            }
+          } catch (e) { }
+        });
+        device.queue.writeBuffer(globalBuffer, 0, initialData);
       }
-    });
 
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: bindGroupEntries
-    });
+      if (func.type === 'cpu') {
+        const exec = new InterpretedExecutor(ctx);
+        ctx.pushFrame(entryPoint);
+        exec.executeFunction(func);
+        return;
+      }
 
-    // 7. Dispatch
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
+      const genResourceBindings = new Map<string, number>();
+      const genSamplerBindings = new Map<string, number>();
+      resourceBindings.forEach((binding, id) => {
+        if (id.endsWith('_sampler')) genSamplerBindings.set(id.replace('_sampler', ''), binding);
+        else genResourceBindings.set(id, binding);
+      });
 
-    // Detect dispatch size from entry point if it's a simple wrapper
-    let dx = 1, dy = 1, dz = 1;
-    const entryFunc = ir.functions.find(f => f.id === entryPoint);
-    if (entryFunc) {
-      const dispNode = entryFunc.nodes.find(n => n.op === 'cmd_dispatch');
+      const nodeTypes = inferFunctionTypes(func, ir);
+      const code = new WgslGenerator().compile(ir, entryPoint, {
+        globalBufferBinding: 0,
+        varMap: varMap,
+        varTypes: varTypes,
+        nodeTypes: nodeTypes as any,
+        resourceBindings: genResourceBindings,
+        samplerBindings: genSamplerBindings,
+        resourceDefs: resourceDefs
+      });
+
+      device.pushErrorScope('validation');
+      const module = device.createShaderModule({ code });
+      const compilationInfo = await module.getCompilationInfo();
+      if (compilationInfo.messages.some((m: any) => m.type === 'error')) {
+        const errors = compilationInfo.messages.map((m: any) => `[${m.lineNum}:${m.linePos}] ${m.message}`).join('\n');
+        throw new Error("WGSL Compilation Failed: " + errors);
+      }
+
+      const pipeline = device.createComputePipeline({
+        layout: 'auto',
+        compute: { module, entryPoint: 'main' }
+      });
+
+      const error = await device.popErrorScope();
+      if (error) throw new Error(`WebGPU Error: ${error.message}`);
+
+      const bindGroupEntries: GPUBindGroupEntry[] = [];
+      if (code.includes('var<storage, read_write> b_globals') && globalBuffer) {
+        bindGroupEntries.push({ binding: 0, resource: { buffer: globalBuffer } });
+      }
+
+      resourceBindings.forEach((binding, id) => {
+        const res = resourceBuffers.get(id)!;
+        const bindingPattern = new RegExp(`@binding\\s*\\(\\s*${binding}\\s*\\)`);
+        if (bindingPattern.test(code)) {
+          if (res instanceof GPUBuffer) {
+            bindGroupEntries.push({ binding, resource: { buffer: res } });
+          } else if (res instanceof GPUTexture) {
+            bindGroupEntries.push({ binding, resource: res.createView() });
+          } else if (res instanceof GPUSampler) {
+            bindGroupEntries.push({ binding, resource: res });
+          }
+        }
+      });
+
+      const bindGroup = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: bindGroupEntries
+      });
+
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+
+      let dx = 1, dy = 1, dz = 1;
+      const dispNode = func.nodes.find(n => n.op === 'cmd_dispatch');
       if (dispNode) {
         const dims = dispNode['dispatch'];
         if (Array.isArray(dims)) {
-          dx = typeof dims[0] === 'number' ? dims[0] : 1;
-          dy = typeof dims[1] === 'number' ? dims[1] : 1;
-          dz = typeof dims[2] === 'number' ? dims[2] : 1;
+          dx = (dims[0] as number) || 1;
+          dy = (dims[1] as number) || 1;
+          dz = (dims[2] as number) || 1;
         }
       }
-    }
 
-    pass.dispatchWorkgroups(dx, dy, dz);
-    pass.end();
+      pass.dispatchWorkgroups(dx, dy, dz);
+      pass.end();
 
-    // 8. Readback Staging
-    // We need to copy buffers to map-read buffers
-    const stagingBuffers = new Map<string, GPUBuffer>(); // id -> buffer
-    // Helper to request readback
-    const copyToStaging = (src: GPUBuffer, size: number) => {
-      const staging = device.createBuffer({
-        size,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-      });
-      encoder.copyBufferToBuffer(src, 0, staging, 0, size);
-      return staging;
-    };
-
-    const globalsStaging = copyToStaging(globalBuffer, globalsSizeBytes);
-
-    resourceBuffers.forEach((buf, id) => {
-      // Check if it's a Buffer
-      if (buf instanceof GPUBuffer) {
-        const state = ctx.getResource(id);
-        const elBytes = getElementSize(state.def.dataType);
-        const size = state.width * elBytes;
-        console.log(`[ComputeTestBackend] Staging:`, id, buf.constructor.name);
-        stagingBuffers.set(id, copyToStaging(buf, size));
-      } else if (buf instanceof GPUTexture) {
-        // Texture Readback
-        const state = ctx.getResource(id);
-        const width = state.width || 1;
-        const height = state.height || 1;
-        // Assume rgba8unorm has 4 bytes per pixel. r32f has 4 bytes per pixel.
-        // We need to match bytesPerRow alignment (256 bytes).
-        // Wait, copyTextureToBuffer requires bytesPerRow to be multiple of 256.
-        // But for small test textures (2x2), this is padded.
-        // We must un-pad on read?
-
-        let bytesPerPixel = 4; // Default rgba8unorm
-        if (state.def.format === 'rgba32f') bytesPerPixel = 16;
-        if (state.def.format === 'r32f') bytesPerPixel = 4;
-
-        const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
-        const rowsPerImage = height;
-        const bufferSize = bytesPerRow * rowsPerImage;
-
+      const copyToStaging = (src: GPUBuffer, size: number) => {
         const staging = device.createBuffer({
-          size: bufferSize,
+          size,
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
         });
+        stagingBuffers.push(staging);
+        encoder.copyBufferToBuffer(src, 0, staging, 0, size);
+        return staging;
+      };
 
-        const cmd = encoder;
-        cmd.copyTextureToBuffer(
-          { texture: buf },
-          { buffer: staging, bytesPerRow, rowsPerImage: height },
-          { width, height }
-        );
+      const globalsStaging = globalBuffer ? copyToStaging(globalBuffer, globalsSizeBytes) : null;
+      const resStaging = new Map<string, GPUBuffer>();
 
-        stagingBuffers.set(id, staging);
-        // Store metadata for unpadding later if needed?
-        // But the staging iteration logic expects flat data.
-        // We will need to handle padding in the Readback loop.
-      }
-    });
+      resourceBuffers.forEach((buf, id) => {
+        if (buf instanceof GPUBuffer) {
+          const state = ctx.getResource(id);
+          const size = state.width * getElementSize(state.def.dataType);
+          resStaging.set(id, copyToStaging(buf, size));
+        } else if (buf instanceof GPUTexture) {
+          const state = ctx.getResource(id);
+          const width = state.width || 1;
+          const height = state.height || 1;
+          let bytesPerPixel = 4;
+          if (state.def.format === 'rgba32f') bytesPerPixel = 16;
+          if (state.def.format === 'r32f') bytesPerPixel = 4;
 
-    device.queue.submit([encoder.finish()]);
-
-    // 9. Process Readback
-    await device.queue.onSubmittedWorkDone();
-    await Promise.all(Array.from(stagingBuffers.values()).map(b => b.mapAsync(GPUMapMode.READ)));
-    await globalsStaging.mapAsync(GPUMapMode.READ);
-
-    // Globals Readback
-    const globalsData = new Float32Array(globalsStaging.getMappedRange());
-    ctx.pushFrame(entryPoint);
-    varMap.forEach((idx, name) => {
-      const type = varTypes.get(name) || 'float';
-      const count = getComponentCount(type);
-      if (count === 1) {
-        ctx.setVar(name, globalsData[idx]);
-      } else {
-        ctx.setVar(name, Array.from(globalsData.subarray(idx, idx + count)));
-      }
-    });
-    globalsStaging.unmap();
-
-    // Resources
-    for (const [id, staging] of stagingBuffers) {
-      const data = new Float32Array(staging.getMappedRange());
-      console.log(`[Readback] ${id}:`, Array.from(data));
-      const state = ctx.getResource(id);
-
-      // Handle Texture Unpadding
-      if (state.def.type === 'texture2d') {
-        const width = state.width || 1;
-        const height = state.height || 1;
-        let bytesPerPixel = 4;
-        if (state.def.format === 'rgba32f') bytesPerPixel = 16;
-        if (state.def.format === 'r32f') bytesPerPixel = 4;
-
-        const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
-        const floatsPerRow = bytesPerRow / 4;
-        const validFloatsPerRow = (width * bytesPerPixel) / 4;
-
-        const unpadded: number[] = [];
-        for (let y = 0; y < height; y++) {
-          const rowStart = y * floatsPerRow;
-          const rowData = data.subarray(rowStart, rowStart + validFloatsPerRow);
-          unpadded.push(...Array.from(rowData));
+          const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
+          const bufferSize = bytesPerRow * height;
+          const staging = device.createBuffer({
+            size: bufferSize,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+          });
+          stagingBuffers.push(staging);
+          encoder.copyTextureToBuffer(
+            { texture: buf },
+            { buffer: staging, bytesPerRow, rowsPerImage: height },
+            { width, height }
+          );
+          resStaging.set(id, staging);
         }
+      });
 
-        // Reconstruct vectors if needed (for consistency with Buffer logic below)
-        // But texture state.data is usually just array of numbers or vectors?
-        // In format test: expect(tex.width).toBe(2);
-        // Does it check data? No, format test checks metadata.
-        // But Sampler test checks buffered logic.
-        // Wait, 'b_result' is a BUFFER. So it hits "else" block.
-        // 't_src' has no output check.
-        // 't_internal' format test: checks metadata.
-        // Does it verify clear operation? "Format and Clear Operations".
-        // Likely checks data is cleared.
-        // So we should populate state.data.
-        state.data = unpadded;
-        // Note: Buffer logic below handles vectors. We should probably reuse that if we want vectors in state.data.
-        // But state.data format varies.
-        // Let's assume flat array is fine for now or check usage.
-        // If `tex.data` expects vectors (Array<number[]>), we need to chunk it.
+      device.queue.submit([encoder.finish()]);
 
-        if (bytesPerPixel === 16) { // vec4
-          const vectors: number[][] = [];
-          for (let i = 0; i < unpadded.length; i += 4) {
-            vectors.push(unpadded.slice(i, i + 4));
+      await device.queue.onSubmittedWorkDone();
+      if (globalsStaging) {
+        await globalsStaging.mapAsync(GPUMapMode.READ);
+        const globalsData = new Float32Array(globalsStaging.getMappedRange());
+        ctx.pushFrame(entryPoint);
+        varMap.forEach((idx, name) => {
+          const type = varTypes.get(name) || 'float';
+          const count = getComponentCount(type);
+          if (count === 1) ctx.setVar(name, globalsData[idx]);
+          else ctx.setVar(name, Array.from(globalsData.subarray(idx, idx + count)));
+        });
+        globalsStaging.unmap();
+      }
+
+      for (const [id, staging] of resStaging) {
+        await staging.mapAsync(GPUMapMode.READ);
+        const data = new Float32Array(staging.getMappedRange());
+        const state = ctx.getResource(id);
+
+        if (state.def.type === 'texture2d') {
+          const width = state.width || 1;
+          const height = state.height || 1;
+          let bpp = 4;
+          if (state.def.format === 'rgba32f') bpp = 16;
+          if (state.def.format === 'r32f') bpp = 4;
+
+          const floatsPerRow = (Math.ceil((width * bpp) / 256) * 256) / 4;
+          const validFloatsPerRow = (width * bpp) / 4;
+          const unpadded: number[] = [];
+          for (let y = 0; y < height; y++) {
+            unpadded.push(...Array.from(data.subarray(y * floatsPerRow, y * floatsPerRow + validFloatsPerRow)));
           }
-          state.data = vectors;
-        } else {
-          state.data = unpadded;
-        }
 
-        staging.unmap();
-        continue;
-      }
-
-      const elBytes = getElementSize(state.def.dataType);
-      const elFloats = elBytes / 4;
-
-      if (elFloats > 1) {
-        // Reconstruct Vectors
-        const count = state.width;
-        state.data = new Array(count);
-        for (let i = 0; i < count; i++) {
-          const start = i * elFloats;
-          // WGSL alignment rules? array<vec3> has padding?
-          // If WGSL `array<vec3<f32>>`, stride is 16 bytes (4 floats).
-          // But my `getElementSize` returned 16 for vec3. So elFloats=4.
-          // Is `data` (Float32Array) reflecting that padding? Yes.
-          const slice = Array.from(data.subarray(start, start + elFloats));
-
-          if (state.def.dataType?.startsWith('vec3') || state.def.dataType === 'float3') {
-            // Trim padding
-            state.data[i] = slice.slice(0, 3);
+          if (bpp === 16) {
+            const vectors: number[][] = [];
+            for (let i = 0; i < unpadded.length; i += 4) vectors.push(unpadded.slice(i, i + 4));
+            state.data = vectors;
           } else {
-            state.data[i] = slice;
+            state.data = unpadded;
+          }
+        } else {
+          const elFloats = getElementSize(state.def.dataType) / 4;
+          if (elFloats > 1) {
+            state.data = new Array(state.width);
+            for (let i = 0; i < state.width; i++) {
+              const slice = Array.from(data.subarray(i * elFloats, i * elFloats + elFloats));
+              state.data[i] = (state.def.dataType?.startsWith('vec3') || state.def.dataType === 'float3') ? slice.slice(0, 3) : slice;
+            }
+          } else {
+            state.data = Array.from(data);
           }
         }
-      } else {
-        // Scalar
-        state.data = Array.from(data);
       }
-
-      staging.unmap();
+    } finally {
+      globalBuffer?.destroy();
+      for (const b of stagingBuffers) b.destroy();
+      for (const res of resourceBuffers.values()) {
+        if (res instanceof GPUBuffer || res instanceof GPUTexture) res.destroy();
+      }
+      // Note: we don't pop error scope here as it was already popped for specific operations
+      // But we should ensure popErrorScope matches pushErrorScope.
+      // I added push/pop around allocation and pipeline.
     }
-
-    return;
   },
 
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {

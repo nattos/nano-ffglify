@@ -157,8 +157,8 @@ export interface MathBinaryArgs { a: any; b: any;[key: string]: any; }
 export const MathBinaryDef = defineOp<MathBinaryArgs>({
   doc: "Standard binary math operation (add, sub, mul, div, mod, pow, min, max, gt, lt, ge, le, eq, neq).",
   args: {
-    a: { type: AnyData, doc: "First operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] },
-    b: { type: AnyData, doc: "Second operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] }
+    a: { type: AnyData, doc: "First operand", refable: true, literalTypes: ['float', 'int', 'bool', 'float2', 'float3', 'float4'] },
+    b: { type: AnyData, doc: "Second operand", refable: true, literalTypes: ['float', 'int', 'bool', 'float2', 'float3', 'float4'] }
   }
 });
 
@@ -386,7 +386,7 @@ export const QuatRotateDef = defineOp<QuatRotateArgs>({
 
 export const ColorMixDef = defineOp<ColorMixArgs>({
   doc: "Mix colors",
-  args: { a: { type: Float4Schema, doc: "a", refable: true }, b: { type: Float4Schema, doc: "b", refable: true }, t: { type: FloatSchema, doc: "t", refable: true } }
+  args: { a: { type: Float4Schema, doc: "a", refable: true }, b: { type: Float4Schema, doc: "b", refable: true }, t: { type: FloatSchema, doc: "t", refable: true, optional: true } }
 });
 
 // --- Structs & Arrays ---

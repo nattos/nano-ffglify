@@ -45,7 +45,7 @@ export const inferFunctionTypes = (func: FunctionDef, ir: IRDocument): InferredT
   const cache: InferredTypes = new Map();
   const errors: LogicValidationError[] = [];
   func.nodes.forEach(node => {
-    resolveNodeType(node.id, func, cache, resourceIds, errors);
+    resolveNodeType(node.id, func, ir, cache, resourceIds, errors);
   });
   return cache;
 };
@@ -64,6 +64,7 @@ export type InferredTypes = Map<string, ValidationType>;
 const resolveNodeType = (
   nodeId: string,
   func: FunctionDef,
+  doc: IRDocument,
   cache: TypeCache,
   resourceIds: Set<string>,
   errors: LogicValidationError[]
@@ -91,7 +92,7 @@ const resolveNodeType = (
   // 1. Gather Input Types from Edges
   const incomingEdges = func.edges.filter(e => e.to === nodeId && e.type === 'data');
   incomingEdges.forEach(edge => {
-    const srcType = resolveNodeType(edge.from, func, cache, resourceIds, errors);
+    const srcType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors);
     inputTypes[edge.portIn] = srcType;
   });
 
@@ -116,8 +117,19 @@ const resolveNodeType = (
         inputTypes[key] = 'boolean';
       } else if (typeof val === 'string') {
         const refNode = func.nodes.find(n => n.id === val);
-        if (refNode) {
-          inputTypes[key] = resolveNodeType(val, func, cache, resourceIds, errors);
+        const refInput = func.inputs.find(i => i.id === val);
+        const refGlobal = doc.inputs.find(i => i.id === val);
+
+        // Properties that are NAMES, not DATA references
+        const nameProperties = ['var', 'buffer', 'tex', 'resource', 'field', 'loop', 'name', 'func'];
+        const isNameProperty = nameProperties.includes(key);
+
+        if (refNode && !isNameProperty) {
+          inputTypes[key] = resolveNodeType(val, func, doc, cache, resourceIds, errors);
+        } else if (refInput && !isNameProperty) {
+          inputTypes[key] = refInput.type as ValidationType;
+        } else if (refGlobal && !isNameProperty) {
+          inputTypes[key] = refGlobal.type as ValidationType;
         } else {
           inputTypes[key] = 'string';
         }
@@ -159,7 +171,16 @@ const resolveNodeType = (
   for (const sig of sigs) {
     let match = true;
     for (const [argName, argType] of Object.entries(sig.inputs)) {
-      const providedType = inputTypes[argName];
+      let providedType = inputTypes[argName] as string;
+
+      // Normalize Types
+      if (providedType === 'bool') providedType = 'boolean';
+
+      // Support Named Structs
+      if (argType === 'struct' && providedType !== 'any') {
+        const isNamedStruct = doc.structs?.some(s => s.id === providedType);
+        if (isNamedStruct) providedType = 'struct';
+      }
 
       if (!providedType) {
         match = false;
@@ -262,12 +283,7 @@ const validateDataType = (type: string, doc: IRDocument, errors: LogicValidation
   if (isStruct) return;
 
   if (type.startsWith('array<')) return;
-
-  // Custom Arrays? "array<f32, 10>" - Regex check?
-  // IR types says: | string; // Allow custom Struct IDs or "array<T, N>"
-  // If we want to be strict, we should parse it.
-  // For now, let's assume strict primitives/structs only unless we really support array syntax.
-  // The user request was about `vec4<f32>` which is NOT valid.
+  if (type.endsWith('[]')) return;
 
   errors.push({ message: `${contextMsg}: Invalid data type '${type}'. Must be a primitive or defined struct.`, severity: 'error' });
 };
@@ -362,7 +378,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       });
     }
 
-    resolveNodeType(node.id, func, cache, resourceIds, errors);
+    resolveNodeType(node.id, func, doc, cache, resourceIds, errors);
 
     if (node.op === 'builtin_get' && func.type === 'cpu') {
       errors.push({
@@ -430,7 +446,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
           let actualType: ValidationType = 'any';
           const edge = func.edges.find(e => e.to === node.id && e.portIn === 'value');
           if (edge) {
-            actualType = resolveNodeType(edge.from, func, cache, resourceIds, errors);
+            actualType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors);
           } else if (node['value'] !== undefined) {
             const v = node['value'];
             if (typeof v === 'number') actualType = 'float';

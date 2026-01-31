@@ -88,25 +88,29 @@ export const runGraphTest = (
       inputsMap.set('u_dummy', 0.0);
 
       const ctx = await backend.execute(ir, 'main', inputsMap);
-      const result = ctx.getVar(varToCheck);
+      try {
+        const result = ctx.getVar(varToCheck);
 
-      if (Array.isArray(expectedVal)) {
-        if (expectedVal.length > 0 && typeof expectedVal[0] === 'number') {
-          // Element-wise closeTo for number arrays (vectors/matrices)
-          const resArr = result as number[];
-          expect(resArr).toHaveLength(expectedVal.length);
-          resArr.forEach((val, idx) => {
-            expect(val).toBeCloseTo(expectedVal[idx] as number, 5);
-          });
+        if (Array.isArray(expectedVal)) {
+          if (expectedVal.length > 0 && typeof expectedVal[0] === 'number') {
+            // Element-wise closeTo for number arrays (vectors/matrices)
+            const resArr = result as number[];
+            expect(resArr).toHaveLength(expectedVal.length);
+            resArr.forEach((val, idx) => {
+              expect(val).toBeCloseTo(expectedVal[idx] as number, 5);
+            });
+          } else {
+            expect(result).toEqual(expectedVal);
+          }
         } else {
-          expect(result).toEqual(expectedVal);
+          if (Number.isNaN(expectedVal)) {
+            expect(result).toBeNaN();
+          } else {
+            expect(result).toBeCloseTo(expectedVal as number, 5);
+          }
         }
-      } else {
-        if (Number.isNaN(expectedVal)) {
-          expect(result).toBeNaN();
-        } else {
-          expect(result).toBeCloseTo(expectedVal as number, 5);
-        }
+      } finally {
+        ctx.destroy();
       }
     });
   });
@@ -124,11 +128,15 @@ export const runGraphErrorTest = (
   backends.forEach(backend => {
     it(`${name} [${backend.name}] - Expect Error`, async () => {
       const ir = buildSimpleIR(name, nodes, resources, [], localVars, structs);
+      let ctx: EvaluationContext | undefined;
       try {
-        await backend.execute(ir, 'main');
+        ctx = await backend.execute(ir, 'main');
         expect.fail('Expected execution to throw error, but it succeeded');
       } catch (e: any) {
+        if (e.name === 'AssertionError') throw e;
         expect(e.message).toMatch(expectedError);
+      } finally {
+        ctx?.destroy();
       }
     });
   });
@@ -148,7 +156,11 @@ export const runParametricTest = (
     it(`${name} [${backend.name}]`, async () => {
       const ir = buildSimpleIR(name, nodes, resources, extraEdges, localVars, structs);
       const ctx = await backend.execute(ir, 'main');
-      await verify(ctx);
+      try {
+        await verify(ctx);
+      } finally {
+        ctx.destroy();
+      }
     });
   });
 };
@@ -162,7 +174,11 @@ export const runFullGraphTest = (
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
       const ctx = await backend.execute(ir, ir.entryPoint);
-      await verify(ctx);
+      try {
+        await verify(ctx);
+      } finally {
+        ctx.destroy();
+      }
     });
   });
 };
@@ -175,11 +191,15 @@ export const runFullGraphErrorTest = (
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}] - Expect Error`, async () => {
+      let ctx: EvaluationContext | undefined;
       try {
-        await backend.execute(ir, ir.entryPoint);
+        ctx = await backend.execute(ir, ir.entryPoint);
         expect.fail('Expected execution to throw error, but it succeeded');
       } catch (e: any) {
+        if (e.name === 'AssertionError') throw e;
         expect(e.message).toMatch(expectedError);
+      } finally {
+        ctx?.destroy();
       }
     });
   });
