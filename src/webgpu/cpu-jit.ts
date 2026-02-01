@@ -161,7 +161,11 @@ export class CpuJitCompiler {
       const ratioB = Math.sin(t * halfTheta) / sinHalfTheta;
       return qa.map((v, i) => v * ratioA + b[i] * ratioB);
     };`);
-    lines.push(`const _getVar = (id) => { if (!variables.has(id)) throw new Error("Variable '" + id + "' is not defined"); return variables.get(id); };`);
+    lines.push(`const _getVar = (id) => {
+      if (variables.has(id)) return variables.get(id);
+      if (inputs.has(id)) return inputs.get(id);
+      throw new Error("Variable '" + id + "' is not defined");
+    };`);
   }
 
   private emitFunction(f: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], debugSync: boolean) {
