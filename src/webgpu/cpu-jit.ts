@@ -1,4 +1,4 @@
-import { FunctionDef, Node } from '../ir/types';
+import { IRDocument, FunctionDef, Node } from '../ir/types';
 import { RuntimeGlobals } from './host-interface';
 
 // ------------------------------------------------------------------
@@ -13,15 +13,17 @@ import { RuntimeGlobals } from './host-interface';
  * Compiles IR Functions into flat JavaScript for high-performance execution.
  */
 export class CpuJitCompiler {
+  private ir?: IRDocument;
 
   /**
    * Compiles an IR function (and its dependencies) into a native JS function.
    * Signature: (resources, inputs, globals, variables) => Promise<RuntimeValue>
    */
-  compile(ir: any, funcId: string): Function {
+  compile(ir: IRDocument, entryPointId: string): Function {
+    this.ir = ir;
     const allFunctions = ir.functions;
-    const func = allFunctions.find((f: any) => f.id === funcId);
-    if (!func) throw new Error(`Entry point '${funcId}' not found`);
+    const func = allFunctions.find((f: any) => f.id === entryPointId);
+    if (!func) throw new Error(`Entry point '${entryPointId}' not found`);
 
     const lines: string[] = [];
 
@@ -401,6 +403,7 @@ export class CpuJitCompiler {
       if (typeof val === 'string' && !['var', 'func', 'resource', 'buffer'].includes(key)) {
         if (func.localVars.some(v => v.id === val)) return sanitizeId(val, 'var');
         if (func.inputs.some(i => i.id === val)) return sanitizeId(val, 'input');
+        if (this.ir?.inputs.some((i: any) => i.id === val)) return `inputs.get('${val}')`;
         const targetNode = func.nodes.find(n => n.id === val);
         if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure);
       }
