@@ -13,6 +13,8 @@ import { HostOps } from '../../webgpu/host-ops';
 import { RuntimeGlobals } from '../../webgpu/host-interface';
 import { RuntimeValue, ResourceState } from '../../ir/resource-store';
 
+import { WebGpuHost } from '../../webgpu/webgpu-host';
+
 class WebGpuHostExecutor {
   webGpuExec: WebGpuExecutor;
   ctx: EvaluationContext;
@@ -32,50 +34,23 @@ class WebGpuHostExecutor {
       this.compiledCache.set(func.id, compiled);
     }
 
-    const globals: RuntimeGlobals = {
-      dispatch: async (targetId, dim, args) => {
+    const globals = new WebGpuHost({
+      // TODO: Remove all deps of the emitted code on our host's objects.
+      executeShader: async (targetId, dim, args) => {
         const targetFunc = functions.find(f => f.id === targetId);
         if (!targetFunc) throw new Error(`Shader '${targetId}' not found`);
         await this.webGpuExec.executeShader(targetFunc, dim, args);
       },
-      draw: async (targetId, vertexId, fragmentId, count, pipeline) => {
+      executeDraw: async (targetId, vertexId, fragmentId, count, pipeline) => {
         const resources = Array.from(this.ctx.resources.values()).map(r => r.def);
-        await this.webGpuExec.executeDraw(targetId, vertexId, fragmentId, count, pipeline, resources);
-      },
-      resize: (resId, size, format, clear) => {
-        const res = this.ctx.resources.get(resId);
-        if (!res) throw new Error(`Resource '${resId}' not found`);
-
-        if (res.def.type === 'buffer') {
-          const newSize = typeof size === 'number' ? size : size[0];
-          if (res.data && res.data.length === newSize) return;
-          res.width = newSize;
-          res.data = new Array(newSize).fill(0);
-        } else if (res.def.type === 'texture2d') {
-          const width = Array.isArray(size) ? size[0] : size;
-          const height = Array.isArray(size) ? size[1] : 1;
-          res.width = width;
-          res.height = height;
-
-          if (format !== undefined) {
-            if (typeof format === 'number') {
-              const strFmt = TextureFormatFromId[format];
-              if (strFmt) res.def.format = strFmt;
-            } else {
-              res.def.format = format as any;
-            }
-          }
-          if (clear !== undefined) {
-            res.data = new Array(width * height).fill(clear);
-          }
-        }
-        if (this.ctx.logAction) this.ctx.logAction('resize', resId, { size, format });
-      },
-      log: (msg, payload) => {
-        console.log(`[JIT Log] ${msg}`, payload);
-        if (this.ctx.logAction) this.ctx.logAction('log', msg, payload);
+        await this.webGpuExec.executeDraw(targetId, vertexId, fragmentId, count, pipeline as any, resources as any);
       }
-    };
+    }, this.ctx.resources as any, (resId, size, format) => {
+      this.ctx.logAction('resize', resId, { size, format });
+    }, (msg, payload) => {
+      // console.log(`[JIT Log] ${msg} `, payload);
+      this.ctx.logAction('log', msg, payload);
+    });
 
     // Compiled signature: (resources, inputs, globals, variables)
     // We use context resources, global inputs, and current frame variables
