@@ -155,7 +155,10 @@ export class CpuJitCompiler {
 
     // Compile node logic
     lines.push(`  // Pure Nodes (lazy emission)`);
-    // We'll emit them as needed by the execution chain or at the end for side-effect-free paths if any.
+    // We'll emit them as needed by the execution chain.
+    // CRITICAL: We MUST ensure result variables are defined before any chain starts
+    // because data dependencies can be circular or mixed.
+    // (Already done in Local Variables section above via resultNodes filter)
 
     // Execution Chain
     const entryNodes = f.nodes.filter(n => {
@@ -186,7 +189,8 @@ export class CpuJitCompiler {
       'static_cast_float', 'static_cast_int', 'static_cast_uint', 'static_cast_bool',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length', 'array_set',
-      'var_get', 'buffer_load', 'texture_load', 'call_func', 'vec_swizzle'
+      'var_get', 'buffer_load', 'texture_load', 'call_func', 'vec_swizzle',
+      'color_mix', 'vec_get_element'
     ];
     return valueOps.includes(op);
   }
@@ -208,7 +212,12 @@ export class CpuJitCompiler {
         if (typeof val === 'string' && func.nodes.some(n => n.id === val)) emitPure(val);
       }
 
-      if (curr.op === 'flow_branch') {
+      // If the node itself has a result (like call_func), ensure it's "emitted"
+      // even if it's executable, so its variable is settled if used later.
+      if (this.hasResult(curr.op)) {
+        // For executable nodes that have results, we emit them directly in the chain
+        this.emitNode(indent, curr, func, lines, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+      } else if (curr.op === 'flow_branch') {
         this.emitBranch(indent, curr, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
         return;
       } else if (curr.op === 'flow_loop') {
@@ -387,11 +396,49 @@ export class CpuJitCompiler {
         const maxVal = this.resolveArg(node, 'max', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
         return `((v, min, max) => _applyBinary(_applyBinary(v, min, Math.max), max, Math.min))(${val()}, ${minVal}, ${maxVal})`;
       }
+      case 'math_mad': {
+        const cVal = this.resolveArg(node, 'c', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        return `_applyBinary(_applyBinary(${a()}, ${b()}, (x, y) => x * y), ${cVal}, (x, y) => x + y)`;
+      }
+
       case 'math_mix': {
         const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
         return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${a()}, ${b()}, ${t})`;
       }
       case 'math_step': return `_applyBinary(${this.resolveArg(node, 'edge', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}, ${val()}, (e, x) => x < e ? 0 : 1)`;
+      case 'math_smoothstep': {
+        const e0 = this.resolveArg(node, 'edge0', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const e1 = this.resolveArg(node, 'edge1', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        return `((v, edge0, edge1) => _applyUnary(_applyBinary(_applyBinary(v, edge0, (x, e) => (x - e)), _applyBinary(edge1, edge0, (e1, e0) => (e1 - e0)), (n, d) => Math.max(0, Math.min(1, n / d))), t => t * t * (3 - 2 * t)))(${val()}, ${e0}, ${e1})`;
+      }
+
+      // Color
+      case 'color_mix': {
+        const dst = a();
+        const src = b();
+        const tEdge = func.edges.find(e => e.to === node.id && e.portIn === 't' && e.type === 'data');
+        if (tEdge || (node['t'] !== undefined)) {
+          const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+          return `_applyBinary(_applyBinary(${dst}, _applyBinary(1, ${t}, (x, y) => x - y), (x, y) => x * y), _applyBinary(${src}, ${t}, (x, y) => x * y), (x, y) => x + y)`;
+        }
+        return `((d, s) => {
+          if (!Array.isArray(s) || !Array.isArray(d)) return s;
+          const out = new Array(4);
+          const sa = s[3] === undefined ? 1.0 : s[3];
+          const da = d[3] === undefined ? 1.0 : d[3];
+          const ra = sa + da * (1 - sa);
+          for(let i=0; i<3; i++) out[i] = ra < 1e-6 ? 0 : (s[i]*sa + d[i]*da*(1-sa))/ra;
+          out[3] = ra;
+          return out;
+        })(${dst}, ${src})`;
+      }
+
+      // Vectors / Arrays
+      case 'vec_get_element': return `(${this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}[${this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}])`;
+      case 'vec_mix': {
+        const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${a()}, ${b()}, ${t})`;
+      }
 
       // Constants
       case 'math_pi': return `Math.PI`;
@@ -406,10 +453,10 @@ export class CpuJitCompiler {
       case 'math_neq': return `_applyBinary(${a()}, ${b()}, (x, y) => x !== y ? 1.0 : 0.0)`;
 
       // Logic
-      case 'math_and': return `(${a()} && ${b()})`;
-      case 'math_or': return `(${a()} || ${b()})`;
-      case 'math_xor': return `(${a()} ^ ${b()})`; // Bitwise but often used for bools in IR
-      case 'math_not': return `(!${val()})`;
+      case 'math_and': return `_applyBinary(${a()}, ${b()}, (x, y) => (x && y) ? 1.0 : 0.0)`;
+      case 'math_or': return `_applyBinary(${a()}, ${b()}, (x, y) => (x || y) ? 1.0 : 0.0)`;
+      case 'math_xor': return `_applyBinary(${a()}, ${b()}, (x, y) => (x ^ y) ? 1.0 : 0.0)`;
+      case 'math_not': return `_applyUnary(${val()}, v => (!v) ? 1.0 : 0.0)`;
 
       // Casts
       case 'static_cast_float': return `Number(${val()})`;
