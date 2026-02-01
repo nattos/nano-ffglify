@@ -615,6 +615,9 @@ export class CpuJitCompiler {
       case 'math_not': return `_applyUnary(${val()}, v => (!v) ? 1.0 : 0.0)`;
 
       // Casts
+      case 'float': return `Number(${val()})`;
+      case 'int': return `Math.trunc(${val()})`;
+      case 'bool': return `Boolean(${val()})`;
       case 'static_cast_float': return `Number(${val()})`;
       case 'static_cast_int': return `Math.trunc(${val()})`;
       case 'static_cast_uint': return `Math.abs(Math.trunc(${val()}))`; // Simplification for Uint
