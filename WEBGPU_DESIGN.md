@@ -137,51 +137,56 @@ While WebGPU provides native `sampler` and `textureSample` logic, it has strict 
 **Mitigation**: Recognize that `03-buffers.test.ts` (Runtime Error) behaviors differ. GPU tests should expect safe default behavior (0), not crashes.
 
 ## CPU-JIT Compiler Design (Host Executor)
-The CPU portion of the IR (Control Flow, Logic) is executed by a specialized JIT Compiler (`CpuJitCompiler`) rather than an interpreter. This compiler generates high-performance, flat JavaScript code that emulates an ASM.js / low-level execution environment.
+The CPU portion of the IR (Control Flow, Logic) is executed by a specialized JIT Compiler (`CpuJitCompiler`). This compiler generates high-performance, **standalone** JavaScript code that emulates a low-level execution environment.
 
-### Design Principles
-1.  **Sync Execution**: The generated JS code runs synchronously, treating GPU dispatches as immediate calls (or queued commands) depending on the desired behavior.
-2.  **Flat Memory Model**: It tries to avoid complex object allocations. Local variables are compiled to JS `let` or `const` in a flat scope.
-3.  **Global Bindings**: The JIT function accepts a `globals` object which provides the interface to the environment:
-    *   `callOp(name, args)`: Invokes the `OpRegistry` for complex operations (vectors, math).
-    *   `dispatch(target, dim)`: Invokes the GPU dispatch logic.
-    *   `bufferLoad/Store`: Direct access to resource data.
-    *   `resize`: Resource management.
-4.  **Vector Support via Registry**: While scalar math is inlined for performance (`a + b`), vector operations delegate to `globals.callOp` to leverage the centralized `OpRegistry` logic (handling arrays, broadcasting, mixed-types).
-5.  **Polyfills**:
-    *   `GlobalInvocationID`: In fallback mode (shader on CPU), this is injected into the scope as a loop variable.
+### Design Principles (Standalone & Portable)
+1.  **Zero External Dependencies**: The *emitted* JS code does NOT rely on the `CpuJitCompiler` class, the `OpRegistry`, or any types from `src/ir`. This ensures the generated "kernel" is portable and can run in a browser or isolated worker.
+2.  **Inlined Helpers**: All math, vector, and struct logic is emitted directly into the generated function as small "intrinsic" helpers (e.g., `_applyBinary`, `_vec_dot`, `_mat_mul`).
+3.  **Decoupled Host Interface**: The JIT function accepts a simple `globals` object implementing the `RuntimeGlobals` interface. This interface uses standalone types (numbers, booleans, simple arrays/objects) rather than internal engine types.
+4.  **Flat Scope**: Local variables are compiled to JS `let` variables in a flat scope, avoiding `Map` lookups for performance and WGSL parity.
+5.  **Host Globals**:
+    *   `dispatch(target, workgroups, args)`: Triggers a GPU compute shader.
+    *   `draw(target, vertex, fragment, count, pipeline)`: Executes a GPU render pass.
+    *   `resize(resId, size, format, clear)`: Manages resource dimensions and state.
+    *   `log(msg, payload)`: Debugging and profiling.
 
 ### Compilation Strategy
-*   **Topological Walk**: execution nodes are visited in flow order (Branch/Loop/Seq).
-*   **Data Resolution**: Data inputs (`data` edges) are compiled recursively into expressions (e.g., `globals.bufferLoad(..., i + 1)`).
-*   **Statement Emission**: Executable nodes (`var_set`, `cmd_dispatch`) emit specific JS statements.
+*   **Reachable Function Analysis**: The JIT identifies all functions reachable from the entry point and emits them as nested `async` functions within the main kernel.
+*   **Lazy Expression Emission**: Pure data nodes are emitted lazily at their first point of use, with internal dependency resolution to ensure correct order.
+*   **Sanitization**: All IR identifiers (Node IDs, Variable IDs) are sanitized into valid JS identifiers to prevent conflicts and ensure characters like `@` or `.` in IDs are handled.
 
+## Host Architecture
+The `WebGpuHost` (in `src/webgpu/webgpu-host.ts`) provides a standalone implementation of the `RuntimeGlobals` interface.
 
-## Implementation Status (Updated 2026-01-31)
+1.  **Bridge Role**: It bridges the JIT-emitted code with the `WebGpuExecutor` and the `EvaluationContext`'s resource store.
+    > [!NOTE]
+    > These internal dependencies are temporary. The goal is to eventually remove all ties to the core engine's objects within the host implementation, making it strictly compliant with the standalone `RuntimeGlobals` interface.
+2.  **Type Mapping**: It maps from the standalone host types back to the engine's internal types where necessary.
+3.  **Resource Management**: Implements basic CPU-side logic for resource resizing and clearing, ensuring parity with the GPU state.
 
-### 1. JIT Compiler (`src/interpreter/cpu-jit.ts`) (Implemented)
-- **Status**: Production Ready for Conformance Tests.
+## Implementation Status (Updated 2026-02-02)
+
+### 1. Standalone JIT Compiler (Implemented)
+- **Status**: Complete.
 - **Features**:
-  - Recursively compiles pure data nodes into unrolled JS expressions.
-  - Supports `struct` and `array` construction and mutation.
-  - Handles logical branching and loops.
-  - **Implicit Node Resolution**: Automatically detects when string arguments refer to internal Node IDs.
+  - Independent JS emission (zero IR dependencies).
+  - High-performance flat scope for variables.
+  - Comprehensive list of inlined math/vector/quaternion helpers.
+  - Cycle detection to prevent infinite recursion in IR calls.
 
-### 2. WebGPU Executor (`src/interpreter/webgpu-executor.ts`) (Implemented)
-- **Status**: Functional.
-- **Capabilities**:
-  - **Hybrid Execution**: Runs CPU logic via JIT and Dispatch logic via WebGPU.
-  - **Data Marshalling**: Strongly typed marshalling of Scalars, Vectors, Matrices, and Structs from CPU to Shader.
-  - **Safety**: Strict validation against string injection into shaders.
-  - **Async Dispatch**: Tracks pending GPU operations for correct test synchronization.
+### 2. Standalone Host Interface (Implemented)
+- **Status**: Complete.
+- **Components**:
+  - `RuntimeGlobals` interface & standalone types.
+  - `WebGpuHost` bridge implementation.
+  - All texture sampling, load/store, and resource metadata operations supported.
 
-### 3. Sampling Strategy (Implemented)
-- **Hybrid Approach**:
-  - **Compute Integration**: Uses `textureLoad` and manual bilinear interpolation logic injected by `WgslGenerator` to support unfilterable formats (e.g. `r32float`) in Compute shaders.
-  - **Legacy Compatibility**: Maintains `sampler` binding definition for future Render Pass compatibility.
+### 3. WebGPU Executor (Implemented)
+- **Status**: Functional. Supports both direct shader dispatch and hybrid CPU-JIT execution.
+- **Capability**: 100% Pass rate on all core and integration conformance tests.
 
 ## Next Steps
 
-1.  **Render Pass Support**: Extend IR and Executor to support `cmd_draw` and Vertex/Fragment stages.
-2.  **Performance Optimization**: Implement bind-group caching and pipeline caching.
-3.  **Advanced features**: Atomic counters and workgroup shared memory support.
+1.  **Render Pipeline Depth**: Full implementation of `cmd_draw` and complex `RenderPipelineDef` options in the JIT.
+2.  **JS Emission Cleanup**: Refine the code generator to produce even cleaner, more minifiable JS code.
+3.  **Advanced features**: Atomic operations and workgroup shared memory support in both WGSL and JIT.
