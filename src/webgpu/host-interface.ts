@@ -1,5 +1,5 @@
-import { RuntimeValue, ResourceState } from '../ir/resource-store';
-import { BuiltinOp, RenderPipelineDef } from '../ir/types';
+import { RuntimeValue } from '../ir/resource-store';
+import { RenderPipelineDef } from '../ir/types';
 
 /**
  * Interface for the host environment provided to JIT-compiled CPU code.
