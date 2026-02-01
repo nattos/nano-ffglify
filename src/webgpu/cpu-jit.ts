@@ -447,6 +447,16 @@ export class CpuJitCompiler {
       case 'math_is_nan': return `_applyUnary(${val()}, v => isNaN(v) ? 1.0 : 0.0)`;
       case 'math_is_inf': return `_applyUnary(${val()}, v => (!isFinite(v) && !isNaN(v)) ? 1.0 : 0.0)`;
       case 'math_is_finite': return `_applyUnary(${val()}, v => isFinite(v) ? 1.0 : 0.0)`;
+      case 'math_flush_subnormal': return `_applyUnary(${val()}, v => Math.abs(v) < 1.17549435e-38 ? 0.0 : v)`;
+      case 'math_mantissa': return `_applyUnary(${val()}, v => {
+        if (v === 0 || !isFinite(v)) return v;
+        const exp = Math.floor(Math.log2(Math.abs(v))) + 1;
+        return v * Math.pow(2, -exp);
+      })`;
+      case 'math_exponent': return `_applyUnary(${val()}, v => {
+        if (v === 0 || !isFinite(v)) return 0;
+        return Math.floor(Math.log2(Math.abs(v))) + 1;
+      })`;
 
       // Basic Math (Binary)
       case 'math_add': return `_applyBinary(${a()}, ${b()}, (x, y) => x + y)`;
