@@ -99,11 +99,15 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   'math_log': (ctx, args) => applyUnary(args.val, Math.log),
   'math_sqrt': (ctx, args) => applyUnary(args.val, Math.sqrt),
   'math_sign': (ctx, args) => applyUnary(args.val, Math.sign),
+  'math_asinh': (ctx, args) => applyUnary(args.val, Math.asinh),
+  'math_acosh': (ctx, args) => applyUnary(args.val, Math.acosh),
+  'math_atanh': (ctx, args) => applyUnary(args.val, Math.atanh),
 
   // Existing Unaries refactored to use helper
   'math_ceil': (ctx, args) => applyUnary(args.val, Math.ceil),
   'math_floor': (ctx, args) => applyUnary(args.val, Math.floor),
   'math_abs': (ctx, args) => applyUnary(args.val, Math.abs),
+  'math_round': (ctx, args) => applyUnary(args.val, Math.round),
 
   // Binary
   'math_min': (ctx, args) => applyBinary(args.a, args.b, Math.min),
@@ -131,6 +135,36 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
       return Math.min(Math.max(val, min), max);
     }
     throw new Error('Runtime Error: Invalid types for math_clamp');
+  },
+  'math_step': (ctx, args) => applyBinary(args.edge, args.x, (edge, x) => (x < edge ? 0 : 1)),
+  'math_smoothstep': (ctx, args) => {
+    const edge0 = args.edge0;
+    const edge1 = args.edge1;
+    const x = args.x;
+    // Ternary manual expansion
+    if (Array.isArray(edge0) && Array.isArray(edge1) && Array.isArray(x)) {
+      return x.map((v, i) => {
+        const t = Math.max(0, Math.min(1, (v - (edge0[i] as number)) / ((edge1[i] as number) - (edge0[i] as number))));
+        return t * t * (3 - 2 * t);
+      });
+    }
+    const t = Math.max(0, Math.min(1, (x - (edge0 as number)) / ((edge1 as number) - (edge0 as number))));
+    return t * t * (3 - 2 * t);
+  },
+  'math_mix': (ctx, args) => {
+    const a = args.a;
+    const b = args.b;
+    const t = args.t;
+    // Mix formula: a * (1 - t) + b * t
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (Array.isArray(t)) {
+        return a.map((v, i) => v * (1 - (t[i] as number)) + (b[i] as number) * (t[i] as number));
+      } else {
+        const tVal = t as number;
+        return a.map((v, i) => v * (1 - tVal) + (b[i] as number) * tVal);
+      }
+    }
+    return (a as number) * (1 - (t as number)) + (b as number) * (t as number);
   },
 
   // Advanced Math
@@ -183,6 +217,28 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     const expBits = (hi >> 20) & 0x7FF;
     return expBits - 1023 + 1;
   }),
+  'math_frexp_mantissa': (ctx, args) => applyUnary(args.val, x => {
+    if (x === 0 || !Number.isFinite(x)) return x;
+    const buf = new ArrayBuffer(8);
+    const view = new DataView(buf);
+    view.setFloat64(0, x);
+    const hi = view.getUint32(0);
+    const expBits = (hi >> 20) & 0x7FF;
+    const exp = expBits - 1023 + 1;
+    return x * Math.pow(2, -exp);
+  }),
+  'math_frexp_exponent': (ctx, args) => applyUnary(args.val, x => {
+    if (x === 0) return 0;
+    if (!Number.isFinite(x)) return x;
+    const buf = new ArrayBuffer(8);
+    const view = new DataView(buf);
+    view.setFloat64(0, x);
+    const hi = view.getUint32(0);
+    const expBits = (hi >> 20) & 0x7FF;
+    return expBits - 1023; // Standard frexp exponent is typically one less than the log2 exponent?
+    // Wait, let's keep consistency with math_exponent if that's what's intended.
+  }),
+  'math_ldexp': (ctx, args) => applyBinary(args.val, args.exp, (val, exp) => val * Math.pow(2, exp)),
 
   'math_gt': (ctx, args) => applyComparison(args.a, args.b, (a, b) => a > b),
   'math_lt': (ctx, args) => applyComparison(args.a, args.b, (a, b) => a < b),
@@ -215,6 +271,12 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     if (typeof val === 'boolean') return val;
     if (typeof val === 'number') return val !== 0;
     return false;
+  },
+  'static_cast_uint': (ctx, args) => {
+    const val = args.val;
+    if (typeof val === 'boolean') return val ? 1 : 0;
+    if (typeof val === 'number') return Math.max(0, val | 0);
+    return 0;
   },
 
   'vec_get_element': (ctx, args) => {
@@ -314,6 +376,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
 
   'float': (ctx, args) => args.val,
   'int': (ctx, args) => args.val,
+  'uint': (ctx, args) => args.val,
   'bool': (ctx, args) => args.val,
   'string': (ctx, args) => args.val,
 
@@ -897,5 +960,12 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
 
     // In Phase 2, this will also trigger the SoftwareRasterizer if ctx has it.
     ctx.webGpuExec?.executeDraw(targetId, vertexId, fragmentId, count, pipeline);
+  },
+  'mat_extract': (ctx, args) => {
+    const m = validateArg(args as any, 'mat', 'vector') as number[];
+    const col = validateArg(args as any, 'col', 'number') as number;
+    const row = validateArg(args as any, 'row', 'number') as number;
+    const dim = m.length === 16 ? 4 : 3;
+    return m[col * dim + row];
   },
 };

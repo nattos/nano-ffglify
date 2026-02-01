@@ -1,7 +1,8 @@
 import { BuiltinOp, TextureFormatValues, TextureFormat } from '../ir/types';
 import { RuntimeValue, VectorValue, ResourceState } from '../ir/resource-store';
+import { OpArgs } from '../ir/builtin-schemas';
 
-export type HostOpHandler = (args: any) => RuntimeValue | void;
+export type HostOpHandler<K extends BuiltinOp> = (args: OpArgs[K]) => RuntimeValue | void;
 
 // Helper for element-wise unary operations
 const applyUnary = (val: any, fn: (x: number) => number): any => {
@@ -47,7 +48,7 @@ const applyComparison = (a: any, b: any, op: (x: number, y: number) => boolean):
   return false;
 };
 
-export const HostOps: Partial<Record<BuiltinOp, HostOpHandler>> = {
+export const HostOps: { [K in BuiltinOp]?: HostOpHandler<K> } = {
   'math_add': (args) => applyBinary(args.a, args.b, (a, b) => a + b),
   'math_sub': (args) => applyBinary(args.a, args.b, (a, b) => a - b),
   'math_mul': (args) => applyBinary(args.a, args.b, (a, b) => a * b),

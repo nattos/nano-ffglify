@@ -139,6 +139,11 @@ export interface CmdResizeResourceArgs { resource: string; size: any; clear?: an
 export interface FuncReturnArgs { val: any; value?: any;[key: string]: any; }
 export interface QuatToMatArgs { q: any;[key: string]: any; }
 export interface MathClampArgs { val: any; min: any; max: any;[key: string]: any; }
+export interface MathStepArgs { edge: any; x: any;[key: string]: any; }
+export interface MathSmoothstepArgs { edge0: any; edge1: any; x: any;[key: string]: any; }
+export interface MathMixArgs { a: any; b: any; t: any;[key: string]: any; }
+export interface MathLdexpArgs { val: any; exp: any;[key: string]: any; }
+export interface MatExtractArgs { mat: any; col: any; row: any;[key: string]: any; }
 export interface LiteralArgs { val: any;[key: string]: any; }
 export interface Float2Args { x: any; y: any;[key: string]: any; }
 export interface Float3Args { x: any; y: any; z: any;[key: string]: any; }
@@ -543,10 +548,12 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'math_sqrt': MathNumericUnaryDef, 'math_exp': MathNumericUnaryDef, 'math_log': MathNumericUnaryDef,
   'math_sin': MathNumericUnaryDef, 'math_cos': MathNumericUnaryDef, 'math_tan': MathNumericUnaryDef,
   'math_asin': MathNumericUnaryDef, 'math_acos': MathNumericUnaryDef, 'math_atan': MathNumericUnaryDef,
+  'math_asinh': MathNumericUnaryDef, 'math_acosh': MathNumericUnaryDef, 'math_atanh': MathNumericUnaryDef,
   'math_sinh': MathNumericUnaryDef, 'math_cosh': MathNumericUnaryDef, 'math_tanh': MathNumericUnaryDef,
   'math_sign': MathNumericUnaryDef, 'math_fract': MathNumericUnaryDef, 'math_trunc': MathNumericUnaryDef,
+  'math_round': MathNumericUnaryDef,
   'math_is_nan': MathNumericUnaryDef, 'math_is_inf': MathNumericUnaryDef, 'math_is_finite': MathNumericUnaryDef,
-  'static_cast_int': MathCastUnaryDef, 'static_cast_float': MathCastUnaryDef, 'static_cast_bool': MathCastUnaryDef,
+  'static_cast_int': MathCastUnaryDef, 'static_cast_uint': MathCastUnaryDef, 'static_cast_float': MathCastUnaryDef, 'static_cast_bool': MathCastUnaryDef,
   'math_not': MathLogicUnaryDef,
 
   // Vector Unary
@@ -556,6 +563,9 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   // Special Math
   'math_mad': defineOp<MadArgs>({ doc: "a * b + c", args: { a: { type: AnyData, doc: "a", refable: true }, b: { type: AnyData, doc: "b", refable: true }, c: { type: AnyData, doc: "c", refable: true } } }),
   'math_clamp': MathClampDef,
+  'math_step': defineOp<MathStepArgs>({ doc: "Step function", args: { edge: { type: AnyData, doc: "Edge", refable: true }, x: { type: AnyData, doc: "x", refable: true } } }),
+  'math_smoothstep': defineOp<MathSmoothstepArgs>({ doc: "Smoothstep function", args: { edge0: { type: AnyData, doc: "Edge 0", refable: true }, edge1: { type: AnyData, doc: "Edge 1", refable: true }, x: { type: AnyData, doc: "x", refable: true } } }),
+  'math_mix': defineOp<MathMixArgs>({ doc: "Linear interpolation", args: { a: { type: AnyData, doc: "a", refable: true }, b: { type: AnyData, doc: "b", refable: true }, t: { type: AnyData, doc: "t", refable: true } } }),
   'literal': LiteralDef,
   'math_pi': defineOp<EmptyArgs>({ doc: "Pi constant", args: {} }),
   'math_e': defineOp<EmptyArgs>({ doc: "Euler's number constant", args: {} }),
@@ -566,6 +576,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'float4': Float4ConstructorDef,
   'float': defineOp<ScalarArgs>({ doc: "Float constructor", args: { val: { type: FloatSchema, doc: "Value", refable: true } } }),
   'int': defineOp<ScalarArgs>({ doc: "Int constructor", args: { val: { type: IntSchema, doc: "Value", refable: true } } }),
+  'uint': defineOp<ScalarArgs>({ doc: "Uint constructor", args: { val: { type: IntSchema, doc: "Value", refable: true } } }),
   'bool': defineOp<ScalarArgs>({ doc: "Bool constructor", args: { val: { type: BoolSchema, doc: "Value", refable: true } } }),
   'string': defineOp<ScalarArgs>({ doc: "String constructor", args: { val: { type: z.string(), doc: "Value" } } }),
 
@@ -590,6 +601,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'mat_mul': MatMulDef,
   'mat_transpose': MatUnaryDef,
   'mat_inverse': MatUnaryDef,
+  'mat_extract': defineOp<MatExtractArgs>({ doc: "Extract element from matrix", args: { mat: { type: AnyMat, doc: "Matrix", refable: true }, col: { type: IntSchema, doc: "Column", refable: true }, row: { type: IntSchema, doc: "Row", refable: true } } }),
 
   // Quaternions
   'quat': QuatDef,
@@ -602,6 +614,9 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'math_flush_subnormal': MathNumericUnaryDef,
   'math_mantissa': MathNumericUnaryDef,
   'math_exponent': MathNumericUnaryDef,
+  'math_frexp_mantissa': MathNumericUnaryDef,
+  'math_frexp_exponent': MathNumericUnaryDef,
+  'math_ldexp': defineOp<MathLdexpArgs>({ doc: "ldexp function", args: { val: { type: AnyData, doc: "Value", refable: true }, exp: { type: AnyData, doc: "Exponent", refable: true } } }),
 
   // Structs & Arrays
   'struct_construct': defineOp<DynamicArgs>({ doc: "Construct struct", args: {} }),
@@ -651,15 +666,20 @@ export type OpArgs = {
   'math_sqrt': MathUnaryArgs; 'math_exp': MathUnaryArgs; 'math_log': MathUnaryArgs;
   'math_sin': MathUnaryArgs; 'math_cos': MathUnaryArgs; 'math_tan': MathUnaryArgs;
   'math_asin': MathUnaryArgs; 'math_acos': MathUnaryArgs; 'math_atan': MathUnaryArgs;
+  'math_asinh': MathUnaryArgs; 'math_acosh': MathUnaryArgs; 'math_atanh': MathUnaryArgs;
   'math_sinh': MathUnaryArgs; 'math_cosh': MathUnaryArgs; 'math_tanh': MathUnaryArgs;
   'math_sign': MathUnaryArgs; 'math_fract': MathUnaryArgs; 'math_trunc': MathUnaryArgs;
+  'math_round': MathUnaryArgs;
   'math_is_nan': MathUnaryArgs; 'math_is_inf': MathUnaryArgs; 'math_is_finite': MathUnaryArgs;
-  'static_cast_int': MathUnaryArgs; 'static_cast_float': MathUnaryArgs; 'static_cast_bool': MathUnaryArgs;
+  'static_cast_int': MathUnaryArgs; 'static_cast_uint': MathUnaryArgs; 'static_cast_float': MathUnaryArgs; 'static_cast_bool': MathUnaryArgs;
   'math_not': MathUnaryArgs;
   'vec_length': VecUnaryArgs;
   'vec_normalize': VecUnaryArgs;
   'math_mad': MadArgs;
   'math_clamp': MathClampArgs;
+  'math_step': MathStepArgs;
+  'math_smoothstep': MathSmoothstepArgs;
+  'math_mix': MathMixArgs;
   'literal': LiteralArgs;
   'math_pi': EmptyArgs;
   'math_e': EmptyArgs;
@@ -668,6 +688,7 @@ export type OpArgs = {
   'float4': Float4Args;
   'float': ScalarArgs;
   'int': ScalarArgs;
+  'uint': ScalarArgs;
   'bool': ScalarArgs;
   'string': ScalarArgs;
   'vec_swizzle': VecSwizzleArgs;
@@ -684,8 +705,9 @@ export type OpArgs = {
   'float4x4': Mat4x4Args;
   'mat_identity': MatIdentityArgs;
   'mat_mul': MatMulArgs;
-  'mat_transpose': MatUnaryArgs;
-  'mat_inverse': MatUnaryArgs;
+  'mat_transpose': MathUnaryArgs;
+  'mat_inverse': MathUnaryArgs;
+  'mat_extract': MatExtractArgs;
   'quat': QuatArgs;
   'quat_identity': EmptyArgs;
   'quat_mul': QuatMulArgs;
@@ -696,6 +718,9 @@ export type OpArgs = {
   'math_flush_subnormal': MathUnaryArgs;
   'math_mantissa': MathUnaryArgs;
   'math_exponent': MathUnaryArgs;
+  'math_frexp_mantissa': MathUnaryArgs;
+  'math_frexp_exponent': MathUnaryArgs;
+  'math_ldexp': MathLdexpArgs;
   'struct_construct': DynamicArgs;
   'struct_extract': StructExtractArgs;
   'array_construct': DynamicArgs;

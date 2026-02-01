@@ -289,8 +289,11 @@ export type BuiltinOp =
   // Inputs: { val: T } | Output: T
   | 'math_abs' | 'math_ceil' | 'math_floor' | 'math_sqrt' | 'math_exp' | 'math_log'
   | 'math_sin' | 'math_cos' | 'math_tan' | 'math_asin' | 'math_acos' | 'math_atan'
-  | 'math_sinh' | 'math_cosh' | 'math_tanh' | 'math_sign'
+  | 'math_sinh' | 'math_cosh' | 'math_tanh' | 'math_asinh' | 'math_acosh' | 'math_atanh' | 'math_sign'
   | 'math_clamp' // { val: T, min: T, max: T } -> T
+  | 'math_step' // { edge: T, x: T } -> T
+  | 'math_smoothstep' // { edge0: T, edge1: T, x: T } -> T
+  | 'math_mix' // { a: T, b: T, t: T|float } -> T
 
   // Special Math:
   | 'math_atan2' // { y: T, x: T } -> T
@@ -309,22 +312,24 @@ export type BuiltinOp =
   // Advanced Math
   // ----------------------------------------------------------------
   // Unary: { val: T } -> T
-  | 'math_fract' | 'math_trunc'
+  | 'math_fract' | 'math_trunc' | 'math_round'
   // Classification: { val: T } -> boolean
   | 'math_is_nan' | 'math_is_inf' | 'math_is_finite'
   // Advanced:
   | 'math_flush_subnormal' // { val: T } -> T
   // Decomposition:
   | 'math_mantissa' | 'math_exponent' // { val: T } -> T
+  | 'math_frexp_mantissa' | 'math_frexp_exponent' // { val: T } -> T
+  | 'math_ldexp' // { val: T, exp: int|T } -> T
   | 'literal' // { val: any } -> any
 
   // ----------------------------------------------------------------
   // Scalar Casts & Constructors
   // ----------------------------------------------------------------
   // Casts: { val: any } -> Type
-  | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
+  | 'static_cast_int' | 'static_cast_uint' | 'static_cast_float' | 'static_cast_bool'
   // Constructors: { val: scalar } -> scalar
-  | 'float' | 'int' | 'bool' | 'string'
+  | 'float' | 'int' | 'uint' | 'bool' | 'string'
 
   // ----------------------------------------------------------------
   // Extended Types
@@ -348,6 +353,7 @@ export type BuiltinOp =
   | 'mat_mul'       // { a: mat, b: mat|vec } -> mat|vec
   | 'mat_transpose' // { val: mat } -> mat
   | 'mat_inverse'   // { val: mat } -> mat
+  | 'mat_extract'   // { mat: mat, col: int, row: int } -> float
 
   // Quaternions:
   | 'quat' // { x, y, z, w }
