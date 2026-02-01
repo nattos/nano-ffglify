@@ -368,6 +368,17 @@ export class CpuJitCompiler {
       const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
       lines.push(`${indent}resources.get('${bufferId}').data[${idx}] = ${val};`);
     }
+    else if (node.op === 'texture_store') {
+      const texId = node['tex'];
+      const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+      lines.push(`${indent}((coords, val) => {
+        const res = resources.get('${texId}');
+        if (!res) return;
+        const x = Math.floor(coords[0]), y = Math.floor(coords[1]);
+        if (x >= 0 && x < res.width && y >= 0 && y < res.height) res.data[y * res.width + x] = val;
+      })(${coords}, ${val});`);
+    }
     else if (this.hasResult(node.op)) {
       lines.push(`${indent}${nodeResId(node.id)} = ${this.compileExpression(node, func, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure)};`);
     }
@@ -426,6 +437,51 @@ export class CpuJitCompiler {
           if (idx < 0 || idx >= res.data.length) throw new Error("Runtime Error: buffer_load OOB");
           return res.data[idx];
         })(${idx})`;
+      }
+      case 'texture_load': {
+        const texId = node['tex'];
+        const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        return `((coords) => {
+          const res = resources.get('${texId}');
+          if (!res) return [0, 0, 0, 0];
+          const x = Math.floor(coords[0]), y = Math.floor(coords[1]);
+          if (x < 0 || x >= res.width || y < 0 || y >= res.height) return [0, 0, 0, 0];
+          return res.data[y * res.width + x] || [0, 0, 0, 0];
+        })(${coords})`;
+      }
+      case 'texture_sample': {
+        const texId = node['tex'];
+        const uv = (node['uv'] !== undefined) ? this.resolveArg(node, 'uv', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure) : this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        return `((uv) => {
+          const res = resources.get('${texId}');
+          if (!res) return [0, 0, 0, 0];
+          const wrap = res.def.sampler?.wrap || 'clamp';
+          let u = uv[0], v = uv[1];
+          if (wrap === 'repeat') { u -= Math.floor(u); v -= Math.floor(v); }
+          else if (wrap === 'mirror') {
+            const u2 = u - 2.0 * Math.floor(u * 0.5); u = 1.0 - Math.abs(u2 - 1.0);
+            const v2 = v - 2.0 * Math.floor(v * 0.5); v = 1.0 - Math.abs(v2 - 1.0);
+          }
+          else { u = Math.max(0, Math.min(1, u)); v = Math.max(0, Math.min(1, v)); }
+          const x = Math.min(res.width - 1, Math.floor(u * res.width));
+          const y = Math.min(res.height - 1, Math.floor(v * res.height));
+          return res.data[y * res.width + x] || [0, 0, 0, 0];
+        })(${uv})`;
+      }
+      case 'resource_get_size': {
+        const resId = node['resource'];
+        return `((id) => {
+          const res = resources.get(id);
+          if (!res) return [0, 0];
+          return res.def.type === 'texture2d' ? [res.width, res.height] : [res.width, 0];
+        })('${resId}')`;
+      }
+      case 'resource_get_format': {
+        const resId = node['resource'];
+        return `((id) => {
+          const res = resources.get(id);
+          return res ? (res.def.format || 'rgba8') : 'rgba8';
+        })('${resId}')`;
       }
 
       // Basic Math (Unary)

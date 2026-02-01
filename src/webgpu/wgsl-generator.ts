@@ -599,6 +599,28 @@ export class WgslGenerator {
       const arr = this.resolveArg(node, 'array', func, options, ir);
       return `i32(arrayLength(&${arr}))`;
     }
+    if (node.op === 'texture_sample') {
+      const tex = node['tex'];
+      const uv = (node['uv'] !== undefined) ? this.resolveArg(node, 'uv', func, options, ir) : this.resolveArg(node, 'coords', func, options, ir);
+      return `sample_${tex}(${uv})`;
+    }
+    if (node.op === 'texture_load') {
+      const tex = node['tex'];
+      const coords = this.resolveArg(node, 'coords', func, options, ir);
+      return `textureLoad(${tex}, vec2<i32>(${coords}.xy), 0)`;
+    }
+    if (node.op === 'resource_get_size') {
+      const resId = node['resource'];
+      const def = options.resourceDefs?.get(resId);
+      if (def?.type === 'texture2d') return `vec2<f32>(textureDimensions(${resId}))`;
+      if (def?.type === 'buffer') return `vec2<f32>(f32(arrayLength(&${this.getBufferVar(resId)}.data)), 0.0)`;
+      return `vec2<f32>(0.0, 0.0)`;
+    }
+    if (node.op === 'resource_get_format') {
+      // Formats are mostly static string metadata in IR, hard to represent in WGSL return value
+      // but we return 0.0 or a dummy value.
+      return `0.0`;
+    }
     if (node.op === 'buffer_load') {
       const bufferId = node['buffer'] as string;
       const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
