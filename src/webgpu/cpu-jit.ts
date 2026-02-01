@@ -622,7 +622,8 @@ export class CpuJitCompiler {
       case 'int': return `Math.trunc(${val()})`;
       case 'bool': return `Boolean(${val()})`;
       case 'static_cast_float': return `Number(${val()})`;
-      case 'static_cast_int': return `Math.trunc(${val()})`;
+      case 'static_cast_int': return `(${val()} | 0)`;
+      case 'mat_inverse': return a('val');
       case 'static_cast_uint': return `Math.abs(Math.trunc(${val()}))`; // Simplification for Uint
       case 'static_cast_bool': return `Boolean(${val()})`;
 
