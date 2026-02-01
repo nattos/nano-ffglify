@@ -18,15 +18,26 @@ export class CpuJitCompiler {
    * Compiles an IR function (and its dependencies) into a native JS function.
    * Signature: (resources, inputs, globals, variables) => Promise<RuntimeValue>
    */
-  compile(func: FunctionDef, allFunctions: FunctionDef[] = []): Function {
+  compile(ir: any, funcId: string): Function {
+    const allFunctions = ir.functions;
+    const func = allFunctions.find((f: any) => f.id === funcId);
+    if (!func) throw new Error(`Entry point '${funcId}' not found`);
+
     const lines: string[] = [];
 
     lines.push(`"use strict";`);
     lines.push(`// Compiled Graph starting at: ${func.id}`);
+    const debugSync = !!ir.meta?.debug;
+    if (debugSync) lines.push(`// DEBUG SYNC ENABLED`);
 
-    const sanitizeId = (id: string) => `v_${id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+    const sanitizeId = (id: string, type: 'input' | 'var' | 'func' = 'var') => {
+      const clean = id.replace(/[^a-zA-Z0-9_]/g, '_');
+      if (type === 'input') return `i_${clean}`;
+      if (type === 'func') return `func_${clean}`;
+      return `v_${clean}`;
+    };
     const nodeResId = (id: string) => `n_${id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-    const funcName = (id: string) => `func_${id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+    const funcName = (id: string) => sanitizeId(id, 'func');
 
     // Add common helpers for vector/matrix math
     this.emitIntrinsicHelpers(lines);
@@ -39,11 +50,11 @@ export class CpuJitCompiler {
       const fid = toVisit.pop()!;
       if (reachable.has(fid)) continue;
       reachable.add(fid);
-      const f = allFunctions.find(func => func.id === fid);
+      const f = allFunctions.find((func: FunctionDef) => func.id === fid);
       if (f) {
-        f.nodes.forEach(n => {
+        f.nodes.forEach((n: Node) => {
           if (n.op === 'call_func' && typeof n.func === 'string') {
-            const target = allFunctions.find(tf => tf.id === n.func);
+            const target = allFunctions.find((tf: FunctionDef) => tf.id === n.func);
             if (target && target.type === 'cpu') toVisit.push(n.func);
           }
         });
@@ -52,9 +63,9 @@ export class CpuJitCompiler {
 
     // 2. Emit each reachable function as a nested JS function
     for (const fid of reachable) {
-      const f = allFunctions.find(func => func.id === fid);
+      const f = allFunctions.find((func: any) => func.id === fid);
       if (f) {
-        this.emitFunction(f, lines, sanitizeId, nodeResId, funcName, allFunctions);
+        this.emitFunction(f, lines, sanitizeId, nodeResId, funcName, allFunctions, debugSync);
         lines.push('');
       }
     }
@@ -90,42 +101,79 @@ export class CpuJitCompiler {
     lines.push(`const _vec_length = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0));`);
     lines.push(`const _vec_normalize = (a) => { const l = _vec_length(a); return l < 1e-10 ? a.map(() => 0) : a.map(v => v / l); };`);
     lines.push(`const _mat_mul = (a, b) => {
-      const dim = a.length === 16 ? 4 : 3;
-      if (b.length === a.length) {
-        const out = new Array(dim * dim);
-        for (let r = 0; r < dim; r++) for (let c = 0; c < dim; c++) {
-          let sum = 0; for (let k = 0; k < dim; k++) sum += a[k * dim + r] * b[c * dim + k];
-          out[c * dim + r] = sum;
+      if (a.length === 16 || a.length === 9) {
+        const dim = a.length === 16 ? 4 : 3;
+        if (b.length === a.length) {
+          const out = new Array(dim * dim);
+          for (let r = 0; r < dim; r++) for (let c = 0; c < dim; c++) {
+            let sum = 0; for (let k = 0; k < dim; k++) sum += a[k * dim + r] * b[c * dim + k];
+            out[c * dim + r] = sum;
+          }
+          return out;
         }
-        return out;
-      }
-      if (b.length === dim) {
-        const out = new Array(dim).fill(0);
-        for (let r = 0; r < dim; r++) {
-          let sum = 0; for (let c = 0; c < dim; c++) sum += a[c * dim + r] * b[c];
-          out[r] = sum;
+        if (b.length === dim) {
+          const out = new Array(dim).fill(0);
+          for (let r = 0; r < dim; r++) {
+            let sum = 0; for (let c = 0; c < dim; c++) sum += a[c * dim + r] * b[c];
+            out[r] = sum;
+          }
+          return out;
         }
-        return out;
+      } else if (b.length === 16 || b.length === 9) {
+        // Vector * Matrix (Row Vector)
+        const dim = b.length === 16 ? 4 : 3;
+        if (a.length === dim) {
+          const out = new Array(dim).fill(0);
+          for (let c = 0; c < dim; c++) {
+            let sum = 0; for (let r = 0; r < dim; r++) sum += a[r] * b[c * dim + r];
+            out[c] = sum;
+          }
+          return out;
+        }
       }
       return 0;
     };`);
+    lines.push(`const _quat_mul = (a, b) => {
+      const [ax, ay, az, aw] = a;
+      const [bx, by, bz, bw] = b;
+      return [
+        ax * bw + aw * bx + ay * bz - az * by,
+        ay * bw + aw * by + az * bx - ax * bz,
+        az * bw + aw * bz + ax * by - ay * bx,
+        aw * bw - ax * bx - ay * by - az * bz
+      ];
+    };`);
+    lines.push(`const _quat_slerp = (a, b, t) => {
+      let cosHalfTheta = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
+      const qa = [...a];
+      if (cosHalfTheta < 0) {
+        for(let i=0; i<4; i++) qa[i] = -qa[i];
+        cosHalfTheta = -cosHalfTheta;
+      }
+      if (Math.abs(cosHalfTheta) >= 1.0) return qa;
+      const halfTheta = Math.acos(cosHalfTheta);
+      const sinHalfTheta = Math.sqrt(1.0 - cosHalfTheta * cosHalfTheta);
+      if (Math.abs(sinHalfTheta) < 1e-6) return qa.map((v, i) => v * (1-t) + b[i] * t);
+      const ratioA = Math.sin((1-t) * halfTheta) / sinHalfTheta;
+      const ratioB = Math.sin(t * halfTheta) / sinHalfTheta;
+      return qa.map((v, i) => v * ratioA + b[i] * ratioB);
+    };`);
   }
 
-  private emitFunction(f: FunctionDef, lines: string[], sanitizeId: (id: string) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[]) {
+  private emitFunction(f: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], debugSync: boolean) {
     lines.push(`async function ${funcName(f.id)}(args) {`);
 
     // Unpack args into local vars
     for (const input of f.inputs) {
-      lines.push(`  let ${sanitizeId(input.id)} = args['${input.id}'];`);
+      lines.push(`  let ${sanitizeId(input.id, 'input')} = args['${input.id}'];`);
     }
 
     // Local Variables
     for (const v of f.localVars) {
       const init = v.initialValue !== undefined ? JSON.stringify(v.initialValue) : '0';
-      lines.push(`  let ${sanitizeId(v.id)} = ${init};`);
+      lines.push(`  let ${sanitizeId(v.id, 'var')} = ${init};`);
     }
 
-    // Node Result Variables
     const resultNodes = f.nodes.filter(n => this.hasResult(n.op));
     for (const n of resultNodes) {
       lines.push(`  let ${nodeResId(n.id)};`);
@@ -170,6 +218,18 @@ export class CpuJitCompiler {
       this.emitChain('  ', entry, f, lines, new Set(), sanitizeId, nodeResId, funcName, allFunctions, emitPure);
     }
 
+    // Sync variables back to Map if debug is enabled
+    if (debugSync) {
+      lines.push(`  if (variables) {`);
+      for (const input of f.inputs) {
+        lines.push(`    variables.set('${input.id}', ${sanitizeId(input.id, 'input')});`);
+      }
+      for (const v of f.localVars) {
+        lines.push(`    variables.set('${v.id}', ${sanitizeId(v.id, 'var')});`);
+      }
+      lines.push(`  }`);
+    }
+
     lines.push(`  return 0; // Default return`);
     lines.push(`}`);
   }
@@ -180,7 +240,7 @@ export class CpuJitCompiler {
   }
 
   private hasResult(op: string) {
-    if (op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('mat_')) return true;
+    if (op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('mat_') || op.startsWith('quat_')) return true;
     const valueOps = [
       'float', 'int', 'uint', 'bool', 'literal', 'loop_index',
       'float2', 'float3', 'float4',
@@ -190,12 +250,12 @@ export class CpuJitCompiler {
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length', 'array_set',
       'var_get', 'buffer_load', 'texture_load', 'call_func', 'vec_swizzle',
-      'color_mix', 'vec_get_element'
+      'color_mix', 'vec_get_element', 'quat'
     ];
     return valueOps.includes(op);
   }
 
-  private emitChain(indent: string, startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
+  private emitChain(indent: string, startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
     let curr: Node | undefined = startNode;
 
     while (curr) {
@@ -234,7 +294,7 @@ export class CpuJitCompiler {
     }
   }
 
-  private emitBranch(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
+  private emitBranch(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
     const cond = this.resolveArg(node, 'cond', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
     lines.push(`${indent}if (${cond}) {`);
     const trueNode = this.getNextNode(node, 'exec_true', func);
@@ -245,7 +305,7 @@ export class CpuJitCompiler {
     lines.push(`${indent}}`);
   }
 
-  private emitLoop(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
+  private emitLoop(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
     const start = this.resolveArg(node, 'start', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
     const end = this.resolveArg(node, 'end', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
     const loopVar = `loop_${node.id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
@@ -259,7 +319,7 @@ export class CpuJitCompiler {
     if (nextNode) this.emitChain(indent, nextNode, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
   }
 
-  private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
+  private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
     if (node.op === 'cmd_dispatch') {
       const targetId = node['func'];
       const dimCode = Array.isArray(node['dispatch']) ? JSON.stringify(node['dispatch']) : '[1, 1, 1]';
@@ -295,7 +355,8 @@ export class CpuJitCompiler {
     else if (node.op === 'var_set') {
       const val = this.resolveArg(node, 'val', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
       const varId = node['var'];
-      if (func.localVars.some(v => v.id === varId)) lines.push(`${indent}${sanitizeId(varId)} = ${val};`);
+      if (func.localVars.some(v => v.id === varId)) lines.push(`${indent}${sanitizeId(varId, 'var')} = ${val};`);
+      else if (func.inputs.some(i => i.id === varId)) lines.push(`${indent}${sanitizeId(varId, 'input')} = ${val};`);
       else lines.push(`${indent}variables.set('${varId}', ${val});`);
     }
     else if (node.op === 'buffer_store') {
@@ -314,7 +375,7 @@ export class CpuJitCompiler {
     return edge ? func.nodes.find(n => n.id === edge.to) : undefined;
   }
 
-  private resolveArg(node: Node, key: string, func: FunctionDef, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void): string {
+  private resolveArg(node: Node, key: string, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void): string {
     const edge = func.edges.find(e => e.to === node.id && (e.portIn === key || (key === 'val' && e.portIn === 'value')) && e.type === 'data');
     if (edge) {
       const source = func.nodes.find(n => n.id === edge.from);
@@ -324,7 +385,8 @@ export class CpuJitCompiler {
     if (node[key] !== undefined || (key === 'val' && node['value'] !== undefined)) {
       const val = (node[key] !== undefined) ? node[key] : node['value'];
       if (typeof val === 'string' && !['var', 'func', 'resource', 'buffer'].includes(key)) {
-        if (func.localVars.some(v => v.id === val)) return sanitizeId(val);
+        if (func.localVars.some(v => v.id === val)) return sanitizeId(val, 'var');
+        if (func.inputs.some(i => i.id === val)) return sanitizeId(val, 'input');
         const targetNode = func.nodes.find(n => n.id === val);
         if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure);
       }
@@ -333,7 +395,7 @@ export class CpuJitCompiler {
     return '0';
   }
 
-  private compileExpression(node: Node, func: FunctionDef, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], forceEmit: boolean = false, emitPure: (id: string) => void): string {
+  private compileExpression(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], forceEmit: boolean = false, emitPure: (id: string) => void): string {
     if (!forceEmit && this.hasResult(node.op)) {
       emitPure(node.id);
       return nodeResId(node.id);
@@ -346,7 +408,8 @@ export class CpuJitCompiler {
     switch (node.op) {
       case 'var_get': {
         const varId = node['var'];
-        if (func.localVars.some(v => v.id === varId)) return sanitizeId(varId);
+        if (func.localVars.some(v => v.id === varId)) return sanitizeId(varId, 'var');
+        if (func.inputs.some(i => i.id === varId)) return sanitizeId(varId, 'input');
         return `(variables.has('${varId}') ? variables.get('${varId}') : undefined)`;
       }
       case 'literal': return JSON.stringify(node['val']);
@@ -412,6 +475,25 @@ export class CpuJitCompiler {
         return `((v, edge0, edge1) => _applyUnary(_applyBinary(_applyBinary(v, edge0, (x, e) => (x - e)), _applyBinary(edge1, edge0, (e1, e0) => (e1 - e0)), (n, d) => Math.max(0, Math.min(1, n / d))), t => t * t * (3 - 2 * t)))(${val()}, ${e0}, ${e1})`;
       }
 
+      // Matrix
+      case 'mat_identity': {
+        const size = Number(node['size'] || 4);
+        const arr = new Array(size * size).fill(0);
+        for (let i = 0; i < size; i++) arr[i * size + i] = 1;
+        return JSON.stringify(arr);
+      }
+      case 'mat_mul': return `_mat_mul(${a()}, ${b()})`;
+      case 'mat_extract': return `(${a()}[${b('index')}])`;
+      case 'mat_transpose': {
+        const m = a();
+        return `((m) => {
+          const dim = Math.sqrt(m.length);
+          const out = new Array(m.length);
+          for(let r=0; r<dim; r++) for(let c=0; c<dim; c++) out[c*dim + r] = m[r*dim + c];
+          return out;
+        })(${m})`;
+      }
+
       // Color
       case 'color_mix': {
         const dst = a();
@@ -464,9 +546,19 @@ export class CpuJitCompiler {
       case 'static_cast_bool': return `Boolean(${val()})`;
 
       // Vectors
-      case 'float2': return `[${this.resolveArg(node, 'x', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}, ${this.resolveArg(node, 'y', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}]`;
-      case 'float3': return `[${this.resolveArg(node, 'x', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}, ${this.resolveArg(node, 'y', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}, ${this.resolveArg(node, 'z', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}]`;
-      case 'float4': return `[${this.resolveArg(node, 'x', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}, ${this.resolveArg(node, 'y', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}, ${this.resolveArg(node, 'z', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}, ${this.resolveArg(node, 'w', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}]`;
+      case 'float2': return `[${a('x')}, ${a('y')}]`;
+      case 'float3': return `[${a('x')}, ${a('y')}, ${a('z')}]`;
+      case 'float4': return `[${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}]`;
+      case 'float3x3':
+      case 'float4x4': {
+        const size = node.op === 'float3x3' ? 9 : 16;
+        if (node['vals'] !== undefined || func.edges.some(e => e.to === node.id && e.portIn === 'vals')) {
+          return a('vals');
+        }
+        const keys = size === 9 ? ['m00', 'm10', 'm20', 'm01', 'm11', 'm21', 'm02', 'm12', 'm22'] :
+          ['m00', 'm10', 'm20', 'm30', 'm01', 'm11', 'm21', 'm31', 'm02', 'm12', 'm22', 'm32', 'm03', 'm13', 'm23', 'm33'];
+        return `[${keys.map(k => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)).join(', ')}]`;
+      }
       case 'vec_dot': return `_vec_dot(${a()}, ${b()})`;
       case 'vec_length': return `_vec_length(${a()})`;
       case 'vec_normalize': return `_vec_normalize(${a()})`;
@@ -501,11 +593,50 @@ export class CpuJitCompiler {
       case 'array_length': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}.length)`;
       case 'array_set': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}[${a('index')}] = ${val('value')})`;
 
+      // Quaternions
+      case 'quat': return `[${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}]`;
+      case 'quat_identity': return `[0, 0, 0, 1]`;
+      case 'quat_mul': return `_quat_mul(${a()}, ${b()})`;
+      case 'quat_slerp': return `_quat_slerp(${a()}, ${b()}, ${this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)})`;
+      case 'quat_to_float4x4': {
+        const q = a('q');
+        return `((q) => {
+          const [x, y, z, w] = q;
+          const x2 = x + x; const y2 = y + y; const z2 = z + z;
+          const xx = x * x2; const xy = x * y2; const xz = x * z2;
+          const yy = y * y2; const yz = y * z2; const zz = z * z2;
+          const wx = w * x2; const wy = w * y2; const wz = w * z2;
+          return [
+            1 - (yy + zz), xy + wz, xz - wy, 0,
+            xy - wz, 1 - (xx + zz), yz + wx, 0,
+            xz + wy, yz - wx, 1 - (xx + yy), 0,
+            0, 0, 0, 1
+          ];
+        })(${q})`;
+      }
+      case 'quat_rotate': {
+        const v = a('v');
+        const q = a('q');
+        return `((v, q) => {
+          const [vx, vy, vz] = v;
+          const [qx, qy, qz, qw] = q;
+          const ix = qw * vx + qy * vz - qz * vy;
+          const iy = qw * vy + qz * vx - qx * vz;
+          const iz = qw * vz + qx * vy - qy * vx;
+          const iw = -qx * vx - qy * vy - qz * vz;
+          return [
+            ix * qw + iw * -qx + iy * -qz - iz * -qy,
+            iy * qw + iw * -qy + iz * -qx - ix * -qz,
+            iz * qw + iw * -qz + ix * -qy - iy * -qx
+          ];
+        })(${v}, ${q})`;
+      }
+
       default: return '0';
     }
   }
 
-  private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void): string {
+  private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void): string {
     const parts: string[] = [];
     const targetId = node['func'];
     const targetFunc = allFunctions.find(f => f.id === targetId);

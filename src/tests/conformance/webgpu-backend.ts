@@ -28,7 +28,7 @@ class WebGpuHostExecutor {
   async executeFunction(func: FunctionDef, functions: FunctionDef[]): Promise<RuntimeValue> {
     let compiled = this.compiledCache.get(func.id);
     if (!compiled) {
-      compiled = this.jit.compile(func, functions);
+      compiled = this.jit.compile(this.ctx.ir, func.id);
       this.compiledCache.set(func.id, compiled);
     }
 

@@ -40,7 +40,7 @@ export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [],
 
   return {
     version: '1.0.0',
-    meta: { name },
+    meta: { name, debug: true },
     entryPoint: 'main',
     inputs: globalVars,
     resources: resources,

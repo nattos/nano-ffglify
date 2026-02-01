@@ -41,6 +41,7 @@ export interface Metadata {
   author?: string;
   description?: string;
   license?: string;
+  debug?: boolean; // Enable debug features (like variable syncing in JIT)
 }
 
 // ------------------------------------------------------------------
