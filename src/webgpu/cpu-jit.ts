@@ -43,23 +43,26 @@ export class CpuJitCompiler {
     this.emitIntrinsicHelpers(lines);
     lines.push('');
 
-    // 1. Collect all reachable CPU functions
+    // 1. Collect all reachable CPU functions and check for cycles
     const reachable = new Set<string>();
-    const toVisit = [func.id];
-    while (toVisit.length > 0) {
-      const fid = toVisit.pop()!;
-      if (reachable.has(fid)) continue;
+    const stack = new Set<string>();
+    const checkCycles = (fid: string) => {
+      if (stack.has(fid)) throw new Error(`Recursion detected: ${fid}`);
+      if (reachable.has(fid)) return;
       reachable.add(fid);
+      stack.add(fid);
       const f = allFunctions.find((func: FunctionDef) => func.id === fid);
       if (f) {
         f.nodes.forEach((n: Node) => {
           if (n.op === 'call_func' && typeof n.func === 'string') {
             const target = allFunctions.find((tf: FunctionDef) => tf.id === n.func);
-            if (target && target.type === 'cpu') toVisit.push(n.func);
+            if (target && target.type === 'cpu') checkCycles(n.func);
           }
         });
       }
-    }
+      stack.delete(fid);
+    };
+    checkCycles(func.id);
 
     // 2. Emit each reachable function as a nested JS function
     for (const fid of reachable) {
@@ -158,6 +161,7 @@ export class CpuJitCompiler {
       const ratioB = Math.sin(t * halfTheta) / sinHalfTheta;
       return qa.map((v, i) => v * ratioA + b[i] * ratioB);
     };`);
+    lines.push(`const _getVar = (id) => { if (!variables.has(id)) throw new Error("Variable '" + id + "' is not defined"); return variables.get(id); };`);
   }
 
   private emitFunction(f: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], debugSync: boolean) {
@@ -185,20 +189,15 @@ export class CpuJitCompiler {
       const node = f.nodes.find(n => n.id === nodeId);
       if (!node || this.isExecutable(node.op)) return;
 
+      // Mark as emitted to prevent recursion during dependency emission
+      emittedPure.add(nodeId);
+
       // Emit data dependencies first
       f.edges.filter(e => e.to === nodeId && e.type === 'data').forEach(edge => {
         emitPure(edge.from);
       });
 
-      // Special case for literals/vars that might be passed by ID in node fields
-      for (const k in node) {
-        if (['id', 'op', 'metadata', 'const_data', 'func', 'args', 'dispatch'].includes(k)) continue;
-        const val = node[k];
-        if (typeof val === 'string' && f.nodes.some(n => n.id === val)) emitPure(val);
-      }
-
       lines.push(`  ${nodeResId(node.id)} = ${this.compileExpression(node, f, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure)};`);
-      emittedPure.add(nodeId);
     };
 
     // Compile node logic
@@ -410,14 +409,19 @@ export class CpuJitCompiler {
         const varId = node['var'];
         if (func.localVars.some(v => v.id === varId)) return sanitizeId(varId, 'var');
         if (func.inputs.some(i => i.id === varId)) return sanitizeId(varId, 'input');
-        return `(variables.has('${varId}') ? variables.get('${varId}') : undefined)`;
+        return `_getVar('${varId}')`;
       }
       case 'literal': return JSON.stringify(node['val']);
       case 'loop_index': return `loop_${node['loop'].replace(/[^a-zA-Z0-9_]/g, '_')}`;
       case 'buffer_load': {
         const bufferId = node['buffer'];
         const idx = a('index');
-        return `(resources.get('${bufferId}') ? resources.get('${bufferId}').data[${idx}] : 0)`;
+        return `((idx) => {
+          const res = resources.get('${bufferId}');
+          if (!res) return 0;
+          if (idx < 0 || idx >= res.data.length) throw new Error("Runtime Error: buffer_load OOB");
+          return res.data[idx];
+        })(${idx})`;
       }
 
       // Basic Math (Unary)
@@ -542,7 +546,8 @@ export class CpuJitCompiler {
 
       // Casts
       case 'static_cast_float': return `Number(${val()})`;
-      case 'static_cast_int': return `Math.floor(${val()})`;
+      case 'static_cast_int': return `Math.trunc(${val()})`;
+      case 'static_cast_uint': return `Math.abs(Math.trunc(${val()}))`; // Simplification for Uint
       case 'static_cast_bool': return `Boolean(${val()})`;
 
       // Vectors
