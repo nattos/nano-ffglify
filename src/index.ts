@@ -41,8 +41,8 @@ export class App extends MobxLitElement {
         flex-direction: column;
         height: 100vh;
         width: 100vw;
-        background-color: #f5f5f5;
-        color: #333;
+        background-color: var(--app-bg);
+        color: var(--app-text-main);
         font-family: monospace;
         overflow: hidden;
         position: fixed; /* Pin to window */
@@ -55,8 +55,8 @@ export class App extends MobxLitElement {
         align-items: center;
         justify-content: space-between;
         padding: 0.5rem 1rem;
-        background: #fff;
-        border-bottom: 1px solid #ccc;
+        background: var(--app-header-bg);
+        border-bottom: 1px solid var(--app-border);
       }
 
       .title {
@@ -73,7 +73,7 @@ export class App extends MobxLitElement {
         flex: 1;
         overflow: auto;
         padding: 1rem;
-        background: #fff;
+        background: #000;
         border-bottom: 1px solid #ccc;
       }
 
@@ -81,8 +81,8 @@ export class App extends MobxLitElement {
         height: 200px;
         display: flex;
         flex-direction: column;
-        border-top: 1px solid #ccc;
-        background: #eee;
+        border-top: 1px solid var(--app-border);
+        background: #1e1e1e;
       }
 
       .chat-history {
@@ -95,24 +95,29 @@ export class App extends MobxLitElement {
       }
 
       .msg {
-        background: white;
+        background: #2a2a2a;
+        color: #e0e0e0;
         padding: 0.5rem;
         border-radius: 4px;
         max-width: 80%;
       }
-      .msg.user { align-self: flex-end; background: #dceefb; }
+      .msg.user { align-self: flex-end; background: #0c4a6e; }
       .msg.assistant { align-self: flex-start; }
 
       .input-area {
         display: flex;
         padding: 0.5rem;
         gap: 0.5rem;
-        background: #ddd;
+        background: #181818;
       }
 
       .chat-input {
         flex: 1;
         padding: 0.5rem;
+        background: #2a2a2a;
+        color: #e0e0e0;
+        border: 1px solid #444;
+        border-radius: 4px;
       }
 
       .tabs {
@@ -135,8 +140,8 @@ export class App extends MobxLitElement {
       }
       .tab.active {
         opacity: 1;
-        background: #e0e0e0;
-        color: #000;
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
       }
 
       .state-view {
@@ -144,8 +149,8 @@ export class App extends MobxLitElement {
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        border-right: 1px solid #ccc;
-        background: #fff;
+        border-right: 1px solid var(--app-border);
+        background: var(--app-bg);
       }
 
       .debug-panel {
@@ -158,17 +163,18 @@ export class App extends MobxLitElement {
 
       .debug-panel h3 {
         margin-top: 0;
-        border-bottom: 2px solid #eee;
+        border-bottom: 2px solid var(--app-border);
         padding-bottom: 0.5rem;
       }
 
       .debug-panel pre {
-        background: #fdfdfd;
-        border: 1px solid #eee;
+        background: #1a1a1a;
+        border: 1px solid var(--app-border);
         padding: 1rem;
         border-radius: 4px;
         font-size: 0.85rem;
         flex: 1;
+        color: #ccc;
       }
 
       .compilation-results h4 {
@@ -282,13 +288,13 @@ export class App extends MobxLitElement {
             <div class="tab ${local.settings.activeTab === 'script' ? 'active' : ''}" @click=${() => appController.setActiveTab('script')}>Script</div>
             <div class="tab ${local.settings.activeTab === 'results' ? 'active' : ''}" @click=${() => appController.setActiveTab('results')}>Results</div>
           </div>
-          <div class="divider" style="width: 1px; background: #ccc; margin: 0 0.5rem;"></div>
+          <div class="divider" style="width: 1px; background: #333; margin: 0 0.5rem;"></div>
           <div class="actions" style="display: flex; gap: 0.5rem;">
             <ui-button @click=${() => appController.validateCurrentIR()}>Validate</ui-button>
             <ui-button @click=${() => appController.compileCurrentIR()}>Compile</ui-button>
             <ui-button @click=${() => appController.runOne()}>Run One</ui-button>
           </div>
-          <div class="divider" style="width: 1px; background: #ccc; margin: 0 0.5rem;"></div>
+          <div class="divider" style="width: 1px; background: #333; margin: 0 0.5rem;"></div>
           <ui-button
             @click=${() => appController.toggleMockLLM(!appState.local.settings.useMockLLM)}
             .variant=${appState.local.settings.useMockLLM ? 'primary' : 'outline'}
@@ -325,10 +331,10 @@ export class App extends MobxLitElement {
                   </div>
 
                   <div style="margin-bottom: 0.5rem;"><strong>Prompt:</strong></div>
-                  <pre style="white-space: pre-wrap; background: #fffbe5; padding: 0.5rem; max-height: 200px; overflow: auto;">${this.formatLogValue(log.prompt_snapshot)}</pre>
+                  <pre style="white-space: pre-wrap; background: rgba(255, 243, 162, 0.06); padding: 0.5rem; max-height: 200px; overflow: auto;">${this.formatLogValue(log.prompt_snapshot)}</pre>
 
                   <div style="margin-bottom: 0.5rem;"><strong>Response:</strong></div>
-                  <pre style="white-space: pre-wrap; background: #e5f9ff; padding: 0.5rem; max-height: 400px; overflow: auto;">${this.formatLogValue(log.response_snapshot)}</pre>
+                  <pre style="white-space: pre-wrap; background: #68dcff1e; padding: 0.5rem; max-height: 400px; overflow: auto;">${this.formatLogValue(log.response_snapshot)}</pre>
                 </div>
               `)}
             </div>
@@ -342,7 +348,7 @@ export class App extends MobxLitElement {
 
             <div class="script-list">
               ${DEMO_SCRIPT.map((line, idx) => html`
-                <div class="script-row" style="display:flex; align-items:center; margin-bottom:8px; padding:4px; background:${this.runningScriptLine === idx ? '#eef' : '#fff'}">
+                <div class="script-row" style="display:flex; align-items:center; margin-bottom:8px; padding:4px; background:${this.runningScriptLine === idx ? '#ff1' : '#000'}">
                   <button ?disabled=${this.runningScriptLine !== null} @click=${() => this.runScript(idx)} style="margin-right:10px">
                     ${this.runningScriptLine === idx ? 'Running...' : 'Run'}
                   </button>
@@ -357,9 +363,9 @@ export class App extends MobxLitElement {
               ${this.scriptLogs.map(log => html`
                 <div class="result-block" style="border:1px solid #ccc; padding:10px; margin-top:10px; border-radius:4px;">
                    <h4>Request</h4>
-                   <pre style="white-space: pre-wrap; background:#f5f5f5; padding:8px; overflow:auto;">${this.formatLogValue(log.prompt_snapshot)}</pre>
+                   <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto;">${this.formatLogValue(log.prompt_snapshot)}</pre>
                    <h4>Response</h4>
-                   <pre style="white-space: pre-wrap; background:#f5f5f5; padding:8px; overflow:auto;">${this.formatLogValue(log.response_snapshot)}</pre>
+                   <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto;">${this.formatLogValue(log.response_snapshot)}</pre>
                    <div><strong>Duration:</strong> ${log.duration_ms}ms | <strong>Mocked:</strong> ${log.mocked}</div>
                 </div>
               `)}
@@ -392,13 +398,13 @@ export class App extends MobxLitElement {
             ${!local.compilationResult ? html`<p>Not compiled yet.</p>` : html`
               <div class="compilation-results">
                 <h4>JavaScript (CPU Host)</h4>
-                <pre style="background: #f8f8f8; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.js}</pre>
+                <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.js}</pre>
 
                 <h4>WGSL (GPU Shaders)</h4>
                 ${Object.entries(local.compilationResult.wgsl).map(([id, code]) => html`
                   <div class="wgsl-block">
                     <h5>Function: ${id}</h5>
-                    <pre style="background: #f0f0f0; padding: 0.5rem; overflow: auto; max-height: 300px;">${code}</pre>
+                    <pre style="background: #0f0f0f; padding: 0.5rem; overflow: auto; max-height: 300px;">${code}</pre>
                   </div>
                 `)}
               </div>

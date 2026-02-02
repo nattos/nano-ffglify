@@ -19,9 +19,9 @@ export class UiButton extends LitElement {
     }
 
     button {
-      background-color: white;
-      color: var(--color-stone-700);
-      border: 1px solid var(--color-stone-200);
+      background-color: var(--app-header-bg);
+      color: var(--app-text-main);
+      border: 1px solid var(--app-border);
       border-radius: 0.375rem; /* 6px */
       padding: 0.5rem 0.75rem;
       cursor: pointer;
@@ -45,20 +45,20 @@ export class UiButton extends LitElement {
     button.ghost {
       background-color: transparent;
       border-color: transparent;
-      color: var(--color-stone-500);
+      color: var(--app-text-muted);
     }
     button.ghost:hover {
-      background-color: var(--color-stone-100);
-      color: var(--color-stone-900);
+      background-color: rgba(255, 255, 255, 0.05);
+      color: var(--app-text-main);
     }
 
     button.outline {
        background-color: transparent;
-       border: 1px solid var(--color-stone-300);
+       border: 1px solid var(--app-border);
     }
     button.outline:hover {
-       background-color: var(--color-stone-50);
-       border-color: var(--color-stone-400);
+       background-color: rgba(255, 255, 255, 0.05);
+       border-color: var(--app-text-muted);
     }
 
     /* Primary (Emerald) */
@@ -75,11 +75,11 @@ export class UiButton extends LitElement {
 
     /* Default (Solid/White-ish) */
     button:not(.ghost):not(.outline):not(.primary) {
-      box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
     }
     button:not(.ghost):not(.outline):not(.primary):hover {
-       background-color: var(--color-stone-50);
-       border-color: var(--color-stone-300);
+       background-color: rgba(255, 255, 255, 0.08);
+       border-color: var(--app-text-muted);
     }
 
     button:active:not(:disabled) {

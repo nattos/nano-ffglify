@@ -28,7 +28,6 @@ export class UiIrWidget extends LitElement {
       }
 
       .line {
-        display: flex;
         white-space: pre;
         min-height: 1.5em;
         padding: 0 0.5rem;
@@ -118,7 +117,6 @@ export class UiIrWidget extends LitElement {
     if (!this.ir) return html`<div>No IR loaded.</div>`;
 
     return html`
-      <div class="header">IR Graph Visualization</div>
       <div class="globals-block">
         ${this.globalLines.map(line => this.renderLine(line))}
       </div>
@@ -131,25 +129,20 @@ export class UiIrWidget extends LitElement {
   }
 
   private renderLine(line: IRLine) {
-    return html`
-      <div class="line indent-${line.indent}">
-        ${line.parts.map(part => this.renderPart(part))}
-      </div>
-    `;
+    // Note: Explicitly keep newlines tidy for copy paste.
+    return html`<div class="line indent-${line.indent}">${line.parts.map(part => this.renderPart(part))}</div>`;
   }
 
   private renderPart(part: IRLinePart) {
     const isHighlighted = part.refId && this.hoveredRefId === part.refId;
 
     if (part.type === 'ref' && part.refId) {
-      return html`
-        <span
+      // Note: Explicitly keep newlines tidy for copy paste.
+      return html`<span
           class="part part-ref ${isHighlighted ? 'highlighted' : ''}"
           @mouseover=${() => this.handleRefMouseOver(part.refId!)}
           @mouseout=${() => this.handleRefMouseOut()}
-          title=${part.dataType ? `Type: ${part.dataType}` : ''}
-        >${part.text}</span>
-      `;
+        >${part.text}</span>`;
     }
 
     return html`<span class="part part-${part.type}">${part.text}</span>`;

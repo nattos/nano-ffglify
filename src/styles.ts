@@ -44,14 +44,16 @@ export const globalStyles = [
     --color-sky-100: #e0f2fe;
     --color-sky-600: #0284c7;
 
-    --app-bg: #FDFCF8; /* Creamy off-white */
-    --app-text-main: var(--color-stone-800);
-    --app-text-muted: var(--color-stone-400);
+    --app-bg: #121212; /* Deep dark background */
+    --app-header-bg: #1e1e1e;
+    --app-text-main: #e0e0e0;
+    --app-text-muted: #888888;
+    --app-border: #333333;
 
     --font-serif: "Merriweather", "Georgia", serif;
     --font-sans: "Inter", "Helvetica Neue", sans-serif;
 
-    /* Legacy mapping for existing components if any */
+    /* Legacy mapping */
     --app-color1: var(--app-bg);
     --app-text-color1: var(--app-text-main);
   }
