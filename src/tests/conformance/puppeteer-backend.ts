@@ -46,9 +46,37 @@ export const PuppeteerBackend: TestBackend = {
   run: async (ctx: EvaluationContext, entryPoint: string) => {
     const page = await getPage();
 
-    // For Phase 1, we don't actually run WebGPU here yet.
-    // We just ensure we can talk to the page.
-    console.log(`[PuppeteerBackend] Prepared for entryPoint: ${entryPoint}`);
+    // Convert inputs Map to plain object for serialization
+    const inputsObj: Record<string, any> = {};
+    ctx.inputs.forEach((val, key) => {
+      inputsObj[key] = val;
+    });
+
+    // Run the test in the browser
+    const results = await page.evaluate(
+      (ir, ep, inputs) => (window as any).runGpuTest(ir, ep, inputs),
+      ctx.ir,
+      entryPoint,
+      inputsObj
+    ) as any;
+
+    // Populate context with results
+    ctx.pushFrame(entryPoint);
+    if (results.vars) {
+      for (const [key, val] of Object.entries(results.vars)) {
+        ctx.setVar(key, val as any);
+      }
+    }
+
+    if (results.resources) {
+      for (const [key, res] of Object.entries(results.resources)) {
+        const state = ctx.getResource(key);
+        const r = res as any;
+        state.width = r.width;
+        state.height = r.height;
+        state.data = r.data;
+      }
+    }
   },
 
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {

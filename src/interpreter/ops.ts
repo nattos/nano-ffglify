@@ -35,6 +35,12 @@ const applyBinary = (a: any, b: any, op: (x: number, y: number) => number): any 
     if (a.length !== b.length) throw new Error(`Runtime Error: Binary op dimension mismatch (${a.length} vs ${b.length})`);
     return a.map((v, i) => op(v, b[i])) as VectorValue;
   }
+  if (Array.isArray(a) && typeof b === 'number') {
+    return a.map(v => op(v, b)) as VectorValue;
+  }
+  if (typeof a === 'number' && Array.isArray(b)) {
+    return b.map(v => op(a, v)) as VectorValue;
+  }
   if (typeof a === 'number' && typeof b === 'number') {
     return op(a, b);
   }

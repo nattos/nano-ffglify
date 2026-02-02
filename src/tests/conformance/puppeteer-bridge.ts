@@ -1,3 +1,4 @@
+import { InterpreterBackend } from './interpreter-backend';
 
 /**
  * Browser-side bridge for Puppeteer-based tests.
@@ -13,10 +14,43 @@
   throw new Error(message);
 };
 
-// Placeholder for Phase 2
-(window as any).runGpuTest = async (ir: any, inputs: any) => {
-  console.log('[Bridge] runGpuTest called (Phase 2 placeholder)');
-  return { status: 'Phase 2 not implemented' };
+(window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any) => {
+  console.log('[Bridge] runGpuTest called with:', { entryPoint, inputsObj });
+
+  // Convert plain object inputs back to Map
+  const inputsMap = new Map<string, any>();
+  if (inputsObj) {
+    for (const [key, val] of Object.entries(inputsObj)) {
+      inputsMap.set(key, val);
+    }
+  }
+
+  const ctx = await InterpreterBackend.execute(ir, entryPoint, inputsMap);
+
+  // Serialize context back to plain object
+  // We only need the results (vars from the top frame) and resources for now
+  const results: any = {
+    vars: {},
+    resources: {}
+  };
+
+  if (ctx.stack.length > 0) {
+    const frame = ctx.currentFrame;
+    frame.vars.forEach((val, key) => {
+      results.vars[key] = val;
+    });
+  }
+
+  ctx.resources.forEach((state, key) => {
+    results.resources[key] = {
+      width: state.width,
+      height: state.height,
+      data: state.data
+    };
+  });
+
+  console.log('[Bridge] Execution complete, returning results');
+  return results;
 };
 
 console.log('[Bridge] Initialized');
