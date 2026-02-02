@@ -1,0 +1,77 @@
+import puppeteer, { Browser, Page } from 'puppeteer';
+import { TestBackend } from './types';
+import { IRDocument } from '../../ir/types';
+import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
+
+let sharedBrowser: Browser | null = null;
+let sharedPage: Page | null = null;
+
+async function getBrowser() {
+  if (!sharedBrowser) {
+    sharedBrowser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--enable-unsafe-webgpu']
+    });
+  }
+  return sharedBrowser;
+}
+
+async function getPage() {
+  if (!sharedPage) {
+    const browser = await getBrowser();
+    sharedPage = await browser.newPage();
+
+    // Log browser console to Node.js
+    sharedPage.on('console', msg => console.log(`[Browser] ${msg.text()}`));
+    sharedPage.on('pageerror', err => console.error(`[Browser Error] ${err.message}`));
+
+    // Load the bridge page
+    // We assume the dev server is running at http://localhost:5173
+    // Since Vite root is 'src', the path is relative to src.
+    await sharedPage.goto('http://localhost:5173/tests/conformance/bridge.html');
+
+    // Wait for bridge to be ready
+    await sharedPage.waitForFunction(() => (window as any).bridgeReady === true);
+  }
+  return sharedPage;
+}
+
+export const PuppeteerBackend: TestBackend = {
+  name: 'Puppeteer',
+
+  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
+    return new EvaluationContext(ir, inputs);
+  },
+
+  run: async (ctx: EvaluationContext, entryPoint: string) => {
+    const page = await getPage();
+
+    // For Phase 1, we don't actually run WebGPU here yet.
+    // We just ensure we can talk to the page.
+    console.log(`[PuppeteerBackend] Prepared for entryPoint: ${entryPoint}`);
+  },
+
+  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
+    const ctx = await PuppeteerBackend.createContext(ir, inputs);
+    await PuppeteerBackend.run(ctx, entryPoint);
+    return ctx;
+  },
+
+  // Extension for Phase 1 testing
+  echo: async (data: any) => {
+    const page = await getPage();
+    return await page.evaluate((d) => (window as any).echo(d), data);
+  },
+
+  throwError: async (message: string) => {
+    const page = await getPage();
+    return await page.evaluate((m) => (window as any).throwError(m), message);
+  }
+};
+
+// Cleanup on exit
+process.on('exit', async () => {
+  if (sharedBrowser) {
+    await sharedBrowser.close();
+  }
+});
