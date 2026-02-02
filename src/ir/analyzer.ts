@@ -33,16 +33,20 @@ export const analyzeFunction = (func: FunctionDef, doc: IRDocument): AnalyzedFun
     refs.get(symbol)!.push(nodeId);
   };
 
+  // Scoping helpers
+  const getLocalRefId = (id: string) => `${func.id}:${id}`;
+  const getGlobalRefId = (id: string) => `global:${id}`;
+
   // 1. Function Header
   const headerParts: IRLinePart[] = [
     { type: 'keyword', text: 'fn' },
     { type: 'separator', text: ' ' },
-    { type: 'ref', text: func.id, refId: func.id }
+    { type: 'ref', text: func.id, refId: getGlobalRefId(func.id) }
   ];
 
   headerParts.push({ type: 'separator', text: '(' });
   func.inputs.forEach((input, i) => {
-    headerParts.push({ type: 'ref', text: input.id, refId: input.id, dataType: input.type });
+    headerParts.push({ type: 'ref', text: input.id, refId: getLocalRefId(input.id), dataType: input.type });
     headerParts.push({ type: 'separator', text: ': ' });
     headerParts.push({ type: 'type', text: input.type });
     if (i < func.inputs.length - 1) headerParts.push({ type: 'separator', text: ', ' });
@@ -64,7 +68,7 @@ export const analyzeFunction = (func: FunctionDef, doc: IRDocument): AnalyzedFun
     const varParts: IRLinePart[] = [
       { type: 'keyword', text: 'var' },
       { type: 'separator', text: ' ' },
-      { type: 'ref', text: v.id, refId: v.id, dataType: v.type },
+      { type: 'ref', text: v.id, refId: getLocalRefId(v.id), dataType: v.type },
       { type: 'separator', text: ': ' },
       { type: 'type', text: v.type }
     ];
@@ -102,12 +106,8 @@ export const analyzeFunction = (func: FunctionDef, doc: IRDocument): AnalyzedFun
       }
     } else if (node.op === 'flow_branch') {
       lines.push({ nodeId: node.id, indent: currentIndent, parts: nodeParts });
-      // Branches are tricky because they have true/false paths.
-      // For now, let's keep it simple: next node is indented.
-      // We'll need better path analysis for complex branches.
       currentIndent++;
       if (node.exec_false) {
-        // This is a simplification
         blockExits.set(node.exec_false, currentIndent - 1);
       }
     } else {
@@ -131,8 +131,12 @@ const analyzeNode = (
   const isExecutable = node.op.startsWith('cmd_') || node.op.startsWith('flow_') || node.op.includes('_store');
   const hasOutput = !isExecutable && node.op !== 'func_return';
 
+  const getLocalRefId = (id: string) => `${func.id}:${id}`;
+  const getGlobalRefId = (id: string) => `global:${id}`;
+
   if (hasOutput) {
-    parts.push({ type: 'ref', text: node.id, refId: node.id, dataType: inferredTypes.get(node.id) });
+    const refId = getLocalRefId(node.id);
+    parts.push({ type: 'ref', text: node.id, refId: refId, dataType: inferredTypes.get(node.id) });
     parts.push({ type: 'separator', text: ' = ' });
   }
 
@@ -149,15 +153,22 @@ const analyzeNode = (
     const val = node[key];
     if (typeof val === 'string') {
       // Is it a reference?
-      const isRef = func.nodes.some(n => n.id === val) ||
+      const isLocal = func.nodes.some(n => n.id === val) ||
         func.localVars.some(v => v.id === val) ||
-        func.inputs.some(i => i.id === val) ||
-        doc.inputs.some(i => i.id === val) ||
-        doc.resources.some(r => r.id === val);
+        func.inputs.some(i => i.id === val);
 
-      if (isRef) {
-        parts.push({ type: 'ref', text: val, refId: val });
-        addRef(val, node.id);
+      const isGlobal = doc.inputs.some(i => i.id === val) ||
+        doc.resources.some(r => r.id === val) ||
+        doc.functions.some(f => f.id === val);
+
+      if (isLocal) {
+        const refId = getLocalRefId(val);
+        parts.push({ type: 'ref', text: val, refId: refId });
+        addRef(refId, node.id);
+      } else if (isGlobal) {
+        const refId = getGlobalRefId(val);
+        parts.push({ type: 'ref', text: val, refId: refId });
+        addRef(refId, node.id);
       } else {
         parts.push({ type: 'literal', text: `"${val}"` });
       }

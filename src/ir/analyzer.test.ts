@@ -37,8 +37,8 @@ describe('IR Analyzer', () => {
     const headerLine = result.lines[0];
 
     expect(headerLine.parts.some(p => p.type === 'keyword' && p.text === 'fn')).toBe(true);
-    expect(headerLine.parts.some(p => p.type === 'ref' && p.text === 'fn_main')).toBe(true);
-    expect(headerLine.parts.some(p => p.type === 'ref' && p.text === 'param1' && p.dataType === 'int')).toBe(true);
+    expect(headerLine.parts.some(p => p.type === 'ref' && p.text === 'fn_main' && p.refId === 'global:fn_main')).toBe(true);
+    expect(headerLine.parts.some(p => p.type === 'ref' && p.text === 'param1' && p.dataType === 'int' && p.refId === 'fn_main:param1')).toBe(true);
   });
 
   it('should analyze local variables correctly', () => {
@@ -49,18 +49,19 @@ describe('IR Analyzer', () => {
     expect(localVarLine?.parts.some(p => p.type === 'keyword' && p.text === 'var')).toBe(true);
     expect(localVarLine?.parts.some(p => p.type === 'type' && p.text === 'float')).toBe(true);
     expect(localVarLine?.parts.some(p => p.type === 'literal' && p.text === '0.5')).toBe(true);
+    expect(localVarLine?.parts.some(p => p.type === 'ref' && p.text === 'v_local' && p.refId === 'fn_main:v_local')).toBe(true);
   });
 
   it('should detect references correctly', () => {
     const result = analyzeFunction(mockDoc.functions[0], mockDoc);
 
     // Check if 'param1' is referenced in 'n1'
-    expect(result.refs.get('param1')).toContain('n1');
+    expect(result.refs.get('fn_main:param1')).toContain('n1');
     // Check if 'v_local' is referenced in 'n2' (as 'var') and 'n3' (as 'a')
-    expect(result.refs.get('v_local')).toContain('n2');
-    expect(result.refs.get('v_local')).toContain('n3');
+    expect(result.refs.get('fn_main:v_local')).toContain('n2');
+    expect(result.refs.get('fn_main:v_local')).toContain('n3');
     // Check if node 'n1' is referenced in 'n2'
-    expect(result.refs.get('n1')).toContain('n2');
+    expect(result.refs.get('fn_main:n1')).toContain('n2');
   });
 
   it('should handle indentation for loops', () => {
@@ -78,6 +79,6 @@ describe('IR Analyzer', () => {
     const result = analyzeFunction(mockDoc.functions[0], mockDoc);
 
     // Check if 't_tex' is referenced in 'n4'
-    expect(result.refs.get('t_tex')).toContain('n4');
+    expect(result.refs.get('global:t_tex')).toContain('n4');
   });
 });

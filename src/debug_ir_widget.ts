@@ -89,6 +89,17 @@ const MOCK_IR: IRDocument = {
         { id: 'final_color', op: 'var_get', var: 'v_color' },
         { id: 'store', op: 'texture_store', tex: 't_output', coords: 'coords', value: 'final_color' }
       ]
+    },
+    {
+      id: 'fn_dummy',
+      type: 'cpu',
+      inputs: [],
+      outputs: [],
+      localVars: [{ id: 'v_color', type: 'float4', initialValue: [1, 1, 1, 1] }],
+      nodes: [
+        { id: 'get', op: 'var_get', var: 'v_color' },
+        { id: 'ret', op: 'func_return', val: 'get' }
+      ]
     }
   ]
 };
