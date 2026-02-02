@@ -3,7 +3,6 @@ import { IRDocument } from './ir/types';
 
 // Hard-coded IR graph (copy of the blur pipeline)
 const MOCK_IR: IRDocument = {
-  id: "blur-ir",
   version: '3.0.0',
   meta: { name: 'Precomputed Blur Debug' },
   comment: 'This is a test pipeline demonstrating resize, generation, and blur phases.',
@@ -49,6 +48,7 @@ const MOCK_IR: IRDocument = {
     {
       id: 'fn_gen_kernel',
       type: 'shader',
+      comment: 'Kernel Generation shader',
       inputs: [],
       outputs: [],
       localVars: [],
@@ -63,9 +63,10 @@ const MOCK_IR: IRDocument = {
     {
       id: 'fn_blur',
       type: 'shader',
-      inputs: [{ id: 'u_kernel_size', type: 'int' }],
+      comment: 'Main blur shader stage',
+      inputs: [{ id: 'u_kernel_size', type: 'int', comment: 'Size of the kernel passed from host' }],
       outputs: [],
-      localVars: [{ id: 'v_color', type: 'float4', initialValue: [0, 0, 0, 0] }],
+      localVars: [{ id: 'v_color', type: 'float4', initialValue: [0, 0, 0, 0], comment: 'Accumulated color' }],
       nodes: [
         { id: 'th_id', op: 'builtin_get', name: 'global_invocation_id' },
         { id: 'x', op: 'vec_get_element', vec: 'th_id', index: 0 },
@@ -93,9 +94,10 @@ const MOCK_IR: IRDocument = {
     {
       id: 'fn_dummy',
       type: 'cpu',
+      comment: 'A dummy function for scoping tests',
       inputs: [],
       outputs: [],
-      localVars: [{ id: 'v_color', type: 'float4', initialValue: [1, 1, 1, 1] }],
+      localVars: [{ id: 'v_color', type: 'float4', initialValue: [1, 1, 1, 1], comment: 'Dummy local color' }],
       nodes: [
         { id: 'get', op: 'var_get', var: 'v_color' },
         { id: 'ret', op: 'func_return', val: 'get' }

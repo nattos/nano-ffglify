@@ -18,9 +18,10 @@ describe('IR Analyzer', () => {
       {
         id: 'fn_main',
         type: 'cpu',
-        inputs: [{ id: 'param1', type: 'int' }],
+        comment: 'Main entry point',
+        inputs: [{ id: 'param1', type: 'int', comment: 'Input parameter' }],
         outputs: [],
-        localVars: [{ id: 'v_local', type: 'float', initialValue: 0.5 }],
+        localVars: [{ id: 'v_local', type: 'float', initialValue: 0.5, comment: 'Local float variable' }],
         nodes: [
           { id: 'n1', op: 'math_add', a: 'param1', b: 10 },
           { id: 'n2', op: 'var_set', var: 'v_local', val: 'n1' },
@@ -34,11 +35,18 @@ describe('IR Analyzer', () => {
 
   it('should analyze a function header correctly', () => {
     const result = analyzeFunction(mockDoc.functions[0], mockDoc);
-    const headerLine = result.lines[0];
 
+    // Line 0: Function comment
+    expect(result.lines[0].parts.some(p => p.type === 'comment' && p.text === '// Main entry point')).toBe(true);
+
+    // Line 1: Function header
+    const headerLine = result.lines[1];
     expect(headerLine.parts.some(p => p.type === 'keyword' && p.text === 'fn')).toBe(true);
     expect(headerLine.parts.some(p => p.type === 'ref' && p.text === 'fn_main' && p.refId === 'global:fn_main')).toBe(true);
     expect(headerLine.parts.some(p => p.type === 'ref' && p.text === 'param1' && p.dataType === 'int' && p.refId === 'fn_main:param1')).toBe(true);
+
+    // Inline param comment
+    expect(headerLine.parts.some(p => p.type === 'comment' && p.text === '/* Input parameter */')).toBe(true);
   });
 
   it('should analyze local variables correctly', () => {
@@ -50,6 +58,9 @@ describe('IR Analyzer', () => {
     expect(localVarLine?.parts.some(p => p.type === 'type' && p.text === 'float')).toBe(true);
     expect(localVarLine?.parts.some(p => p.type === 'literal' && p.text === '0.5')).toBe(true);
     expect(localVarLine?.parts.some(p => p.type === 'ref' && p.text === 'v_local' && p.refId === 'fn_main:v_local')).toBe(true);
+
+    // Inline var comment
+    expect(localVarLine?.parts.some(p => p.type === 'comment' && p.text === '// Local float variable')).toBe(true);
   });
 
   it('should detect references correctly', () => {

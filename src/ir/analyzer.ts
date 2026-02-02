@@ -32,12 +32,16 @@ export const analyzeFunction = (func: FunctionDef, doc: IRDocument): AnalyzedFun
     if (!refs.has(symbol)) refs.set(symbol, []);
     refs.get(symbol)!.push(nodeId);
   };
-
   // Scoping helpers
   const getLocalRefId = (id: string) => `${func.id}:${id}`;
   const getGlobalRefId = (id: string) => `global:${id}`;
 
-  // 1. Function Header
+  // 1. Function Comment (top-level)
+  if (func.comment) {
+    lines.push({ indent: 0, parts: [{ type: 'comment', text: `// ${func.comment}` }] });
+  }
+
+  // 2. Function Header
   const headerParts: IRLinePart[] = [
     { type: 'keyword', text: 'fn' },
     { type: 'separator', text: ' ' },
@@ -49,6 +53,12 @@ export const analyzeFunction = (func: FunctionDef, doc: IRDocument): AnalyzedFun
     headerParts.push({ type: 'ref', text: input.id, refId: getLocalRefId(input.id), dataType: input.type });
     headerParts.push({ type: 'separator', text: ': ' });
     headerParts.push({ type: 'type', text: input.type });
+
+    if (input.comment) {
+      headerParts.push({ type: 'separator', text: ' ' });
+      headerParts.push({ type: 'comment', text: `/* ${input.comment} */` });
+    }
+
     if (i < func.inputs.length - 1) headerParts.push({ type: 'separator', text: ', ' });
   });
   headerParts.push({ type: 'separator', text: ')' });
@@ -75,6 +85,10 @@ export const analyzeFunction = (func: FunctionDef, doc: IRDocument): AnalyzedFun
     if (v.initialValue !== undefined) {
       varParts.push({ type: 'separator', text: ' = ' });
       varParts.push({ type: 'literal', text: JSON.stringify(v.initialValue) });
+    }
+    if (v.comment) {
+      varParts.push({ type: 'separator', text: '  ' });
+      varParts.push({ type: 'comment', text: `// ${v.comment}` });
     }
     lines.push({ indent: 1, parts: varParts });
   });
