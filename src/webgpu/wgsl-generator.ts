@@ -20,11 +20,13 @@ export interface WgslOptions {
   excludeIds?: string[];
   entryPointId?: string; // Cache entry point ID for resolution
   structs?: StructDef[]; // Optional structs for dependency resolution
+  workgroupSize?: [number, number, number];
 }
 
 export interface CompilationMetadata {
   resourceBindings: Map<string, number>;
   inputBinding?: number;
+  workgroupSize: [number, number, number];
 }
 
 export interface CompilationResult {
@@ -127,7 +129,7 @@ export class WgslGenerator {
     // 2.5. Inputs Buffer (Uniforms / Non-Stage IO)
     // For shaders, we use the function's own inputs. For direct execution of a graph, we might use global inputs.
     const inputSource = (entryFunc.type === 'shader') ? entryFunc.inputs : fullIr.inputs;
-    const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin);
+    const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin && i.type !== 'texture2d' && i.type !== 'texture_2d');
 
     if (options.stage === 'compute' && options.inputBinding !== undefined && nonBuiltinInputs.length > 0) {
       const docInputs = [...nonBuiltinInputs];
@@ -153,7 +155,7 @@ export class WgslGenerator {
     // Resource Bindings
     if (options.resourceBindings) {
       options.resourceBindings.forEach((bindingIdx, resId) => {
-        if (!usedResources.has(resId)) return;
+        // We now emit ALL bindings and use placeholders to ensure they are in the layout
 
         const def = options.resourceDefs?.get(resId);
         if (def?.type === 'buffer' || !def) {
@@ -211,17 +213,36 @@ export class WgslGenerator {
     finalLines.push(...lines);
     finalLines.push(...functionLines);
 
+    const hasInputs = options.stage === 'compute' && options.inputBinding !== undefined && nonBuiltinInputs.length > 0;
+    const finalWorkgroupSize = options.workgroupSize || (options.stage === 'compute' ? [16, 16, 1] as [number, number, number] : [1, 1, 1] as [number, number, number]);
+
     return {
       code: finalLines.join('\n'),
       metadata: {
         resourceBindings: options.resourceBindings || new Map(),
-        inputBinding: options.inputBinding
+        inputBinding: hasInputs ? options.inputBinding : undefined,
+        workgroupSize: finalWorkgroupSize
       }
     };
   }
 
   compile(ir: IRDocument, entryPointId: string, options: WgslOptions = {}): CompilationResult {
     if (!options.resourceDefs) options.resourceDefs = new Map(ir.resources.map(r => [r.id, r]));
+    if (!options.stage) options.stage = 'compute';
+    if (options.inputBinding === undefined) options.inputBinding = 1;
+    if (!options.resourceBindings) {
+      options.resourceBindings = new Map();
+      let bindingIdx = 2;
+      ir.resources.forEach(res => {
+        options.resourceBindings!.set(res.id, bindingIdx++);
+      });
+      // Detect texture-inputs and treat them as resources (consistent with WebGpuExecutor)
+      ir.inputs.forEach(input => {
+        if ((input.type === 'texture2d' || input.type === 'texture_2d') && !options.resourceBindings!.has(input.id)) {
+          options.resourceBindings!.set(input.id, bindingIdx++);
+        }
+      });
+    }
     return this.compileFunctions(ir.functions, entryPointId, options, ir);
   }
 
@@ -273,7 +294,26 @@ export class WgslGenerator {
     }
   }
 
+  private emitPlaceholders(lines: string[], options: WgslOptions, includeInputs: boolean) {
+    if (options.resourceBindings) {
+      options.resourceBindings.forEach((_, resId) => {
+        const def = options.resourceDefs?.get(resId);
+        if (def?.type === 'texture2d') {
+          lines.push(`  _ = textureDimensions(${resId});`);
+        } else {
+          const bufVar = this.getBufferVar(resId);
+          lines.push(`  _ = &${bufVar}.data;`);
+        }
+      });
+    }
+    if (includeInputs && options.inputBinding !== undefined) {
+      lines.push(`  _ = &b_inputs;`);
+    }
+  }
+
   private emitFunction(func: FunctionDef, isEntryPoint: boolean, lines: string[], options: WgslOptions, ir: IRDocument) {
+    const nonBuiltinInputs = func.inputs.filter(i => !(i as any).builtin);
+
     if (isEntryPoint) {
       if (options.stage === 'vertex') {
         const retType = this.resolveType(func.outputs[0]?.type || 'vec4<f32>');
@@ -281,6 +321,9 @@ export class WgslGenerator {
         lines.push(`fn main(@builtin(vertex_index) vertex_index : u32, @builtin(instance_index) instance_index : u32) -> ${retType} {`);
         if (this.allUsedBuiltins.has('vertex_index')) lines.push(`  VertexIndex = vertex_index;`);
         if (this.allUsedBuiltins.has('instance_index')) lines.push(`  InstanceIndex = instance_index;`);
+
+        this.emitPlaceholders(lines, options, false);
+
         for (const input of func.inputs) {
           if (input.builtin === 'vertex_index') lines.push(`  let l_${input.id} = i32(vertex_index);`);
           else if (input.builtin === 'instance_index') lines.push(`  let l_${input.id} = i32(instance_index);`);
@@ -304,8 +347,6 @@ export class WgslGenerator {
         if (func.outputs.length > 0) {
           const out = func.outputs[0];
           retType = this.resolveType(out.type);
-          // If it's a struct, we don't put @location(0) on the entry point return itself,
-          // because the struct members already have decorators.
           if (ir.structs.some(s => s.id === out.type)) {
             retDecorators = '';
           } else if (out.location !== undefined) {
@@ -318,6 +359,9 @@ export class WgslGenerator {
         if (this.allUsedBuiltins.has('front_facing')) lines.push(`  FrontFacing = ff;`);
         if (this.allUsedBuiltins.has('sample_index')) lines.push(`  SampleIndex = si;`);
         if (this.allUsedBuiltins.has('position')) lines.push(`  Position = pos;`);
+
+        this.emitPlaceholders(lines, options, false);
+
         for (const input of func.inputs) {
           if (input.builtin === 'frag_coord') lines.push(`  let l_${input.id} = fc;`);
           if (input.builtin === 'front_facing') lines.push(`  let l_${input.id} = ff;`);
@@ -330,13 +374,17 @@ export class WgslGenerator {
         if (this.allUsedBuiltins.has('workgroup_id')) computeBuiltins.push(`@builtin(workgroup_id) wid : vec3<u32>`);
         if (this.allUsedBuiltins.has('local_invocation_index')) computeBuiltins.push(`@builtin(local_invocation_index) lidx : u32`);
         if (this.allUsedBuiltins.has('num_workgroups')) computeBuiltins.push(`@builtin(num_workgroups) nw : vec3<u32>`);
-        lines.push(`@compute @workgroup_size(1, 1, 1)`);
+
+        const wgSize = options.workgroupSize || [16, 16, 1];
+        lines.push(`@compute @workgroup_size(${wgSize[0]}, ${wgSize[1]}, ${wgSize[2]})`);
         lines.push(`fn main(${computeBuiltins.join(', ')}) {`);
-        // Built-ins handled via parameters.
         if (this.allUsedBuiltins.has('local_invocation_id')) lines.push(`  LocalInvocationID = lid;`);
         if (this.allUsedBuiltins.has('workgroup_id')) lines.push(`  WorkgroupID = wid;`);
         if (this.allUsedBuiltins.has('local_invocation_index')) lines.push(`  LocalInvocationIndex = lidx;`);
         if (this.allUsedBuiltins.has('num_workgroups')) lines.push(`  NumWorkgroups = nw;`);
+
+        this.emitPlaceholders(lines, options, nonBuiltinInputs.length > 0);
+
         for (const input of func.inputs) {
           if (input.builtin === 'global_invocation_id') lines.push(`  let l_${input.id} = gid;`);
           if (input.builtin === 'local_invocation_id') lines.push(`  let l_${input.id} = lid;`);

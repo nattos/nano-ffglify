@@ -104,7 +104,7 @@ export class WebGpuExecutor {
 
     // 2. Prepare Inputs Buffer
     let bindGroup: GPUBindGroup | undefined;
-    const nonBuiltinInputs = func.inputs.filter(i => !i.builtin);
+    const nonBuiltinInputs = func.inputs.filter(i => !i.builtin && i.type !== 'texture2d' && i.type !== 'texture_2d');
     const sortedInputs = [...nonBuiltinInputs].sort((a, b) => {
       const aIsArr = a.type.includes('[]') || (a.type.startsWith('array<') && !a.type.includes(','));
       const bIsArr = b.type.includes('[]') || (b.type.startsWith('array<') && !b.type.includes(','));
@@ -128,7 +128,9 @@ export class WebGpuExecutor {
       });
       this.device.queue.writeBuffer(inputBuffer, 0, bufferData);
 
-      entries.push({ binding: metadata.inputBinding ?? 1, resource: { buffer: inputBuffer } });
+      if (metadata.inputBinding !== undefined) {
+        entries.push({ binding: metadata.inputBinding, resource: { buffer: inputBuffer } });
+      }
     }
 
     // 3. Create BindGroup using compiled metadata
@@ -176,22 +178,46 @@ export class WebGpuExecutor {
     const pass = encoder.beginComputePass();
     pass.setPipeline(pipeline);
     if (bindGroup) pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(...workgroups);
+
+    // Calculate dispatch dimensions based on metadata workgroup size
+    const dx = Math.ceil(workgroups[0] / metadata.workgroupSize[0]);
+    const dy = Math.ceil(workgroups[1] / metadata.workgroupSize[1]);
+    const dz = Math.ceil(workgroups[2] / metadata.workgroupSize[2]);
+    pass.dispatchWorkgroups(dx, dy, dz);
     pass.end();
 
-    // 5. Read-back
-    this.resources.forEach((state, id) => {
+    this.device.queue.submit([encoder.finish()]);
+
+    // [DEBUG] Automatic read-back for development.
+    // In production, syncResults or readbackResource should be called explicitly.
+    await this.syncResults(Array.from(this.resources.keys()));
+  }
+
+  /**
+   * [DEBUG] Sync results from GPU to CPU ResourceState.
+   */
+  private async syncResults(resourceIds: string[]) {
+    const encoder = this.device.createCommandEncoder();
+    const stagingBuffers: { id: string, staging: GPUBuffer, isTexture?: boolean }[] = [];
+
+    resourceIds.forEach(id => {
+      const state = this.resources.get(id);
+      if (!state) return;
+
       const res = state.def;
       if (res.type === 'texture2d') {
         const gpuTexture = (state as any).gpuTexture as GPUTexture;
         if (gpuTexture) {
-          const bytesPerRow = Math.ceil((state.width * 4) / 256) * 256;
+          const irFormat = (state.def.format || 'rgba8').toString().toLowerCase();
+          const isFloat = irFormat.includes('32f') || irFormat.includes('16f') || irFormat.includes('float');
+          const bytesPerChannel = isFloat ? 4 : 1;
+          const bytesPerRow = Math.ceil((state.width * 4 * bytesPerChannel) / 256) * 256;
           const staging = this.device.createBuffer({
             size: bytesPerRow * state.height,
             usage: (globalThis as any).GPUBufferUsage.MAP_READ | (globalThis as any).GPUBufferUsage.COPY_DST
           });
           encoder.copyTextureToBuffer({ texture: gpuTexture }, { buffer: staging, bytesPerRow }, [state.width, state.height, 1]);
-          stagingBuffers.push({ id: res.id, staging, isTexture: true });
+          stagingBuffers.push({ id, staging, isTexture: true });
         }
       } else {
         const gpuBuffer = (state as any).gpuBuffer as GPUBuffer;
@@ -201,14 +227,13 @@ export class WebGpuExecutor {
             usage: (globalThis as any).GPUBufferUsage.MAP_READ | (globalThis as any).GPUBufferUsage.COPY_DST
           });
           encoder.copyBufferToBuffer(gpuBuffer, 0, staging, 0, gpuBuffer.size);
-          stagingBuffers.push({ id: res.id, staging });
+          stagingBuffers.push({ id, staging });
         }
       }
     });
 
     this.device.queue.submit([encoder.finish()]);
 
-    // 6. Sync results
     await Promise.all(stagingBuffers.map(async ({ id, staging, isTexture }) => {
       await staging.mapAsync((globalThis as any).GPUMapMode.READ);
       const state = this.resources.get(id);
@@ -256,11 +281,15 @@ export class WebGpuExecutor {
           }
         }
       }
-      staging.unmap();
       staging.destroy();
     }));
+  }
 
-    if (inputBuffer) inputBuffer.destroy();
+  /**
+   * Explicitly read back a resource from GPU to CPU ResourceState.
+   */
+  public async readbackResource(id: string): Promise<void> {
+    await this.syncResults([id]);
   }
 
   /**

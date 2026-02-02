@@ -207,6 +207,9 @@ export class AppController {
       ctx.pushFrame(ir.entryPoint);
       await hostExec.executeFunction(entryFunc, ir.functions);
 
+      // [TEMP] Explicit readback for debug
+      await gpuExec.readbackResource('t_output');
+
       // 8. Extract t_output and Download
       const tOutput = ctx.getResource('t_output');
       if (!tOutput || !tOutput.data) {
