@@ -137,6 +137,51 @@ export class App extends MobxLitElement {
         background: #e0e0e0;
         color: #000;
       }
+
+      .state-view {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border-right: 1px solid #ccc;
+        background: #fff;
+      }
+
+      .debug-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 1rem;
+        overflow: auto;
+      }
+
+      .debug-panel h3 {
+        margin-top: 0;
+        border-bottom: 2px solid #eee;
+        padding-bottom: 0.5rem;
+      }
+
+      .debug-panel pre {
+        background: #fdfdfd;
+        border: 1px solid #eee;
+        padding: 1rem;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        flex: 1;
+      }
+
+      .compilation-results h4 {
+        margin: 1rem 0 0.5rem 0;
+      }
+
+      .compilation-results pre {
+        flex: none;
+      }
+
+      .wgsl-block h5 {
+        margin: 0.5rem 0;
+        color: #666;
+      }
     `
   ];
 

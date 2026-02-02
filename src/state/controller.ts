@@ -112,14 +112,17 @@ export class AppController {
   }
 
   public validateCurrentIR() {
+    console.info("[AppController] Validating IR...");
     const ir = appState.database.ir;
     const errors = validateIR(ir);
     runInAction(() => {
       appState.local.validationErrors = errors;
+      this.setActiveTab('results');
     });
   }
 
   public compileCurrentIR() {
+    console.info("[AppController] Compiling IR...");
     const ir = appState.database.ir;
     const cpuJit = new CpuJitCompiler();
     const wgslGen = new WgslGenerator();
@@ -136,6 +139,7 @@ export class AppController {
 
       runInAction(() => {
         appState.local.compilationResult = { js, wgsl };
+        this.setActiveTab('results');
       });
     } catch (e: any) {
       console.error(e);
