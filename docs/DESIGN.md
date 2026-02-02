@@ -19,10 +19,11 @@ Instead of writing raw shader code (GLSL/HLSL/MSL) directly, the system uses a *
 
 ### 2. Intermediate Representation (IR) Engine
 The heart of the system is the IR, designed to be a "lingua franca" for GPU logic. (See `INTERMEDIATE_REPRESENTATION.md` for details).
+-   **Property-Based Graph**: Unlike traditional graphs with explicit adjacency lists, connectivity is implicitly defined via node properties (e.g., `exec_in`, `val`). This ensures a single source of truth and simplifies Agentic manipulation.
 -   **Nodes**: Basic math, sampling, logic, flow control.
 -   **Stages**:
-    -   **Compute**: General-purpose GPU compute kernels.
-    -   **Render**: Vertex and Fragment stages for visual output.
+-   **Compute**: General-purpose GPU compute kernels.
+-   **Render**: Vertex and Fragment stages for visual output.
 -   **Data**: Typed inputs, textures, and persistent buffers (History).
 
 ### 3. Pipeline & Backends

@@ -5,7 +5,7 @@ The IR is a JSON-serializable, graph-based format designed to abstract GPU compu
 
 **Key Concepts:**
 1.  **Unified Graph Execution**: Execution starts at a **Root CPU Function** (`entryPoint`).
-2.  **Control Flow**: CPU and GPU graphs use "Execution Edges" to sequence side-effects (Dispatch, Store, Loop).
+2.  **Control Flow**: CPU and GPU graphs use **Property-Based Flow** (e.g., `exec_in`, `exec_out`, `exec_true`) to sequence side-effects (Dispatch, Store, Loop). Connectivity is implicitly derived from these properties.
 3.  **Strict Variable Types**: `localVars` only support POD types (scalars, vectors). **Resources (Textures, Buffers) cannot be stored in variables**; they are accessed via global IDs in Nodes.
 
 ## Structure
@@ -67,7 +67,6 @@ interface FunctionDef {
 
   localVars: VariableDef[];
   nodes: Node[];
-  edges: Edge[];
 }
 
 interface VariableDef {
@@ -109,15 +108,12 @@ interface VariableDef {
         { "id": "resize_w", "op": "cmd_resize_resource", "resource": "b_weights", "size": "u_kernel_size" }, // 'u_kernel_size' input ref
 
         // 2. Dispatch Kernel Generation (Single thread)
-        { "id": "cmd_gen", "op": "cmd_dispatch", "func": "fn_gen_kernel", "dispatch": [1, 1, 1] },
-        // Edge: resize_w.exec_out -> cmd_gen.exec_in
+        { "id": "cmd_gen", "op": "cmd_dispatch", "func": "fn_gen_kernel", "dispatch": [1, 1, 1], "exec_in": "resize_w" },
 
         // 3. Dispatch Blur (Full screen)
         { "id": "get_size", "op": "resource_get_size", "resource": "t_input" },
         { "id": "calc_groups", "op": "math_div_scalar", "val": 8 },
-        { "id": "cmd_blur", "op": "cmd_dispatch", "func": "fn_blur" }, // Inputs: calc_groups
-
-        // Edge: cmd_gen.exec_out -> cmd_blur.exec_in (Enforces order!)
+        { "id": "cmd_blur", "op": "cmd_dispatch", "func": "fn_blur", "exec_in": "cmd_gen" }
       ]
     },
 
@@ -127,12 +123,12 @@ interface VariableDef {
       "localVars": [ { "id": "v_sum", "type": "float" } ],
       "nodes": [
         // Loop 0..16
-        { "id": "loop", "op": "flow_loop", "start": 0, "end": 16 },
+        { "id": "loop", "op": "flow_loop", "start": 0, "end": 16, "exec_body": "store" },
 
         // Calculate Gaussian (simplified)
         { "id": "idx", "op": "loop_index", "loop": "loop" },
-        // ... Math ...
-        { "id": "store", "op": "buffer_store", "buffer": "b_weights", "index": "idx" }
+        { "id": "val", "op": "math_mul", "a": "idx", "b": 10 },
+        { "id": "store", "op": "buffer_store", "buffer": "b_weights", "index": "idx", "value": "val" }
       ]
     },
 
@@ -142,13 +138,14 @@ interface VariableDef {
       "localVars": [ { "id": "v_color", "type": "float4" } ],
       "nodes": [
         // Loop read b_weights
-        { "id": "loop", "op": "flow_loop", "start": 0, "end": 16 },
+        { "id": "loop", "op": "flow_loop", "start": 0, "end": 16, "exec_body": "set" },
+        { "id": "idx", "op": "loop_index", "loop": "loop" },
         { "id": "w_val", "op": "buffer_load", "buffer": "b_weights", "index": "idx" },
-        { "id": "tex_val", "op": "texture_sample", "tex": "t_input" }, // Offset logic omitted
+        { "id": "tex_val", "op": "texture_sample", "tex": "t_input" },
 
         // Accumulate
         { "id": "prev", "op": "var_get", "var": "v_color" },
-        { "id": "new", "op": "math_mad", "a": "tex_val", "b": "w_val", "c": "prev" }, // val*w + prev
+        { "id": "new", "op": "math_mad", "a": "tex_val", "b": "w_val", "c": "prev" },
         { "id": "set", "op": "var_set", "var": "v_color", "val": "new" }
       ]
     }
@@ -176,16 +173,16 @@ interface VariableDef {
       "nodes": [
         // If n <= 1 return 1
         { "id": "check", "op": "math_lte", "a": "n", "b": 1 },
-        { "id": "branch", "op": "flow_branch", "cond": "check" },
+        { "id": "branch", "op": "flow_branch", "cond": "check", "exec_true": "ret_1", "exec_false": "n_sub" },
 
         // True Path: Return 1
         { "id": "ret_1", "op": "func_return", "val": 1 },
 
         // False Path: n * factorial(n-1)
         { "id": "n_sub", "op": "math_sub", "a": "n", "b": 1 },
-        { "id": "recurse", "op": "call_func", "func": "fn_factorial", "args": ["n_sub"] },
+        { "id": "recurse", "op": "call_func", "func": "fn_factorial", "n": "n_sub" },
         { "id": "mult", "op": "math_mul", "a": "n", "b": "recurse" },
-        { "id": "ret_res", "op": "func_return", "val": "mult" }
+        { "id": "ret_res", "op": "func_return", "val": "mult", "exec_in": "n_sub" }
       ]
     }
   ]

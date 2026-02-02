@@ -76,8 +76,7 @@ describe('Edge Reconstruction Parity', () => {
     nodes: [
       { id: 'set1', op: 'var_set', var: 'x', val: 10 },
       { id: 'set2', op: 'var_set', var: 'y', val: 20, exec_in: 'set1' }
-    ],
-    edges: []
+    ]
   }, [
     { from: 'set1', portOut: 'exec_out', to: 'set2', portIn: 'exec_in', type: 'execution' }
   ]);
@@ -91,14 +90,9 @@ describe('Edge Reconstruction Parity', () => {
     localVars: [],
     nodes: [
       { id: 'cond', op: 'math_gt', a: 1, b: 0 },
-      { id: 'br', op: 'flow_branch', cond: 'cond' },
-      { id: 't1', op: 'var_set', var: 'res', val: 1, exec_in: 'br' }, // This usually needs more info in real IR, but let's test inference
-      { id: 'f1', op: 'var_set', var: 'res', val: 0, exec_in: 'br' }
-    ],
-    edges: [
-      // Hand-coded edges to distinguish true/false paths since property inference for branch is complex
-      { from: 'br', portOut: 'exec_true', to: 't1', portIn: 'exec_in', type: 'execution' },
-      { from: 'br', portOut: 'exec_false', to: 'f1', portIn: 'exec_in', type: 'execution' }
+      { id: 'br', op: 'flow_branch', cond: 'cond', exec_true: 't1', exec_false: 'f1' },
+      { id: 't1', op: 'var_set', var: 'res', val: 1 },
+      { id: 'f1', op: 'var_set', var: 'res', val: 0 }
     ]
   }, [
     { from: 'cond', portOut: 'val', to: 'br', portIn: 'cond', type: 'data' },

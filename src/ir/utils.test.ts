@@ -13,8 +13,7 @@ describe('reconstructEdges', () => {
       nodes: [
         { id: 'node_a', op: 'math_add', a: 10, b: 'node_b' },
         { id: 'node_b', op: 'math_mul', a: 5, b: 2 }
-      ],
-      edges: [] // Empty as per new IR goal
+      ]
     };
 
     const edges = reconstructEdges(func);
@@ -40,8 +39,7 @@ describe('reconstructEdges', () => {
       nodes: [
         { id: 'node_a', op: 'cmd_dispatch', func: 'other_func', exec_out: 'node_b' },
         { id: 'node_b', op: 'cmd_dispatch', func: 'final_func' }
-      ],
-      edges: []
+      ]
     };
 
     const edges = reconstructEdges(func);
@@ -68,8 +66,7 @@ describe('reconstructEdges', () => {
         { id: 'branch', op: 'flow_branch', cond: true, exec_true: 'node_t', exec_false: 'node_f' },
         { id: 'node_t', op: 'cmd_dispatch', func: 't' },
         { id: 'node_f', op: 'cmd_dispatch', func: 'f' }
-      ],
-      edges: []
+      ]
     };
 
     const edges = reconstructEdges(func);
@@ -100,14 +97,19 @@ describe('reconstructEdges', () => {
       nodes: [
         { id: 'node_a', op: 'var_get', var: 'node_b' }, // 'var' is a NAME_PROPERTY, should not create an edge
         { id: 'node_b', op: 'math_add', a: 1, b: 2 }
-      ],
-      edges: []
+      ]
     };
 
     const edges = reconstructEdges(func);
     const dataEdges = edges.filter(e => e.type === 'data');
 
-    expect(dataEdges).toHaveLength(0);
+    expect(dataEdges).toHaveLength(1);
+    expect(dataEdges[0]).toMatchObject({
+      from: 'node_b',
+      to: 'node_a',
+      portIn: 'var',
+      type: 'data'
+    });
   });
 
   it('should handle complex mixed flow', () => {
@@ -124,8 +126,7 @@ describe('reconstructEdges', () => {
         { id: 'calc', op: 'math_add', a: 'idx_get', b: 1 },
         { id: 'idx_get', op: 'loop_index', loop: 'loop' },
         { id: 'end', op: 'cmd_dispatch', func: 'final' }
-      ],
-      edges: []
+      ]
     };
 
     const edges = reconstructEdges(func);

@@ -173,19 +173,23 @@ export type FunctionType = 'cpu' | 'shader';
  * Execution Semantics:
  * 1. **Nodes Categories**:
  *    - **Executable Nodes**: Side-effect operations (e.g. `cmd_*`, `flow_*`, `*_store`, `call_func`, `var_set`, `array_set`).
- *      These nodes MUST be triggered by an 'execution' edge (or be an Entry Node).
+ *      These nodes have execution flow defined by properties like `exec_in`, `exec_out`, `exec_true`, `exec_false`, or `exec_body`.
  *    - **Pure Nodes**: Data operations (e.g. `math_*`, `vec_*`, `struct_*`, `var_get`).
  *      These nodes have NO side effects and produce values. They are evaluated primarily via "Pull" from Executable nodes.
  *
- * 2. **Entry Points**: Execution begins at "Entry Nodes". An Entry Node is any Executable Node that has NO incoming 'execution' type edges.
+ * 2. **Entry Points**: Execution begins at "Entry Nodes". An Entry Node is any Executable Node that has NO incoming execution dependency (e.g. no `exec_in` pointing to it, or it's the start of the chain).
  *
  * 3. **Flow (Control Flow)**:
  *    - The executor maintains a queue of Executable Nodes.
- *    - Execution proceeds via 'execution' edges from completed Executable Nodes.
- *    - Order is strictly determined by these edges.
+ *    - Execution proceeds via properties defined in the node's schema:
+ *      - `exec_in`: (Input) A reference to a node that must execute *before* this node.
+ *      - `exec_out`: (Output) A reference to the node that executes *after* this node (standard sequence).
+ *      - `exec_true` / `exec_false`: (Output) Branch destinations for `flow_branch`.
+ *      - `exec_body` / `exec_completed`: (Output) Loop body and post-loop destinations for `flow_loop`.
+ *    - Connectivity is reconstructed on-the-fly from these properties using schema metadata.
  *
  * 4. **Data Resolution (Data Flow)**:
- *    - Pure nodes are evaluated **lazily** and **synchronously** when an Executable Node demands their value.
+ *    - Pure nodes are evaluated **lazily** and **synchronously** when an Executable Node (or another Pure node) references their ID in a property.
  *    - **State Access**: `var_get` reads the variable's value *at the moment of evaluation*.
  *    - This means if `Executable A` mutates `Var X`, and `Executable B` (which runs after A) consumes `var_get(X)`, B sees the new value.
  *
@@ -249,6 +253,9 @@ export interface Node {
   [key: string]: any;
 }
 
+// Note: In version 3.0+, Connectivity (Edges) is implicitly defined by Node properties.
+// The Edge interface is kept for transient use within executors and visualization,
+// but is no longer part of the serialized FunctionDef.
 export type EdgeType = 'data' | 'execution';
 
 export interface Edge {

@@ -536,7 +536,7 @@ export const FlowLoopDef = defineOp<FlowLoopArgs>({
     start: { type: IntSchema, doc: "Start index", refable: true, optional: true },
     end: { type: IntSchema, doc: "End index", refable: true, optional: true },
     exec_body: { type: z.string(), doc: "Node ID for loop body", requiredRef: true, optional: true, refType: 'exec' },
-    exec_completed: { type: z.string(), doc: "Node ID for after loop", optional: true, refType: 'exec' },
+    exec_completed: { type: z.string(), doc: "Node ID for after loop", requiredRef: true, optional: true, refType: 'exec' },
     tag: { type: z.string(), doc: "Loop tag for identification", optional: true, refable: true }
   }
 });
