@@ -1,13 +1,14 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { IRDocument, FunctionDef } from '../../ir/types';
-import { analyzeFunction, AnalyzedFunction, IRLine, IRLinePart } from '../../ir/analyzer';
+import { analyzeFunction, analyzeGlobals, AnalyzedFunction, IRLine, IRLinePart } from '../../ir/analyzer';
 import { globalStyles } from '../../styles';
 
 @customElement('ui-ir-widget')
 export class UiIrWidget extends LitElement {
   @property({ type: Object }) ir: IRDocument | null = null;
   @state() private analyzedFunctions: AnalyzedFunction[] = [];
+  @state() private globalLines: IRLine[] = [];
   @state() private hoveredRefId: string | null = null;
 
   static readonly styles = [
@@ -32,7 +33,7 @@ export class UiIrWidget extends LitElement {
         min-height: 1.5em;
         padding: 0 0.5rem;
         border-radius: 4px;
-        transition: background-color 0.1s;
+        transition: background-color 0.05s;
       }
 
       .line:hover {
@@ -49,7 +50,7 @@ export class UiIrWidget extends LitElement {
         cursor: pointer;
         padding: 0 2px;
         border-radius: 3px;
-        transition: all 0.2s;
+        transition: all 0.05s;
       }
       .part-ref:hover {
         background-color: rgba(156, 220, 254, 0.2);
@@ -78,6 +79,14 @@ export class UiIrWidget extends LitElement {
         padding-left: 0.5rem;
       }
 
+      .globals-block {
+        margin-bottom: 1.5rem;
+        padding: 0.5rem;
+        background: rgba(255, 255, 255, 0.02);
+        border-radius: 4px;
+        border-left: 2px solid rgba(156, 220, 254, 0.2);
+      }
+
       .header {
         font-size: 0.9rem;
         color: #888;
@@ -93,6 +102,7 @@ export class UiIrWidget extends LitElement {
   updated(changedProperties: Map<string, any>) {
     if (changedProperties.has('ir') && this.ir) {
       this.analyzedFunctions = this.ir.functions.map(f => analyzeFunction(f, this.ir!));
+      this.globalLines = analyzeGlobals(this.ir);
     }
   }
 
@@ -109,6 +119,9 @@ export class UiIrWidget extends LitElement {
 
     return html`
       <div class="header">IR Graph Visualization</div>
+      <div class="globals-block">
+        ${this.globalLines.map(line => this.renderLine(line))}
+      </div>
       ${this.analyzedFunctions.map(func => html`
         <div class="function-block">
           ${func.lines.map(line => this.renderLine(line))}

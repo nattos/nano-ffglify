@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeFunction } from './analyzer';
+import { analyzeFunction, analyzeGlobals } from './analyzer';
 import { IRDocument } from './types';
 
 describe('IR Analyzer', () => {
@@ -85,5 +85,23 @@ describe('IR Analyzer', () => {
 
     // Check if 't_tex' is referenced in 'n4'
     expect(result.refs.get('global:t_tex')).toContain('n4');
+  });
+
+  it('should analyze global inputs and resources correctly', () => {
+    const lines = analyzeGlobals(mockDoc);
+
+    // Check for u_global
+    const inputLine = lines.find(l => l.parts.some(p => p.text === 'u_global'));
+    expect(inputLine).toBeDefined();
+    expect(inputLine?.parts.some(p => p.type === 'ref' && p.refId === 'global:u_global')).toBe(true);
+    expect(inputLine?.parts.some(p => p.type === 'literal' && p.text === '1')).toBe(true);
+
+    // Check for t_tex
+    const resLine = lines.find(l => l.parts.some(p => p.text === 't_tex'));
+    expect(resLine).toBeDefined();
+    expect(resLine?.parts.some(p => p.type === 'keyword' && p.text === 'res')).toBe(true);
+    expect(resLine?.parts.some(p => p.type === 'ref' && p.refId === 'global:t_tex')).toBe(true);
+    expect(resLine?.parts.some(p => p.type === 'comment' && p.text.includes('format: rgba8'))).toBe(true);
+    expect(resLine?.parts.some(p => p.type === 'comment' && p.text.includes('size: [256,256]'))).toBe(true);
   });
 });

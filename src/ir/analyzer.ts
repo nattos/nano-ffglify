@@ -118,6 +118,66 @@ export const analyzeFunction = (func: FunctionDef, doc: IRDocument): AnalyzedFun
   return { id: func.id, lines, refs };
 };
 
+export const analyzeGlobals = (doc: IRDocument): IRLine[] => {
+  const lines: IRLine[] = [];
+  const getGlobalRefId = (id: string) => `global:${id}`;
+
+  // 1. Global Inputs
+  doc.inputs.forEach(input => {
+    const parts: IRLinePart[] = [
+      { type: 'keyword', text: 'var' },
+      { type: 'separator', text: ' ' },
+      { type: 'ref', text: input.id, refId: getGlobalRefId(input.id), dataType: input.type },
+      { type: 'separator', text: ': ' },
+      { type: 'type', text: input.type }
+    ];
+    if (input.default !== undefined) {
+      parts.push({ type: 'separator', text: ' = ' });
+      parts.push({ type: 'literal', text: JSON.stringify(input.default) });
+    }
+    if (input.comment) {
+      parts.push({ type: 'separator', text: '  ' });
+      parts.push({ type: 'comment', text: `// ${input.comment}` });
+    }
+    lines.push({ indent: 0, parts });
+  });
+
+  // 2. Resources (Buffers/Textures)
+  doc.resources.forEach(res => {
+    const parts: IRLinePart[] = [
+      { type: 'keyword', text: 'res' },
+      { type: 'separator', text: ' ' },
+      { type: 'ref', text: res.id, refId: getGlobalRefId(res.id), dataType: res.type },
+      { type: 'separator', text: ': ' },
+      { type: 'type', text: res.type }
+    ];
+
+    // Add some metadata if available
+    const meta: string[] = [];
+    if (res.format) meta.push(`format: ${res.format}`);
+    if (res.size) {
+      if (res.size.mode === 'fixed') meta.push(`size: [${res.size.value}]`);
+      else if (res.size.mode === 'reference') meta.push(`size: ref(${res.size.ref})`);
+    }
+
+    if (meta.length > 0 || res.comment) {
+      parts.push({ type: 'separator', text: '  ' });
+      let comment = '';
+      if (meta.length > 0) comment += `[${meta.join(', ')}] `;
+      if (res.comment) comment += res.comment;
+      parts.push({ type: 'comment', text: `// ${comment.trim()}` });
+    }
+
+    lines.push({ indent: 0, parts });
+  });
+
+  if (lines.length > 0) {
+    lines.push({ indent: 0, parts: [] }); // Spacer
+  }
+
+  return lines;
+};
+
 const analyzeNode = (
   node: Node,
   func: FunctionDef,
