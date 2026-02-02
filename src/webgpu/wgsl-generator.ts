@@ -47,10 +47,10 @@ export class WgslGenerator {
       meta: { name: 'generated' },
       entryPoint: entryPointId,
       inputs: [],
-      resources: Array.from(options.resourceDefs?.values() || []),
       functions,
-      structs: ir?.structs || [],
-      ...ir
+      structs: [],
+      ...ir,
+      resources: Array.from(options.resourceDefs?.values() || ir?.resources || [])
     };
 
     // 1. Map built-ins across all potential functions
@@ -99,11 +99,12 @@ export class WgslGenerator {
     });
 
     // 3. Resources (Textures/Buffers) - Sampler Helpers
-    this.emitTextureSamplers(lines, options, fullIr, usedResources);
+    const emittedFunctions = functions.filter(f => emitted.has(f.id));
+    this.emitTextureSamplers(lines, options, fullIr, usedResources, emittedFunctions);
 
     // Assemble final shader code
     const finalLines: string[] = [];
-    finalLines.push('diagnostic(off, derivative_uniformity);');
+    // diagnostic(off, derivative_uniformity);
     finalLines.push('');
 
     // Globals Buffer
@@ -141,15 +142,6 @@ export class WgslGenerator {
 
     // Resource Bindings
     if (options.resourceBindings) {
-      const usedResources = new Set<string>();
-      emitted.forEach(fid => {
-        const f = functions.find(func => func.id === fid);
-        if (f) {
-          const used = WgslGenerator.findUsedResources(f, fullIr);
-          used.forEach(r => usedResources.add(r));
-        }
-      });
-
       options.resourceBindings.forEach((bindingIdx, resId) => {
         if (!usedResources.has(resId)) return;
 
@@ -161,7 +153,8 @@ export class WgslGenerator {
           const bufVar = this.getBufferVar(resId);
           finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> ${bufVar} : ${structName};`);
         } else if (def.type === 'texture2d') {
-          const isStorage = functions.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === resId));
+          // Identify if USED as storage IN THIS MODULE (only among emitted functions)
+          const isStorage = emittedFunctions.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === resId));
           if (isStorage) {
             let format = 'rgba8unorm';
             const irFormat = def.format;
@@ -175,8 +168,8 @@ export class WgslGenerator {
           }
         }
       });
-      if (options.resourceBindings.size > 0) finalLines.push('');
     }
+    if (options.resourceBindings && options.resourceBindings.size > 0) finalLines.push('');
 
     // Add injected helpers
     if (this.helpers.size > 0) {
@@ -220,54 +213,24 @@ export class WgslGenerator {
     this.helpers.add(code);
   }
 
-  private emitTextureSamplers(lines: string[], options: WgslOptions, ir: IRDocument, usedResources: Set<string>) {
+  private emitTextureSamplers(lines: string[], options: WgslOptions, ir: IRDocument, usedResources: Set<string>, emittedFunctions?: FunctionDef[]) {
     if (!options.resourceDefs) return;
+    const funcs = emittedFunctions || ir.functions;
     options.resourceDefs.forEach((def, id) => {
       if (!usedResources.has(id)) return;
       if (def.type === 'texture2d') {
-        const isStorage = ir.functions.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === id));
+        const isStorage = funcs.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === id));
         if (isStorage) return; // Skip sampling helper for storage textures
 
         const wrap = def.sampler?.wrap || 'clamp';
         const filter = def.sampler?.filter || 'nearest';
 
         lines.push(`fn sample_${id}(uv: vec2<f32>) -> vec4<f32> {`);
-        lines.push(`  let size = vec2<f32>(textureDimensions(${id}));`);
-
-        // Wrap Logic
-        if (wrap === 'repeat') {
-          lines.push(`  let uv_wrap = uv - floor(uv);`);
-        } else if (wrap === 'mirror') {
-          // Mirror Repeat: 1.0 - abs(mod(uv, 2.0) - 1.0)
-          lines.push(`  let uv_mod2 = uv - 2.0 * floor(uv * 0.5);`);
-          lines.push(`  let uv_wrap = 1.0 - abs(uv_mod2 - 1.0);`);
-        } else {
-          lines.push(`  let uv_wrap = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));`);
-        }
-
-        if (filter === 'linear') {
-          // Bilinear Filtering
-          lines.push(`  let texel_pos = uv_wrap * size - 0.5;`);
-          lines.push(`  let f = fract(texel_pos);`);
-          lines.push(`  let base_coord = vec2<i32>(floor(texel_pos));`);
-
-          lines.push(`  let c00 = vec2<i32>(base_coord);`);
-          lines.push(`  let c10 = vec2<i32>(base_coord) + vec2<i32>(1, 0);`);
-          lines.push(`  let c01 = vec2<i32>(base_coord) + vec2<i32>(0, 1);`);
-          lines.push(`  let c11 = vec2<i32>(base_coord) + vec2<i32>(1, 1);`);
-
-          lines.push(`  let s00 = textureLoad(${id}, clamp(c00, vec2<i32>(0), vec2<i32>(size) - 1), 0);`);
-          lines.push(`  let s10 = textureLoad(${id}, clamp(c10, vec2<i32>(0), vec2<i32>(size) - 1), 0);`);
-          lines.push(`  let s01 = textureLoad(${id}, clamp(c01, vec2<i32>(0), vec2<i32>(size) - 1), 0);`);
-          lines.push(`  let s11 = textureLoad(${id}, clamp(c11, vec2<i32>(0), vec2<i32>(size) - 1), 0);`);
-
-          lines.push(`  return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);`);
-        } else {
-          // Nearest Neighbor
-          lines.push(`  let coord = vec2<i32>(floor(uv_wrap * size));`);
-          lines.push(`  let safe_coord = clamp(coord, vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));`);
-          lines.push(`  return textureLoad(${id}, safe_coord, 0);`);
-        }
+        lines.push(`  let size = vec2<f32>(textureDimensions(${id}, 0u));`);
+        lines.push(`  let uv_wrap = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));`);
+        lines.push(`  let coord = vec2<i32>(floor(uv_wrap * size));`);
+        lines.push(`  let safe_coord = clamp(coord, vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));`);
+        lines.push(`  return textureLoad(${id}, safe_coord, 0u);`);
         lines.push(`}`);
         lines.push('');
       }
@@ -353,13 +316,17 @@ export class WgslGenerator {
         if (this.allUsedBuiltins.has('num_workgroups')) computeBuiltins.push(`@builtin(num_workgroups) nw : vec3<u32>`);
         lines.push(`@compute @workgroup_size(1, 1, 1)`);
         lines.push(`fn main(${computeBuiltins.join(', ')}) {`);
-        if (this.allUsedBuiltins.has('global_invocation_id')) lines.push(`  GlobalInvocationID = gid;`);
+        // Built-ins handled via parameters.
         if (this.allUsedBuiltins.has('local_invocation_id')) lines.push(`  LocalInvocationID = lid;`);
         if (this.allUsedBuiltins.has('workgroup_id')) lines.push(`  WorkgroupID = wid;`);
         if (this.allUsedBuiltins.has('local_invocation_index')) lines.push(`  LocalInvocationIndex = lidx;`);
         if (this.allUsedBuiltins.has('num_workgroups')) lines.push(`  NumWorkgroups = nw;`);
         for (const input of func.inputs) {
-          if (input.builtin === 'global_invocation_id') lines.push(`  let l_${input.id} = GlobalInvocationID;`);
+          if (input.builtin === 'global_invocation_id') lines.push(`  let l_${input.id} = gid;`);
+          if (input.builtin === 'local_invocation_id') lines.push(`  let l_${input.id} = lid;`);
+          if (input.builtin === 'workgroup_id') lines.push(`  let l_${input.id} = wid;`);
+          if (input.builtin === 'local_invocation_index') lines.push(`  let l_${input.id} = lidx;`);
+          if (input.builtin === 'num_workgroups') lines.push(`  let l_${input.id} = nw;`);
         }
       }
     } else {
@@ -370,8 +337,22 @@ export class WgslGenerator {
     }
 
     const edges = reconstructEdges(func);
+    this.emitLocalVars(func, lines);
     this.emitBody(func, lines, options, new Set(), ir, edges);
     lines.push(`}`);
+  }
+
+  private emitLocalVars(func: FunctionDef, lines: string[]) {
+    for (const v of func.localVars) {
+      const type = this.resolveType(v.type);
+      let init = '';
+      if (v.initialValue !== undefined) {
+        init = ` = ${this.formatLiteral(v.initialValue, v.type)}`;
+      } else {
+        init = ` = ${this.formatZero(v.type)}`;
+      }
+      lines.push(`  var l_${v.id} : ${type}${init};`);
+    }
   }
 
   private emitBody(func: FunctionDef, lines: string[], options: WgslOptions, visited: Set<string>, ir: IRDocument, edges: Edge[]) {
@@ -466,7 +447,7 @@ export class WgslGenerator {
     } else if (node.op === 'texture_store') {
       const coords = this.resolveArg(node, 'coords', func, options, ir, 'any', edges);
       const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
-      lines.push(`${indent}textureStore(${node['tex']}, vec2<i32>(${coords}.xy), ${val});`);
+      lines.push(`${indent}textureStore(${node['tex']}, vec2<i32>(${coords}), ${val});`);
     } else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'] as string;
       const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
@@ -614,12 +595,15 @@ export class WgslGenerator {
     if (node.op === 'texture_load') {
       const tex = node['tex'];
       const coords = this.resolveArg(node, 'coords', func, options, ir, 'any', edges);
-      return `textureLoad(${tex}, vec2<i32>(${coords}.xy), 0)`;
+      return `textureLoad(${tex}, vec2<i32>(${coords}), 0u)`;
     }
     if (node.op === 'resource_get_size') {
       const resId = node['resource'];
       const def = options.resourceDefs?.get(resId);
-      if (def?.type === 'texture2d') return `vec2<f32>(textureDimensions(${resId}))`;
+      if (def?.type === 'texture2d') {
+        const isStorage = func.nodes.some(n => n.op === 'texture_store' && n['tex'] === resId);
+        return `vec2<f32>(textureDimensions(${resId}${isStorage ? '' : ', 0u'}))`;
+      }
       if (def?.type === 'buffer') return `vec2<f32>(f32(arrayLength(&${this.getBufferVar(resId)}.data)), 0.0)`;
       return `vec2<f32>(0.0, 0.0)`;
     }
@@ -688,13 +672,12 @@ export class WgslGenerator {
     }
     if (node.op === 'builtin_get') {
       const name = node['name'];
-      const builtinVarNames: Record<string, string> = {
-        'global_invocation_id': 'GlobalInvocationID', 'local_invocation_id': 'LocalInvocationID',
-        'workgroup_id': 'WorkgroupID', 'local_invocation_index': 'LocalInvocationIndex',
-        'num_workgroups': 'NumWorkgroups', 'position': 'Position', 'frag_coord': 'FragCoord',
-        'front_facing': 'FrontFacing', 'sample_index': 'SampleIndex', 'vertex_index': 'VertexIndex', 'instance_index': 'InstanceIndex'
-      };
-      return builtinVarNames[name] || name;
+      if (name === 'global_invocation_id') return 'gid';
+      if (name === 'local_invocation_id') return 'lid';
+      if (name === 'workgroup_id') return 'wid';
+      if (name === 'local_invocation_index') return 'lidx';
+      if (name === 'num_workgroups') return 'nw';
+      return 'gid';
     }
     if (this.isMathOp(node.op)) return this.compileMath(node, func, options, ir, edges);
     return '0.0';
@@ -706,9 +689,18 @@ export class WgslGenerator {
     const op = node.op;
     const isFloatOp = !op.includes('_gt') && !op.includes('_lt') && !op.includes('_ge') && !op.includes('_le') && !op.includes('_eq') && !op.includes('_neq') && !op.startsWith('bits_');
 
-    const a = (k = 'a') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir, 'float', edges)})` : this.resolveArg(node, k, func, options, ir, 'any', edges);
-    const b = (k = 'b') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir, 'float', edges)})` : this.resolveArg(node, k, func, options, ir, 'any', edges);
-    const val = (k = 'val') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir, 'float', edges)})` : this.resolveArg(node, k, func, options, ir, 'any', edges);
+    const a = (k = 'a') => {
+      const expr = this.resolveArg(node, k, func, options, ir, 'float', edges);
+      return (isFloatOp && !expr.includes('vec') && !expr.includes('mat')) ? `f32(${expr})` : expr;
+    };
+    const b = (k = 'b') => {
+      const expr = this.resolveArg(node, k, func, options, ir, 'float', edges);
+      return (isFloatOp && !expr.includes('vec') && !expr.includes('mat')) ? `f32(${expr})` : expr;
+    };
+    const val = (k = 'val') => {
+      const expr = this.resolveArg(node, k, func, options, ir, 'float', edges);
+      return (isFloatOp && !expr.includes('vec') && !expr.includes('mat')) ? `f32(${expr})` : expr;
+    };
 
     // Core Arithmetic
     if (op === 'math_add') return `(${a()} + ${b()})`;
@@ -747,6 +739,7 @@ export class WgslGenerator {
 
     if (op === 'math_min') return `min(${a()}, ${b()})`;
     if (op === 'math_max') return `max(${a()}, ${b()})`;
+    if (op === 'math_mad') return `((${a()} * ${b()}) + ${this.resolveArg(node, 'c', func, options, ir, 'float', edges)})`;
     if (op === 'math_clamp') return `clamp(${val()}, ${this.resolveArg(node, 'min', func, options, ir, 'float', edges)}, ${this.resolveArg(node, 'max', func, options, ir, 'float', edges)})`;
     if (op === 'math_mix') return `mix(${a()}, ${b()}, ${this.resolveArg(node, 't', func, options, ir, 'float', edges)})`;
     if (op === 'math_step') return `step(${this.resolveArg(node, 'edge', func, options, ir, 'float', edges)}, ${val()})`;
@@ -830,6 +823,16 @@ export class WgslGenerator {
       return s.includes('.') ? s : s + '.0';
     }
     if (typeof val === 'boolean') return val.toString();
+    if (Array.isArray(val)) {
+      const innerType = type.replace('float', 'f32').replace('int', 'i32');
+      const items = val.map(v => this.formatLiteral(v, 'float'));
+      if (val.length === 2) return `vec2<f32>(${items.join(', ')})`;
+      if (val.length === 3) return `vec3<f32>(${items.join(', ')})`;
+      if (val.length === 4) return `vec4<f32>(${items.join(', ')})`;
+      if (val.length === 9) return `mat3x3<f32>(${items.join(', ')})`;
+      if (val.length === 16) return `mat4x4<f32>(${items.join(', ')})`;
+      return `array<f32, ${val.length}>(${items.join(', ')})`;
+    }
     return val.toString();
   }
 

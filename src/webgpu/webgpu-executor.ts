@@ -1,4 +1,4 @@
-import { FunctionDef, ResourceDef, StructDef } from '../ir/types';
+import { FunctionDef, ResourceDef, StructDef, TextureFormat } from '../ir/types';
 import { RuntimeValue, ResourceState } from '../ir/resource-store';
 import { BuiltinOp, TextureFormatFromId, RenderPipelineDef } from '../ir/types';
 import { WgslGenerator } from './wgsl-generator';
@@ -160,11 +160,19 @@ export class WebGpuExecutor {
         const tex = this.ensureTexture(res.id);
         if (tex) entries.push({ binding, resource: tex.createView() });
       } else {
-        // Ensure GPU buffer exists
+        const compCount = this.getComponentCount(res.dataType || 'float');
+        const finalSize = Math.max(state.width * compCount * 4, 16);
+
+        // Re-allocate if size mismatch
+        if ((state as any).gpuBuffer && (state as any).gpuBuffer.size < finalSize) {
+          (state as any).gpuBuffer.destroy();
+          (state as any).gpuBuffer = undefined;
+        }
+
         if (!(state as any).gpuBuffer) {
           (state as any).gpuBuffer = this.device.createBuffer({
             label: res.id,
-            size: Math.max(state.width * 4, 16),
+            size: finalSize,
             usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_SRC | (globalThis as any).GPUBufferUsage.COPY_DST
           });
         }
@@ -231,15 +239,31 @@ export class WebGpuExecutor {
       const state = this.resources.get(id);
       if (state) {
         if (isTexture) {
-          const data = new Uint8Array(staging.getMappedRange());
-          const bytesPerRow = Math.ceil((state.width * 4) / 256) * 256;
+          const mapped = staging.getMappedRange();
+          const irFormat = (state.def.format || 'rgba8').toString().toLowerCase();
+          const isFloat = irFormat.includes('32f') || irFormat.includes('16f') || irFormat.includes('float');
+          const bytesPerChannel = isFloat ? 4 : 1;
+          const bytesPerRow = Math.ceil((state.width * 4 * bytesPerChannel) / 256) * 256;
           const reshaped = [];
-          for (let y = 0; y < state.height; y++) {
-            const rowStart = y * bytesPerRow;
-            for (let x = 0; x < state.width; x++) {
-              const start = rowStart + (x * 4);
-              const pixel = Array.from(data.slice(start, start + 4)).map(v => v / 255.0);
-              reshaped.push(pixel);
+
+          if (isFloat) {
+            const data = new Float32Array(mapped);
+            const floatsPerRow = bytesPerRow / 4;
+            for (let y = 0; y < state.height; y++) {
+              const rowStart = y * floatsPerRow;
+              for (let x = 0; x < state.width; x++) {
+                const start = rowStart + (x * 4);
+                reshaped.push(Array.from(data.slice(start, start + 4)));
+              }
+            }
+          } else {
+            const data = new Uint8Array(mapped);
+            for (let y = 0; y < state.height; y++) {
+              const rowStart = y * bytesPerRow;
+              for (let x = 0; x < state.width; x++) {
+                const start = rowStart + (x * 4);
+                reshaped.push(Array.from(data.slice(start, start + 4)).map(v => v / 255.0));
+              }
             }
           }
           state.data = reshaped;
@@ -435,6 +459,14 @@ export class WebGpuExecutor {
     if (!state) return undefined;
     if (state.def.type !== 'texture2d') return undefined; // Only textures
 
+    if ((state as any).gpuTexture) {
+      const tex = (state as any).gpuTexture as GPUTexture;
+      if (tex.width !== state.width || tex.height !== state.height) {
+        tex.destroy();
+        (state as any).gpuTexture = undefined;
+      }
+    }
+
     if (!(state as any).gpuTexture) {
       let format: string = 'rgba8unorm';
       const irFormat = state.def.format;
@@ -525,8 +557,9 @@ export class WebGpuExecutor {
         // Buffer
         // Ensure buffer
         if (!(state as any).gpuBuffer) {
+          const compCount = this.getComponentCount(res.dataType || 'float');
           (state as any).gpuBuffer = this.device.createBuffer({
-            size: Math.max(state.width * 4, 16),
+            size: Math.max(state.width * compCount * 4, 16),
             usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_SRC | (globalThis as any).GPUBufferUsage.COPY_DST
           });
         }
