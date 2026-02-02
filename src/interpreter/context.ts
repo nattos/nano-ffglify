@@ -1,7 +1,7 @@
 import { IRDocument, ResourceDef, TextureFormat } from '../ir/types';
-import { RuntimeValue, ResourceState, ActionLogEntry } from '../ir/resource-store';
+import type { RuntimeValue, ResourceState, ActionLogEntry } from '../ir/resource-store';
 
-export { RuntimeValue, VectorValue, ScalarValue, MatrixValue, ArrayValue, StructValue, ResourceState, ActionLogEntry } from '../ir/resource-store';
+export type { RuntimeValue, VectorValue, ScalarValue, MatrixValue, ArrayValue, StructValue, ResourceState, ActionLogEntry } from '../ir/resource-store';
 
 // ------------------------------------------------------------------
 // State

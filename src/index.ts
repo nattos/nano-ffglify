@@ -284,6 +284,7 @@ export class App extends MobxLitElement {
           <div class="actions" style="display: flex; gap: 0.5rem;">
             <ui-button @click=${() => appController.validateCurrentIR()}>Validate</ui-button>
             <ui-button @click=${() => appController.compileCurrentIR()}>Compile</ui-button>
+            <ui-button @click=${() => appController.runOne()}>Run One</ui-button>
           </div>
           <div class="divider" style="width: 1px; background: #ccc; margin: 0 0.5rem;"></div>
           <ui-button

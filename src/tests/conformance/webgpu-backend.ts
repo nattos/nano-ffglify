@@ -1,66 +1,11 @@
-import { globals } from 'webgpu';
+/// <reference types="@webgpu/types" />
 import { getSharedDevice, gpuSemaphore } from './gpu-singleton';
 
-// Ensure globals
-// WebGPU Globals are managed in gpu-singleton.ts
-
 import type { TestBackend } from './types';
-import { EvaluationContext } from '../../interpreter/context';
+import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { WebGpuExecutor } from '../../webgpu/webgpu-executor';
 import { IRDocument, FunctionDef, TextureFormatFromId, RenderPipelineDef } from '../../ir/types';
-import { CpuJitCompiler } from '../../webgpu/cpu-jit';
-import { HostOps } from '../../webgpu/host-ops';
-import { RuntimeGlobals } from '../../webgpu/host-interface';
-import { RuntimeValue, ResourceState } from '../../ir/resource-store';
-
-import { WebGpuHost } from '../../webgpu/webgpu-host';
-
-class WebGpuHostExecutor {
-  webGpuExec: WebGpuExecutor;
-  ctx: EvaluationContext;
-  jit: CpuJitCompiler;
-  compiledCache: Map<string, Function> = new Map();
-
-  constructor(ctx: EvaluationContext, webGpuExec: WebGpuExecutor) {
-    this.ctx = ctx;
-    this.webGpuExec = webGpuExec;
-    this.jit = new CpuJitCompiler();
-  }
-
-  async executeFunction(func: FunctionDef, functions: FunctionDef[]): Promise<RuntimeValue> {
-    let compiled = this.compiledCache.get(func.id);
-    if (!compiled) {
-      compiled = this.jit.compile(this.ctx.ir, func.id);
-      this.compiledCache.set(func.id, compiled);
-    }
-
-    const globals = new WebGpuHost({
-      // TODO: Remove all deps of the emitted code on our host's objects.
-      executeShader: async (targetId, dim, args) => {
-        const targetFunc = functions.find(f => f.id === targetId);
-        if (!targetFunc) throw new Error(`Shader '${targetId}' not found`);
-        await this.webGpuExec.executeShader(targetFunc, dim, args);
-      },
-      executeDraw: async (targetId, vertexId, fragmentId, count, pipeline) => {
-        const resources = Array.from(this.ctx.resources.values()).map(r => r.def);
-        await this.webGpuExec.executeDraw(targetId, vertexId, fragmentId, count, pipeline as any, resources as any);
-      }
-    }, this.ctx.resources as any, (resId, size, format) => {
-      this.ctx.logAction('resize', resId, { size, format });
-    }, (msg, payload) => {
-      // console.log(`[JIT Log] ${msg} `, payload);
-      this.ctx.logAction('log', msg, payload);
-    });
-
-    // Compiled signature: (resources, inputs, globals, variables)
-    // We use context resources, global inputs, and current frame variables
-    return await compiled(this.ctx.resources, this.ctx.inputs, globals, this.ctx.currentFrame.vars);
-  }
-
-  destroy() {
-    this.webGpuExec.destroy();
-  }
-}
+import { WebGpuHostExecutor } from '../../webgpu/webgpu-host-executor';
 
 export const WebGpuBackend: TestBackend = {
   name: 'WebGPU',

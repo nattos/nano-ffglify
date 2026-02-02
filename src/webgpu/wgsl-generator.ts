@@ -22,6 +22,16 @@ export interface WgslOptions {
   structs?: StructDef[]; // Optional structs for dependency resolution
 }
 
+export interface CompilationMetadata {
+  resourceBindings: Map<string, number>;
+  inputBinding?: number;
+}
+
+export interface CompilationResult {
+  code: string;
+  metadata: CompilationMetadata;
+}
+
 export class WgslGenerator {
   private helpers = new Set<string>();
   private allUsedBuiltins = new Set<string>();
@@ -33,7 +43,7 @@ export class WgslGenerator {
    * @param options Compilation options
    * @param ir Optional partial IR document for additional metadata (structs, resources)
    */
-  compileFunctions(functions: FunctionDef[], entryPointId: string, options: WgslOptions = {}, ir?: Partial<IRDocument>): string {
+  compileFunctions(functions: FunctionDef[], entryPointId: string, options: WgslOptions = {}, ir?: Partial<IRDocument>): CompilationResult {
     options.entryPointId = entryPointId; // Ensure options has the entry point ID
     const entryFunc = functions.find(f => f.id === entryPointId);
     if (!entryFunc) throw new Error(`Entry point function '${entryPointId}' not found`);
@@ -201,10 +211,16 @@ export class WgslGenerator {
     finalLines.push(...lines);
     finalLines.push(...functionLines);
 
-    return finalLines.join('\n');
+    return {
+      code: finalLines.join('\n'),
+      metadata: {
+        resourceBindings: options.resourceBindings || new Map(),
+        inputBinding: options.inputBinding
+      }
+    };
   }
 
-  compile(ir: IRDocument, entryPointId: string, options: WgslOptions = {}): string {
+  compile(ir: IRDocument, entryPointId: string, options: WgslOptions = {}): CompilationResult {
     if (!options.resourceDefs) options.resourceDefs = new Map(ir.resources.map(r => [r.id, r]));
     return this.compileFunctions(ir.functions, entryPointId, options, ir);
   }

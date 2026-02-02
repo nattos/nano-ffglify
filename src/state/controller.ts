@@ -20,6 +20,12 @@ import { settingsManager } from './settings';
 import { validateIR } from '../ir/validator';
 import { CpuJitCompiler } from '../webgpu/cpu-jit';
 import { WgslGenerator } from '../webgpu/wgsl-generator';
+import { getSharedDevice } from '../webgpu/gpu-device';
+import { fetchAndDecodeImage, encodeAndDownloadImage } from '../utils/image-utils';
+import { EvaluationContext } from '../interpreter/context';
+import { WebGpuExecutor } from '../webgpu/webgpu-executor';
+import { WebGpuHostExecutor } from '../webgpu/webgpu-host-executor';
+import { TextureFormat } from '../ir/types';
 
 export class AppController {
   public setActiveTab(tab: 'state' | 'logs' | 'script' | 'results') {
@@ -133,7 +139,7 @@ export class AppController {
 
       ir.functions.forEach(f => {
         if (f.type === 'shader') {
-          wgsl[f.id] = wgslGen.compile(ir, f.id);
+          wgsl[f.id] = wgslGen.compile(ir, f.id).code;
         }
       });
 
@@ -144,6 +150,76 @@ export class AppController {
     } catch (e: any) {
       console.error(e);
       alert("Compilation failed: " + e.message);
+    }
+  }
+
+  public async runOne() {
+    console.info("[AppController] Running One...");
+    const ir = appState.database.ir;
+
+    try {
+      // 1. Get GPU Device
+      const device = await getSharedDevice();
+
+      // 2. Fetch and Decode Input Image
+      const inputAsset = await fetchAndDecodeImage('test.png');
+
+      // 3. Create Evaluation Context
+      const inputs = new Map<string, any>();
+      // Use defaults for scalar inputs, but we specifically need t_input
+      ir.inputs.forEach(inp => {
+        if (inp.default !== undefined) {
+          inputs.set(inp.id, inp.default);
+        }
+      });
+      inputs.set('u_kernel_size', 16); // Fallback for blur demo if not set
+
+      const ctx = new EvaluationContext(ir, inputs);
+
+      // 4. Populate t_input resource with image data
+      const tInput = ctx.getResource('t_input');
+      if (tInput) {
+        tInput.width = inputAsset.width;
+        tInput.height = inputAsset.height;
+        tInput.data = inputAsset.data;
+      }
+
+      // 5. Initialize other resources (ensure they exist and have initial sizes)
+      // For textures that reference t_input, resize them
+      ir.resources.forEach(res => {
+        const state = ctx.getResource(res.id);
+        if (res.size.mode === 'reference' && res.size.ref === 't_input') {
+          state.width = inputAsset.width;
+          state.height = inputAsset.height;
+        }
+      });
+
+      // 6. Setup Executors
+      const gpuExec = new WebGpuExecutor(device, ctx.resources, ctx.inputs);
+      await gpuExec.initialize(ir.functions, ir.resources, ir.structs);
+
+      const hostExec = new WebGpuHostExecutor(ctx, gpuExec);
+
+      // 7. Execute JIT starting at entry point
+      const entryFunc = ir.functions.find(f => f.id === ir.entryPoint);
+      if (!entryFunc) throw new Error("Entry point not found");
+
+      ctx.pushFrame(ir.entryPoint);
+      await hostExec.executeFunction(entryFunc, ir.functions);
+
+      // 8. Extract t_output and Download
+      const tOutput = ctx.getResource('t_output');
+      if (!tOutput || !tOutput.data) {
+        throw new Error("t_output not found or has no data after execution");
+      }
+
+      await encodeAndDownloadImage(tOutput.data as number[][], tOutput.width, tOutput.height, 'result.png');
+      console.info("[AppController] Run One completed successfully!");
+      alert("Run One completed! Downloaded result.png");
+
+    } catch (e: any) {
+      console.error(e);
+      alert("Run One failed: " + e.message);
     }
   }
 

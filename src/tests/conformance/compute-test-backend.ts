@@ -1,11 +1,11 @@
+/// <reference types="@webgpu/types" />
 import { IRDocument, DataType, ResourceDef } from '../../ir/types';
 import { validateIR, inferFunctionTypes } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { InterpretedExecutor } from '../../interpreter/executor';
-import { globals } from 'webgpu';
+import { getSharedDevice, gpuSemaphore } from './gpu-singleton';
 import { TestBackend } from './types';
 import { WebGpuBackend } from './webgpu-backend';
-import { getSharedDevice, gpuSemaphore, ensureGpuGlobals } from './gpu-singleton';
 import { WgslGenerator } from '../../webgpu/wgsl-generator';
 import { GpuCache } from '../../webgpu/gpu-cache';
 
@@ -57,8 +57,6 @@ export const ComputeTestBackend: TestBackend = {
       throw new Error(`IR Validation Failed:\n${criticalErrors.map(e => e.message).join('\n')}`);
     }
 
-    // Ensure WebGPU globals are available
-    ensureGpuGlobals();
 
     // Reuse WebGpuBackend's context creation (device init, resource alloc)
     const ctx = await WebGpuBackend.createContext(ir, inputs);
