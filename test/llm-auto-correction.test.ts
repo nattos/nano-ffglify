@@ -19,7 +19,7 @@ describe('LLM Auto-Correction Flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runInAction(() => {
-      appState.database.notes = {}; // Reset items
+      appState.database.ir = { id: 'current-ir', version: '1.0', meta: { name: 'Empty' }, entryPoint: '', inputs: [], resources: [], structs: [], functions: [] };
     });
   });
 
@@ -29,52 +29,57 @@ describe('LLM Auto-Correction Flow', () => {
 
     // 2. Mock Responses
 
-    // Attempt 1: Invalid Entity (Missing body)
+    // Attempt 1: Invalid IR (Missing version)
     generateSpy.mockResolvedValueOnce({
-      text: "I'll create that note.",
+      text: "I'll create that graph.",
       tool_calls: [{
-        name: "upsertNote",
+        name: "upsertIR",
         arguments: {
           entity: {
-            id: "new_note"
-            // Missing body
+            id: "new_ir",
+            meta: { name: "Test Shader" },
+            entryPoint: "main",
+            functions: []
+            // Missing version
           }
         }
       }]
     });
 
-    // Attempt 2: Corrected Entity
+    // Attempt 2: Corrected IR
     generateSpy.mockResolvedValueOnce({
-      text: "Sorry, I missed the body. Correcting now.",
+      text: "Sorry, I missed the version. Correcting now.",
       tool_calls: [{
-        name: "upsertNote",
+        name: "upsertIR",
         arguments: {
           entity: {
-            id: "new_note",
-            body: "This is the content.",
-            refs: []
+            id: "new_ir",
+            version: "3.0.0",
+            meta: { name: "Test Shader" },
+            entryPoint: "main",
+            functions: []
           }
         }
       }]
     });
 
     // 3. Trigger User Message
-    await chatHandler.handleUserMessage("Create a note");
+    await chatHandler.handleUserMessage("Create a shader graph");
 
     // 4. Verification
 
-    // Expect 2 calls to LLM (since we removed router, it goes straight to worker)
+    // Expect 2 calls to LLM
     expect(generateSpy).toHaveBeenCalledTimes(2);
 
     // Verify second call prompt (includes error)
     const lastCallArgs = generateSpy.mock.calls[generateSpy.mock.calls.length - 1];
     expect(lastCallArgs[0]).toContain("Tool execution failed");
-    expect(lastCallArgs[0]).toContain("body"); // Field name error
+    expect(lastCallArgs[0]).toContain("version"); // Field name error
 
-    // Verify final state (note exists)
-    const notes = Object.values(appState.database.notes);
-    expect(notes).toHaveLength(1);
-    expect(notes[0].body).toBe("This is the content.");
+    // Verify final state (IR updated)
+    const ir = appState.database.ir;
+    expect(ir).toBeDefined();
+    expect(ir.meta.name).toBe("Test Shader");
+    expect(ir.version).toBe("3.0.0");
   });
-
 });

@@ -22,22 +22,33 @@ describe('LLM Integration Flow', () => {
     runInAction(() => {
       historyManager.history.length = 0;
       historyManager.redoStack.length = 0;
-      appState.database.notes = {};
+      appState.database.ir = {
+        id: 'current-ir',
+        version: '3.0.0',
+        meta: { name: 'Initial IR' },
+        entryPoint: '',
+        inputs: [],
+        resources: [],
+        structs: [],
+        functions: []
+      };
       appState.database.chat_history = [];
     });
   });
 
-  it('should handle "upsertNote" tool call and update state', async () => {
+  it('should handle "upsertIR" tool call and update state', async () => {
     // 1. Mock LLM Response
     const response = {
-      text: "Sure, created a note.",
+      text: "Sure, created a shader graph.",
       tool_calls: [{
-        name: "upsertNote",
+        name: "upsertIR",
         arguments: {
           entity: {
-            id: "note_1",
-            body: "Meeting Notes\n- Action items",
-            refs: []
+            id: "ir_1",
+            version: "3.0.0",
+            meta: { name: "Blur Shader" },
+            entryPoint: "main",
+            functions: []
           }
         }
       }]
@@ -47,69 +58,69 @@ describe('LLM Integration Flow', () => {
     vi.spyOn(llmManager, 'generateResponse').mockResolvedValue(response);
 
     // 2. Simulate User Message
-    await chatHandler.handleUserMessage("Draft meeting notes");
+    await chatHandler.handleUserMessage("Create a blur shader");
 
     // 3. Assert State Change
-    const note = appState.database.notes["note_1"];
-    expect(note).toBeDefined();
-    expect(note.body).toBe("Meeting Notes\n- Action items");
+    const ir = appState.database.ir;
+    expect(ir).toBeDefined();
+    expect(ir.meta.name).toBe("Blur Shader");
+    expect(ir.id).toBe("ir_1");
 
     // 4. Assert History (Mutation Log)
-    // History contains chat logs too, so find the mutation
-    // Note: The description depends on how historyManager records it. Currently it might be generic.
-    const mutation = historyManager.history.find(h => h.description.toLowerCase().includes("note"));
+    const mutation = historyManager.history.find(h => h.description.toLowerCase().includes("ir"));
     expect(mutation).toBeDefined();
   });
 
   it('should undo mutation correctly', async () => {
     // Setup: Perform an action first
     const response = {
-      text: "Created note",
+      text: "Created graph",
       tool_calls: [{
-        name: "upsertNote",
+        name: "upsertIR",
         arguments: {
-          entity: { id: "note_undo", body: "Undo this note", refs: [] }
+          entity: { id: "ir_undo", version: "3.0.0", meta: { name: "Undo Me" }, entryPoint: "main", functions: [] }
         }
       }]
     };
 
     vi.spyOn(llmManager, 'generateResponse').mockResolvedValue(response);
 
-    await chatHandler.handleUserMessage("Make a note");
+    await chatHandler.handleUserMessage("Make a shader");
 
     // Verify it was added
-    expect(appState.database.notes["note_undo"]).toBeDefined();
+    expect(appState.database.ir.id).toBe("ir_undo");
 
     // Undo loop until we undo the mutation
     let undone = false;
     for (let i = 0; i < 5; i++) {
       historyManager.undo();
-      if (!appState.database.notes["note_undo"]) {
+      if (appState.database.ir.id !== "ir_undo") {
         undone = true;
         break;
       }
     }
 
-    // Verify it's gone
-    expect(appState.database.notes["note_undo"]).toBeUndefined();
+    // Verify it's back to initial (or at least not ir_undo)
+    expect(appState.database.ir.id).not.toBe("ir_undo");
+    expect(undone).toBe(true);
   });
 
-  it('should handle missing entity body gracefully (Regression)', async () => {
-    // 1. Inject malformed note directly into state (simulating some corruption or bad past state)
+  it('should handle missing entry point gracefully (Regression)', async () => {
+    // 1. Inject malformed IR directly into state
     runInAction(() => {
       // @ts-ignore
-      appState.database.notes['bad_note'] = {
-        id: 'bad_note',
-        // body is MISSING
-        created_at: 0
+      appState.database.ir = {
+        id: 'bad_ir',
+        version: '1.0',
+        meta: { name: 'Bad' },
+        // entryPoint is MISSING
       };
     });
 
-    // 2. Mock GenAI to avoid actual call/crash if it gets that far
+    // 2. Mock GenAI
     vi.spyOn(llmManager, 'generateResponse').mockResolvedValue({ text: "Error avoided" });
 
     // 2. Trigger Chat
-    // We expect this to succeed (handled gracefully), verifying prompts build correctly even with bad data
     await chatHandler.handleUserMessage("hi");
   });
 });
