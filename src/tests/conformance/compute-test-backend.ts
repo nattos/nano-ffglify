@@ -3,7 +3,7 @@ import { IRDocument, DataType, ResourceDef } from '../../ir/types';
 import { validateIR, inferFunctionTypes } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { InterpretedExecutor } from '../../interpreter/executor';
-import { getSharedDevice, gpuSemaphore } from './gpu-singleton';
+import { gpuSemaphore } from './gpu-singleton';
 import { TestBackend } from './types';
 import { WebGpuBackend } from './webgpu-backend';
 import { WgslGenerator } from '../../webgpu/wgsl-generator';
@@ -71,12 +71,7 @@ export const ComputeTestBackend: TestBackend = {
     const func = ir.functions.find(f => f.id === entryPoint);
     if (!func) throw new Error('Entry point not found');
 
-    if (func.type === 'cpu') {
-      const exec = new InterpretedExecutor(ctx);
-      ctx.pushFrame(entryPoint);
-      exec.executeFunction(func);
-      return;
-    }
+    // await gpuSemaphore.acquire();
 
     await gpuSemaphore.acquire();
     try {
@@ -231,7 +226,7 @@ export const ComputeTestBackend: TestBackend = {
         });
 
         const nodeTypes = inferFunctionTypes(func, ir);
-        const code = new WgslGenerator().compile(ir, entryPoint, {
+        const compilation = new WgslGenerator().compile(ir, entryPoint, {
           globalBufferBinding: 0,
           varMap: varMap,
           varTypes: varTypes,
@@ -240,6 +235,7 @@ export const ComputeTestBackend: TestBackend = {
           samplerBindings: genSamplerBindings,
           resourceDefs: resourceDefs
         });
+        const code = compilation.code;
 
         device.pushErrorScope('validation');
         const pipeline = await GpuCache.getComputePipeline(device, code);

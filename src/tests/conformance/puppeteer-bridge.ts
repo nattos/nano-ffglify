@@ -1,4 +1,5 @@
 import { InterpreterBackend } from './interpreter-backend';
+import { ComputeTestBackend } from './compute-test-backend';
 
 /**
  * Browser-side bridge for Puppeteer-based tests.
@@ -14,8 +15,8 @@ import { InterpreterBackend } from './interpreter-backend';
   throw new Error(message);
 };
 
-(window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any) => {
-  console.log('[Bridge] runGpuTest called with:', { entryPoint, inputsObj });
+(window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any, backendName: string = 'Compute') => {
+  console.log(`[Bridge] runGpuTest called with backend: ${backendName}`, { entryPoint, inputsObj });
 
   // Convert plain object inputs back to Map
   const inputsMap = new Map<string, any>();
@@ -25,7 +26,8 @@ import { InterpreterBackend } from './interpreter-backend';
     }
   }
 
-  const ctx = await InterpreterBackend.execute(ir, entryPoint, inputsMap);
+  const backend = backendName === 'Interpreter' ? InterpreterBackend : ComputeTestBackend;
+  const ctx = await backend.execute(ir, entryPoint, inputsMap);
 
   // Serialize context back to plain object
   // We only need the results (vars from the top frame) and resources for now

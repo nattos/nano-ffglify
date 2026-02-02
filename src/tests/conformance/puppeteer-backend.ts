@@ -53,11 +53,13 @@ export const PuppeteerBackend: TestBackend = {
     });
 
     // Run the test in the browser
+    const backendName = process.env.PUPPETEER_SUB_BACKEND || 'Compute';
     const results = await page.evaluate(
-      (ir, ep, inputs) => (window as any).runGpuTest(ir, ep, inputs),
+      (ir, ep, inputs, bName) => (window as any).runGpuTest(ir, ep, inputs, bName),
       ctx.ir,
       entryPoint,
-      inputsObj
+      inputsObj,
+      backendName
     ) as any;
 
     // Populate context with results

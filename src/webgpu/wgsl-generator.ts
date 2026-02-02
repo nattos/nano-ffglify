@@ -518,12 +518,26 @@ export class WgslGenerator {
       if (options.varMap?.has(varId)) {
         const idx = options.varMap.get(varId)!;
         const type = options.varTypes?.get(varId) || 'float';
+        const isMatrix = type.includes('x');
         const count = this.getComponentCount(type);
-        if (count === 1) lines.push(`  b_globals.data[${idx}] = ${valExpr};`);
-        else {
-          for (let i = 0; i < count; i++) lines.push(`  b_globals.data[${idx + i}] = ${valExpr}[${i}];`);
+
+        if (count === 1) {
+          lines.push(`  b_globals.data[${idx}] = ${valExpr};`);
+        } else if (isMatrix) {
+          const dims = type.includes('3x3') ? 3 : 4;
+          for (let c = 0; c < dims; c++) {
+            for (let r = 0; r < dims; r++) {
+              lines.push(`  b_globals.data[${idx + c * dims + r}] = ${valExpr}[${c}][${r}];`);
+            }
+          }
+        } else {
+          for (let i = 0; i < count; i++) {
+            lines.push(`  b_globals.data[${idx + i}] = ${valExpr}[${i}];`);
+          }
         }
-      } else if (func.localVars.some(v => v.id === varId)) lines.push(`  l_${varId} = ${valExpr};`);
+      } else if (func.localVars.some(v => v.id === varId)) {
+        lines.push(`  l_${varId} = ${valExpr};`);
+      }
     } else if (node.op === 'array_set' || node.op === 'vec_set_element') {
       const arr = this.resolveArg(node, 'array' in node ? 'array' : 'vec', func, options, ir, 'any', edges);
       const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
@@ -695,6 +709,11 @@ export class WgslGenerator {
         return `${node.op === 'float3x3' ? 'mat3x3<f32>' : 'mat4x4<f32>'}(${formatted.join(', ')})`;
       }
     }
+    if (node.op === 'mat_identity') {
+      const size = node['size'] || 4;
+      if (size === 3) return 'mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)';
+      return 'mat4x4<f32>(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)';
+    }
     if (node.op === 'static_cast_float') return `f32(${this.resolveArg(node, 'val', func, options, ir, 'float', edges)})`;
     if (node.op === 'static_cast_int') return `i32(${this.resolveArg(node, 'val', func, options, ir, 'int', edges)})`;
     if (node.op === 'struct_construct') {
@@ -818,7 +837,7 @@ export class WgslGenerator {
     return '0.0';
   }
 
-  private isMathOp(op: string) { return op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('quat_'); }
+  private isMathOp(op: string) { return op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('quat_') || op.startsWith('mat_'); }
 
   private compileMath(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, edges: Edge[]): string {
     const op = node.op;
@@ -840,7 +859,7 @@ export class WgslGenerator {
     // Core Arithmetic
     if (op === 'math_add') return `(${a()} + ${b()})`;
     if (op === 'math_sub') return `(${a()} - ${b()})`;
-    if (op === 'math_mul') return `(${a()} * ${b()})`;
+    if (op === 'math_mul' || op === 'mat_mul') return `(${a()} * ${b()})`;
     if (op === 'math_div') return `(${a()} / ${b()})`;
     if (op === 'math_mod') return `(${a()} % ${b()})`;
     if (op === 'math_neg') return `(-${val()})`;
