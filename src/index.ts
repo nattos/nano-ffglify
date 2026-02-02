@@ -13,6 +13,7 @@
  */
 import './views/components/ui-icon';
 import './views/components/ui-button';
+import './views/components/ui-ir-widget';
 
 import { MobxLitElement } from './views/mobx-lit-element';
 import { runInAction } from 'mobx';
@@ -277,6 +278,7 @@ export class App extends MobxLitElement {
           <div class="tabs">
             <div class="tab ${local.settings.activeTab === 'state' ? 'active' : ''}" @click=${() => appController.setActiveTab('state')}>State</div>
             <div class="tab ${local.settings.activeTab === 'logs' ? 'active' : ''}" @click=${() => appController.setActiveTab('logs')}>LLM Logs</div>
+            <div class="tab ${local.settings.activeTab === 'ir' ? 'active' : ''}" @click=${() => appController.setActiveTab('ir')}>IR Code</div>
             <div class="tab ${local.settings.activeTab === 'script' ? 'active' : ''}" @click=${() => appController.setActiveTab('script')}>Script</div>
             <div class="tab ${local.settings.activeTab === 'results' ? 'active' : ''}" @click=${() => appController.setActiveTab('results')}>Results</div>
           </div>
@@ -304,6 +306,10 @@ export class App extends MobxLitElement {
             <h3>App State JSON</h3>
             <pre>${JSON.stringify(displayState, null, 2)}</pre>
           </div>
+        ` : ''}
+
+        ${local.settings.activeTab === 'ir' ? html`
+          <ui-ir-widget .ir=${database.ir}></ui-ir-widget>
         ` : ''}
 
         ${local.settings.activeTab === 'logs' ? html`
