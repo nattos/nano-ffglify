@@ -293,13 +293,50 @@ export class WgslGenerator {
 
         const wrap = def.sampler?.wrap || 'clamp';
         const filter = def.sampler?.filter || 'nearest';
+        const isLinear = filter === 'linear';
 
         lines.push(`fn sample_${id}(uv: vec2<f32>) -> vec4<f32> {`);
-        lines.push(`  let size = vec2<f32>(textureDimensions(${id}${isStorage ? "" : ", 0u"}));`);
-        lines.push(`  let uv_wrap = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));`);
-        lines.push(`  let coord = vec2<i32>(floor(uv_wrap * size));`);
-        lines.push(`  let safe_coord = clamp(coord, vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));`);
-        lines.push(`  return textureLoad(${id}, safe_coord${isStorage ? "" : ", 0u"});`);
+        lines.push(`  let size_f = vec2<f32>(textureDimensions(${id}${isStorage ? "" : ", 0u"}));`);
+        lines.push(`  let size_i = vec2<i32>(size_f);`);
+
+        // Wrap Logic
+        if (wrap === 'repeat') {
+          lines.push(`  let p = fract(uv);`);
+        } else if (wrap === 'mirror') {
+          lines.push(`  let p = 1.0 - abs(fract(uv * 0.5) * 2.0 - 1.0);`);
+        } else {
+          lines.push(`  let p = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));`);
+        }
+
+        if (isLinear) {
+          lines.push(`  let pixel_coords = p * size_f - 0.5;`);
+          lines.push(`  let base = vec2<i32>(floor(pixel_coords));`);
+          lines.push(`  let f = pixel_coords - vec2<f32>(base);`);
+
+          // Sample 4 points
+          const sample = (ox: number, oy: number) => {
+            const coord = ox === 0 && oy === 0 ? "base" : `base + vec2<i32>(${ox}, ${oy})`;
+            if (wrap === 'repeat') {
+              return `textureLoad(${id}, (${coord} % size_i + size_i) % size_i${isStorage ? "" : ", 0u"})`;
+            } else {
+              return `textureLoad(${id}, clamp(${coord}, vec2<i32>(0), size_i - 1)${isStorage ? "" : ", 0u"})`;
+            }
+          };
+
+          lines.push(`  let c00 = ${sample(0, 0)};`);
+          lines.push(`  let c10 = ${sample(1, 0)};`);
+          lines.push(`  let c01 = ${sample(0, 1)};`);
+          lines.push(`  let c11 = ${sample(1, 1)};`);
+          lines.push(`  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);`);
+        } else {
+          lines.push(`  let coord = vec2<i32>(floor(p * size_f));`);
+          if (wrap === 'repeat') {
+            lines.push(`  let sc = (coord % size_i + size_i) % size_i;`);
+          } else {
+            lines.push(`  let sc = clamp(coord, vec2<i32>(0), size_i - 1);`);
+          }
+          lines.push(`  return textureLoad(${id}, sc${isStorage ? "" : ", 0u"});`);
+        }
         lines.push(`}`);
         lines.push('');
       }

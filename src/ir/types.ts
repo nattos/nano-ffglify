@@ -404,7 +404,7 @@ export type BuiltinOp =
   | 'buffer_store' // { buffer: string, index: int, value: T } -> void
 
   // Textures:
-  | 'texture_sample' // { texture: string, uv: float2 } -> float4
+  | 'texture_sample' // { texture: string, uv: float2 } -> float4. NOTE: Emulated via manual bilinear/wrap logic in WGSL for universal compatibility with storage textures.
   | 'texture_load'   // { texture: string, coords: int2 } -> float4
   | 'texture_store'  // { texture: string, coords: int2, value: float4 } -> void
 
