@@ -53,6 +53,8 @@ function validateField(value: any, schema: FieldSchema, path: string, errors: Va
     if (typeof value !== schema.type) {
       if (schema.type === 'number' && typeof value === 'string' && !isNaN(Number(value))) {
         // Acceptable coercion
+      } else if (schema.type === 'number' && Array.isArray(value)) {
+        // Acceptable for vector sizes [w, h]
       } else {
         errors.push({ field: path, message: `Expected ${schema.type} at '${path}', got ${typeof value}`, severity: 'error' });
       }

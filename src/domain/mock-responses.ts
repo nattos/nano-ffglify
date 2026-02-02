@@ -22,7 +22,7 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
           entryPoint: 'fn_main_cpu',
           inputs: [
             { id: 't_input', type: 'texture2d', format: 'rgba8', comment: 'Source image for blur' },
-            { id: 'u_kernel_size', type: 'int', default: "16" }
+            { id: 'u_kernel_size', type: 'int', default: '16', comment: 'Size of the blur kernel' }
           ],
           structs: [],
           resources: [
@@ -31,13 +31,12 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
               type: 'texture2d',
               format: 'rgba8',
               size: { mode: 'reference', ref: 't_input' },
-              persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false },
-              comment: 'Blurred result texture'
+              persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
             },
             {
               id: 'b_weights',
               type: 'buffer',
-              dataType: 'float',
+              dataType: 'float4',
               size: { mode: 'cpu_driven' },
               persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
             }
@@ -52,8 +51,24 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
               localVars: [],
               nodes: [
                 { id: 'resize_w', op: 'cmd_resize_resource', resource: 'b_weights', size: 'u_kernel_size' },
-                { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [4, 1, 1], comment: 'Generate weights in parallel', exec_in: 'resize_w' },
-                { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1], exec_in: 'cmd_gen' }
+                { id: 'cmd_init', op: 'cmd_dispatch', func: 'fn_init_input', dispatch: [4, 4, 1], exec_in: 'resize_w' },
+                { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [4, 1, 1], comment: 'Generate weights in parallel', exec_in: 'cmd_init' },
+                { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1], u_kernel_size: 'u_kernel_size', exec_in: 'cmd_gen' }
+              ]
+            },
+            {
+              id: 'fn_init_input',
+              type: 'shader',
+              inputs: [],
+              outputs: [],
+              localVars: [],
+              nodes: [
+                { id: 'th_id', op: 'builtin_get', name: 'global_invocation_id' },
+                { id: 'x', op: 'vec_get_element', vec: 'th_id', index: 0 },
+                { id: 'y', op: 'vec_get_element', vec: 'th_id', index: 1 },
+                { id: 'coords', op: 'float2', x: 'x', y: 'y' },
+                { id: 'white', op: 'float4', x: 1, y: 1, z: 1, w: 1 },
+                { id: 'store', op: 'texture_store', tex: 't_input', coords: 'coords', value: 'white' }
               ]
             },
             {
@@ -65,24 +80,31 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
               nodes: [
                 { id: 'th_id', op: 'builtin_get', name: 'global_invocation_id' },
                 { id: 'idx', op: 'vec_get_element', vec: 'th_id', index: 0 },
-                { id: 'val', op: 'math_mul', a: 'idx', b: 10 },
-                { id: 'store', op: 'buffer_store', buffer: 'b_weights', index: 'idx', value: 'val' }
+                { id: 'val', op: 'math_mul', a: 'idx', b: 0.1 },
+                { id: 'v_val', op: 'float4', x: 'val', y: 'val', z: 'val', w: 'val' },
+                { id: 'store', op: 'buffer_store', buffer: 'b_weights', index: 'idx', value: 'v_val' }
               ]
             },
             {
               id: 'fn_blur',
               type: 'shader',
-              inputs: [],
+              inputs: [{ id: 'u_kernel_size', type: 'int' }],
               outputs: [],
-              localVars: [],
+              localVars: [{ id: 'v_color', type: 'float4', initialValue: [0, 0, 0, 0] }],
               nodes: [
                 { id: 'th_id', op: 'builtin_get', name: 'global_invocation_id' },
                 { id: 'x', op: 'vec_get_element', vec: 'th_id', index: 0 },
                 { id: 'y', op: 'vec_get_element', vec: 'th_id', index: 1 },
                 { id: 'coords', op: 'float2', x: 'x', y: 'y' },
-                { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 2 },
-                { id: 'color', op: 'float4', x: 'w_val', y: 0, z: 0, w: 1 },
-                { id: 'store', op: 'texture_store', tex: 't_output', coords: 'coords', value: 'color' }
+                { id: 'loop', op: 'flow_loop', start: 0, end: 'u_kernel_size', exec_body: 'set', exec_completed: 'store' },
+                { id: 'idx', op: 'loop_index', loop: 'loop' },
+                { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 'idx' },
+                { id: 'tex_val', op: 'texture_sample', tex: 't_input', uv: [0.5, 0.5] },
+                { id: 'prev', op: 'var_get', var: 'v_color' },
+                { id: 'new_val', op: 'math_mad', a: 'tex_val', b: 'w_val', c: 'prev' },
+                { id: 'set', op: 'var_set', var: 'v_color', val: 'new_val' },
+                { id: 'final_color', op: 'var_get', var: 'v_color' },
+                { id: 'store', op: 'texture_store', tex: 't_output', coords: 'coords', value: 'final_color' }
               ]
             }
           ]
