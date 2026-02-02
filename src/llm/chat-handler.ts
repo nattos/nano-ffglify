@@ -98,11 +98,14 @@ export class ChatHandler {
       case 'upsertEntity': {
         const cleanArgs = DateUtils.restoreTimestamps(effectiveArgs, new Date());
 
-        // Validate before mutating state
+        // Validate before mutating state.
+        // NOTE: This check (via validateEntity) only enforces structural/schema integrity.
+        // Logic errors (e.g. invalid node connections) are allowed to be saved and are
+        // surfaced later via the Diagnostics UI/context.
         const validationErrors = validateEntity(cleanArgs.entity, cleanArgs.entity_type, this.appState.database);
         if (validationErrors.length > 0) {
           const errorMsg = validationErrors.map(e => `${e.field}: ${e.message}`).join(', ');
-          return { success: false, message: `Validation Failed: ${errorMsg}` };
+          return { success: false, message: `Validation Failed (Structural): ${errorMsg}` };
         }
 
         const upsertRes = this.entityManager.upsertEntity(cleanArgs);

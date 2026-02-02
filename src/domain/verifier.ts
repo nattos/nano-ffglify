@@ -1,13 +1,19 @@
 /**
  * @file verifier.ts
- * @description Provides runtime validation for entities against the database state.
- * Ensured referential integrity (e.g., that referenced IDs actually exist).
+ * @description Provides structural validation for entities against the IRSchema.
+ * This ensures that data saved to the database matches the expected JSON structure.
+ *
+ * @policy "Allow Logic Mistakes"
+ * We do NOT perform full IR logic validation (e.g., node existence, type matching) here.
+ * The agent is allowed to make mistakes in the shader graph logic. These errors are
+ * detected during the separate "Validate IR" or "Compile IR" steps in the UI and
+ * provided back to the agent in the conversation context.
  *
  * @external-interactions
- * - Called by `chat-handler.ts` before executing `upsertEntity` to prevent invalid data corruption.
+ * - Called by `chat-handler.ts` before executing `upsertEntity` to prevent malformed data.
  *
  * @pitfalls
- * - Currently manual; ideally should derive validation rules directly from `schemas.ts` to avoid duplication.
+ * - Structural validation only. Does not guarantee a compilable shader.
  */
 import { ALL_SCHEMAS, DatabaseState, ValidationError, IRDocument } from './types';
 import { DeepPartial } from '../utils/utils';
