@@ -136,7 +136,12 @@ const analyzeNode = (
 
   if (hasOutput) {
     const refId = getLocalRefId(node.id);
-    parts.push({ type: 'ref', text: node.id, refId: refId, dataType: inferredTypes.get(node.id) });
+    const type = inferredTypes.get(node.id);
+    parts.push({ type: 'ref', text: node.id, refId: refId, dataType: type });
+    if (type) {
+      parts.push({ type: 'separator', text: ': ' });
+      parts.push({ type: 'type', text: type });
+    }
     parts.push({ type: 'separator', text: ' = ' });
   }
 

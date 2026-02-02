@@ -21,15 +21,28 @@ export interface OpSignature {
 
 const genMathVariants = (op: BuiltinOp, returnType: 'same' | 'boolean_vec'): OpSignature[] => {
   const types: ValidationType[] = ['float', 'float2', 'float3', 'float4'];
-  return types.map(t => {
+  const variants: OpSignature[] = [];
+
+  // Standard (T, T) -> T (or bvec/bool)
+  types.forEach(t => {
     let out = t;
     if (returnType === 'boolean_vec') {
-      // Scalar -> boolean
-      // Vector -> Vector (of 0.0/1.0)
       out = (t === 'float') ? 'boolean' : t;
     }
-    return { inputs: { a: t, b: t }, output: out };
+    variants.push({ inputs: { a: t, b: t }, output: out });
   });
+
+  // Broadcasting (vecN, float) -> vecN and (float, vecN) -> vecN
+  // Only for non-boolean returns
+  if (returnType === 'same') {
+    ['float2', 'float3', 'float4'].forEach(t => {
+      const vt = t as ValidationType;
+      variants.push({ inputs: { a: vt, b: 'float' }, output: vt });
+      variants.push({ inputs: { a: 'float', b: vt }, output: vt });
+    });
+  }
+
+  return variants;
 };
 
 const genUnaryVariants = (op: BuiltinOp, returnType: 'same' | 'boolean_vec'): OpSignature[] => {

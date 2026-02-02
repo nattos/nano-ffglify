@@ -62,6 +62,11 @@ describe('IR Analyzer', () => {
     expect(result.refs.get('fn_main:v_local')).toContain('n3');
     // Check if node 'n1' is referenced in 'n2'
     expect(result.refs.get('fn_main:n1')).toContain('n2');
+
+    // Verify inline type for n1
+    const n1Line = result.lines.find(l => l.nodeId === 'n1');
+    expect(n1Line?.parts.some(p => p.type === 'type' && p.text === 'float')).toBe(true);
+    expect(n1Line?.parts.some(p => p.text === ': ')).toBe(true);
   });
 
   it('should handle indentation for loops', () => {
