@@ -20,7 +20,7 @@ export interface OpSignature {
 }
 
 const genMathVariants = (op: BuiltinOp, returnType: 'same' | 'boolean_vec'): OpSignature[] => {
-  const types: ValidationType[] = ['float', 'float2', 'float3', 'float4'];
+  const types: ValidationType[] = ['float', 'float2', 'float3', 'float4', 'int'];
   const variants: OpSignature[] = [];
 
   // Standard (T, T) -> T (or bvec/bool)
@@ -40,13 +40,15 @@ const genMathVariants = (op: BuiltinOp, returnType: 'same' | 'boolean_vec'): OpS
       variants.push({ inputs: { a: vt, b: 'float' }, output: vt });
       variants.push({ inputs: { a: 'float', b: vt }, output: vt });
     });
+    // Add (int, int) -> int explicitly if not already covered by genType loop
+    // It's covered above by adding 'int' to types array.
   }
 
   return variants;
 };
 
 const genUnaryVariants = (op: BuiltinOp, returnType: 'same' | 'boolean_vec'): OpSignature[] => {
-  const types: ValidationType[] = ['float', 'float2', 'float3', 'float4'];
+  const types: ValidationType[] = ['float', 'float2', 'float3', 'float4', 'int'];
   return types.map(t => {
     let out = t;
     if (returnType === 'boolean_vec') {
@@ -211,5 +213,11 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   'buffer_store': [{ inputs: { buffer: 'string', index: 'int', value: 'any' }, output: 'any' }],
   'var_set': [{ inputs: { var: 'string', val: 'any' }, output: 'any' }],
   'var_get': [{ inputs: { var: 'string' }, output: 'any' }],
-  'loop_index': [{ inputs: { loop: 'string' }, output: 'int' }]
+  'loop_index': [{ inputs: { loop: 'string' }, output: 'int' }],
+  'builtin_get': [
+    { inputs: { name: 'string' }, output: 'float3' }, // global_invocation_id, local_invocation_id, workgroup_id, num_workgroups
+    { inputs: { name: 'string' }, output: 'int' },    // local_invocation_index, vertex_index, instance_index
+    { inputs: { name: 'string' }, output: 'float4' }, // frag_coord
+    { inputs: { name: 'string' }, output: 'boolean' } // front_facing
+  ]
 };

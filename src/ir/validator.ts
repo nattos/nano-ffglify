@@ -219,6 +219,25 @@ const resolveNodeType = (
       return inputTypes['val'];
     }
 
+    if (node.op === 'var_get') {
+      const varId = node['var'];
+      const localVar = func.localVars.find(v => v.id === varId);
+      const globalVar = doc.inputs.find(i => i.id === varId);
+      const type = localVar?.type || globalVar?.type || 'float';
+      const vType = type === 'f32' ? 'float' : (type === 'i32' || type === 'int' ? 'int' : type as ValidationType);
+      cache.set(nodeId, vType);
+      return vType;
+    }
+
+    if (node.op === 'buffer_load') {
+      const resId = node['buffer'];
+      const resDef = doc.resources.find(r => r.id === resId);
+      const type = resDef?.dataType || 'float';
+      const vType = type === 'f32' ? 'float' : (type === 'i32' || type === 'int' ? 'int' : type as ValidationType);
+      cache.set(nodeId, vType);
+      return vType;
+    }
+
     // Vec Swizzle Logic
     if (node.op === 'vec_swizzle') {
       const inputType = inputTypes['vec'];
