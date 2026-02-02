@@ -15,11 +15,18 @@ import { RuntimeGlobals } from './host-interface';
 export class CpuJitCompiler {
   private ir?: IRDocument;
 
-  /**
-   * Compiles an IR function (and its dependencies) into a native JS function.
-   * Signature: (resources, inputs, globals, variables) => Promise<RuntimeValue>
-   */
   compile(ir: IRDocument, entryPointId: string): Function {
+    const body = this.compileToSource(ir, entryPointId);
+    try {
+      const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
+      return new AsyncFunction('resources', 'inputs', 'globals', 'variables', body);
+    } catch (e) {
+      console.error("JIT Compilation Failed:\n", body);
+      throw e;
+    }
+  }
+
+  compileToSource(ir: IRDocument, entryPointId: string): string {
     this.ir = ir;
     const allFunctions = ir.functions;
     const func = allFunctions.find((f: any) => f.id === entryPointId);
@@ -83,14 +90,7 @@ export class CpuJitCompiler {
     }
     lines.push(`return await ${funcName(func.id)}(entryInputs);`);
 
-    const body = lines.join('\n');
-    try {
-      const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
-      return new AsyncFunction('resources', 'inputs', 'globals', 'variables', body);
-    } catch (e) {
-      console.error("JIT Compilation Failed:\n", body);
-      throw e;
-    }
+    return lines.join('\n');
   }
 
   private emitIntrinsicHelpers(lines: string[]) {

@@ -20,50 +20,41 @@ export class PromptBuilder {
     // Define Few-Shot Examples
     const EXAMPLES = `
 EXAMPLES:
-1. User: "Make a note to buy milk."
+1. User: "Create a simple triangle shader."
    Assistant Tool Call: {
-     "name": "upsertNote",
-     "arguments": {
-       "entity": { "body": "Buy Milk" }
-     }
-   }
-
-2. User: "Add eggs to that note."
-   Assistant Tool Call: {
-     "name": "upsertNote",
+     "name": "upsertIR",
      "arguments": {
        "entity": {
-         "id": "existing_note_id",
-         "body": "Buy Milk\n- Eggs"
+         "meta": { "name": "Triangle" },
+         "functions": [
+           { "id": "main", "type": "shader", "nodes": [...], "edges": [...] }
+         ]
        }
      }
    }
 
-3. User: "Link the grocery note to the recipe note."
+2. User: "Update the kernel size to 32."
    Assistant Tool Call: {
-     "name": "patchNote",
+     "name": "patchIR",
      "arguments": {
-       "entity_id": "grocery_note_id",
-       "patches": [{ "op": "add", "path": "/refs/-", "value": "recipe_note_id" }]
+       "id": "current-ir",
+       "patches": [{ "op": "replace", "path": "/inputs/1/default", "value": "32" }]
      }
    }
 `;
 
     // 3. Construct System Prompt
-    return `You are the Notes Assistant.
+    return `You are the WebGPU IR Assistant.
       Current Date: ${new Date().toISOString().split('T')[0]}
 
 ${EXAMPLES}
 
     INSTRUCTIONS:
-1. Analyze the user's request and the current state.
-2. Use 'upsertNote' to create or update notes.
-   - IDs are optional for creation.
-3. Use 'patchNote' for small updates like adding references.
+1. Analyze the user's request and the current IR state.
+2. Use 'upsertIR' to create or update the shader graph.
+3. Use 'patchIR' for small updates like changing defaults or adding nodes/edges.
    - Use JSON Patch format(op: "replace", "add", "remove").
-   - To add a ref: op: "add", path: "/refs/-", value: "target_id"
-4. Search context is provided.
-5. When you are done, call 'final_response' with a natural language summary.
+4. When you are done, call 'final_response' with a natural language summary.
 `;
   }
 
@@ -75,19 +66,14 @@ ${EXAMPLES}
 
     // Serialize state to JSON
     const cleanState = {
-      notes: Object.values(state.notes || {}).map((n: any) => ({
-        id: n.id,
-        body: n.body,
-        refs: n.refs,
-        updated_at: n.updated_at
-      }))
+      ir: state.ir
     };
 
     // Format History
     const historyText = history.slice(-10).map(m => {
       if (m.type === 'entity_update') {
         const { entityType, entity } = m.data || {};
-        const label = entity?.body?.substring(0, 20) || entity?.id || 'Unknown';
+        const label = entity?.meta?.name || entity?.id || 'Unknown';
         return `[SYSTEM UPDATE] ${entityType} '${label}'... (${entity?.id}) was modified.`;
       }
       const role = m.role.charAt(0).toUpperCase() + m.role.slice(1);

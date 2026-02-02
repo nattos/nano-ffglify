@@ -47,7 +47,9 @@ export class AppState {
       activeRewindId: null,
       selectedEntity: undefined,
       selectionHistory: [],
-      selectionFuture: []
+      selectionFuture: [],
+      validationErrors: [],
+      compilationResult: undefined
     } as any);
 
     makeObservable(this, {

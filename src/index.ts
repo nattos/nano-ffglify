@@ -227,12 +227,18 @@ export class App extends MobxLitElement {
 
     return html`
       <div class="header">
-        <div class="title">Brunch & Bloom</div>
+        <div class="title">Nano FFGLify</div>
         <div class="controls">
           <div class="tabs">
             <div class="tab ${local.settings.activeTab === 'state' ? 'active' : ''}" @click=${() => appController.setActiveTab('state')}>State</div>
             <div class="tab ${local.settings.activeTab === 'logs' ? 'active' : ''}" @click=${() => appController.setActiveTab('logs')}>LLM Logs</div>
             <div class="tab ${local.settings.activeTab === 'script' ? 'active' : ''}" @click=${() => appController.setActiveTab('script')}>Script</div>
+            <div class="tab ${local.settings.activeTab === 'results' ? 'active' : ''}" @click=${() => appController.setActiveTab('results')}>Results</div>
+          </div>
+          <div class="divider" style="width: 1px; background: #ccc; margin: 0 0.5rem;"></div>
+          <div class="actions" style="display: flex; gap: 0.5rem;">
+            <ui-button @click=${() => appController.validateCurrentIR()}>Validate</ui-button>
+            <ui-button @click=${() => appController.compileCurrentIR()}>Compile</ui-button>
           </div>
           <div class="divider" style="width: 1px; background: #ccc; margin: 0 0.5rem;"></div>
           <ui-button
@@ -312,6 +318,39 @@ export class App extends MobxLitElement {
               ` : ''}
             ` : ''}
 
+          </div>
+        ` : ''}
+
+        ${local.settings.activeTab === 'results' ? html`
+          <div class="debug-panel">
+            <h3>IR Validation Errors</h3>
+            ${local.validationErrors.length === 0 ? html`<p>No errors found.</p>` : html`
+              <div class="errors-list">
+                ${local.validationErrors.map(err => html`
+                  <div class="error-item" style="color: ${err.severity === 'error' ? 'red' : 'orange'}; margin-bottom: 0.5rem;">
+                    [${err.severity.toUpperCase()}] ${err.nodeId ? html`Node <strong>${err.nodeId}</strong>: ` : ''} ${err.message}
+                  </div>
+                `)}
+              </div>
+            `}
+
+            <hr/>
+
+            <h3>Compilation Results</h3>
+            ${!local.compilationResult ? html`<p>Not compiled yet.</p>` : html`
+              <div class="compilation-results">
+                <h4>JavaScript (CPU Host)</h4>
+                <pre style="background: #f8f8f8; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.js}</pre>
+
+                <h4>WGSL (GPU Shaders)</h4>
+                ${Object.entries(local.compilationResult.wgsl).map(([id, code]) => html`
+                  <div class="wgsl-block">
+                    <h5>Function: ${id}</h5>
+                    <pre style="background: #f0f0f0; padding: 0.5rem; overflow: auto; max-height: 300px;">${code}</pre>
+                  </div>
+                `)}
+              </div>
+            `}
           </div>
         ` : ''}
       </div>

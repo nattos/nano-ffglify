@@ -70,7 +70,7 @@ export class GoogleGenAIManager implements LLMManager {
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          entity_type: { type: SchemaType.STRING, enum: ["Note"], format: "enum" as any },
+          entity_type: { type: SchemaType.STRING, enum: ["IR"], format: "enum" as any },
           entity_id: { type: SchemaType.STRING }
         },
         required: ["entity_type", "entity_id"]
@@ -156,7 +156,7 @@ export class GoogleGenAIManager implements LLMManager {
         const chat = this.model.startChat({
           history: systemInstruction ? [
             { role: "user", parts: [{ text: systemInstruction }] },
-            { role: "model", parts: [{ text: "Understood. I am Brunch & Bloom, your culinary assistant." }] }
+            { role: "model", parts: [{ text: "Understood. I am the WebGPU IR Assistant." }] }
           ] : []
         });
 

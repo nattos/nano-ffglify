@@ -9,7 +9,7 @@
  * @pitfalls
  * - Currently manual; ideally should derive validation rules directly from `schemas.ts` to avoid duplication.
  */
-import { ALL_SCHEMAS, DatabaseState, Note, ValidationError } from './types';
+import { ALL_SCHEMAS, DatabaseState, ValidationError, IRDocument } from './types';
 import { DeepPartial } from '../utils/utils';
 import { FieldSchema } from './schemas';
 
@@ -82,27 +82,14 @@ export function validateEntity(
 
   // 2. Custom Logic / Cross-Entity Validation
   switch (type) {
-    case 'Note':
-      validateNote(entity as DeepPartial<Note>, state, errors);
+    case 'IR':
+      validateIR(entity as DeepPartial<IRDocument>, state, errors);
       break;
   }
 
   return errors;
 }
 
-function validateNote(note: DeepPartial<Note>, state: DatabaseState, errors: ValidationError[]) {
-  // Validate Foreign Keys in 'refs'
-  if (note.refs && Array.isArray(note.refs)) {
-    note.refs.forEach((refId, idx) => {
-      if (typeof refId === 'string') {
-        if (!state.notes[refId]) {
-          errors.push({
-            field: `refs[${idx}]`,
-            message: `Referenced Note ID "${refId}" does not exist.`,
-            severity: 'warning' // Warning because maybe we haven't synced yet, or creating circular ref?
-          });
-        }
-      }
-    });
-  }
+function validateIR(ir: DeepPartial<IRDocument>, state: DatabaseState, errors: ValidationError[]) {
+  // Placeholder for IR-specific cross-entity or complex validation
 }

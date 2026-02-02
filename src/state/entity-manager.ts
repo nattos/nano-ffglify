@@ -22,8 +22,8 @@ import {
   PatchEntityRequest,
   MutationResult
 } from './entity-api';
-import { Note } from '../domain/types';
 import { validateEntity } from '../domain/verifier';
+import { IRDocument } from '../ir/types';
 
 export class EntityManager {
   constructor(
@@ -31,29 +31,24 @@ export class EntityManager {
     private controller: AppController
   ) { }
 
-  public upsertEntity(request: UpsertEntityRequest<Note>): EntityResponse {
+  public upsertEntity(request: UpsertEntityRequest<any>): EntityResponse {
     const { entity_type, entity } = request;
-    const id = entity.id || crypto.randomUUID();
+    const id = entity.id || 'current-ir';
 
-    if (entity_type !== 'Note') {
-      return { success: false, message: "Only Notes are supported" };
+    if (entity_type !== 'IR') {
+      return { success: false, message: "Only IR is supported" };
     }
 
     // 1. Resolve Existing
-    let existing: any = toJS(this.appState.database.notes[id] || {});
-    const exists = !!existing.id;
+    const existing: any = toJS(this.appState.database.ir || {});
+    const exists = existing.id === id;
 
     // 2. Propose Merge
-    const timestamp = Date.now();
-    const merged: Note = {
+    const merged: IRDocument & { id: string } = {
       ...existing,
       ...entity,
-      id,
-      updated_at: timestamp,
-      created_at: existing.created_at || timestamp,
-      refs: entity.refs || existing.refs || [],
-      body: entity.body || existing.body || ""
-    } as Note;
+      id
+    };
 
     // 3. Verify Merged State
     const errors = validateEntity(merged as any, entity_type, this.appState.database);
@@ -64,13 +59,13 @@ export class EntityManager {
 
     // 4. Record History & Apply
     const operation = exists ? 'updated' : 'created';
-    this.controller.mutate(`${operation} Note`, 'llm', (database) => {
-      database.notes[id] = merged;
+    this.controller.mutate(`${operation} ${entity_type}`, 'llm', (database) => {
+      database.ir = merged;
     });
 
     return {
       success: true,
-      message: `Note ${operation}`,
+      message: `${entity_type} ${operation}`,
       data: {
         entity_id: id,
         operation
@@ -79,30 +74,29 @@ export class EntityManager {
   }
 
   public deleteEntity(request: DeleteEntityRequest): EntityResponse {
-    if (request.entity_type !== 'Note') return { success: false, message: "Invalid type" };
+    if (request.entity_type !== 'IR') return { success: false, message: "Invalid type" };
 
-    this.controller.mutate(`Delete Note`, 'llm', (database) => {
-      delete database.notes[request.entity_id];
+    this.controller.mutate(`Delete ${request.entity_type}`, 'llm', (database) => {
+      // For IR, we might want to reset to initial instead of deleting
+      database.ir = { id: 'current-ir', version: '1.0', meta: { name: 'Empty IR' }, entryPoint: '', inputs: [], resources: [], structs: [], functions: [] };
     });
-    return { success: true, message: "Deleted" };
+    return { success: true, message: "Reset IR" };
   }
 
 
   public patchEntity(request: PatchEntityRequest): EntityResponse {
     const { entity_type, entity_id, patches } = request;
-    if (entity_type !== 'Note') return { success: false, message: "Invalid type" };
+    if (entity_type !== 'IR') return { success: false, message: "Invalid type" };
 
-    const existing = this.appState.database.notes[entity_id];
-    if (!existing) return { success: false, message: "Note not found" };
+    const existing = this.appState.database.ir;
+    if (!existing) return { success: false, message: "IR not found" };
 
-    this.controller.mutate(`Patch Note`, 'llm', (database) => {
-      const target = database.notes[entity_id];
+    this.controller.mutate(`Patch ${entity_type}`, 'llm', (database) => {
+      const target = database.ir;
       if (!target) return;
 
-      // fast-json-patch mutates the target in place
       try {
         applyPatch(target, patches as any);
-        target.updated_at = Date.now();
       } catch (e: any) {
         console.error("Patch Failed:", e);
       }
@@ -119,7 +113,7 @@ export class EntityManager {
   }
 
   public getCollectionName(type: string): string {
-    return 'notes'; // Simple mapping
+    return 'ir';
   }
 }
 

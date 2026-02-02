@@ -13,7 +13,7 @@ export interface EntityResponse {
 // If valid, it's merged into the state.
 export interface UpsertEntityRequest<T extends BaseEntity> {
   // Discriminator to know which collection to update
-  entity_type: 'Note';
+  entity_type: 'IR';
 
   // The payload.
   // - If `id` is present and matches existing, it's an UPDATE.
@@ -22,7 +22,7 @@ export interface UpsertEntityRequest<T extends BaseEntity> {
 }
 
 export interface DeleteEntityRequest {
-  entity_type: 'Note';
+  entity_type: 'IR';
   entity_id: string;
   reason?: string; // For audit logs
 }
@@ -34,7 +34,7 @@ export interface PatchOperation {
 }
 
 export interface PatchEntityRequest {
-  entity_type: 'Note';
+  entity_type: 'IR';
   entity_id: string;
   patches: PatchOperation[];
 }

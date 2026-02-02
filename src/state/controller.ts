@@ -14,12 +14,15 @@
  */
 import { runInAction, toJS } from 'mobx';
 import { appState } from '../domain/state';
-import { ChatMsg, LLMLogEntry } from '../domain/types';
+import { ChatMsg, LLMLogEntry, IRDocument } from '../domain/types';
 import { historyManager } from './history';
 import { settingsManager } from './settings';
+import { validateIR } from '../ir/validator';
+import { CpuJitCompiler } from '../webgpu/cpu-jit';
+import { WgslGenerator } from '../webgpu/wgsl-generator';
 
 export class AppController {
-  public setActiveTab(tab: 'state' | 'logs' | 'script') {
+  public setActiveTab(tab: 'state' | 'logs' | 'script' | 'results') {
     runInAction(() => {
       appState.local.settings.activeTab = tab;
     });
@@ -83,7 +86,7 @@ export class AppController {
     });
   }
 
-  public setSelectedEntity(id: string | null, type?: 'Note') {
+  public setSelectedEntity(id: string | null, type?: 'IR') {
     // Standard select resets history (Breadcrumbs)
     runInAction(() => {
       appState.local.selectionHistory = [];
@@ -96,7 +99,7 @@ export class AppController {
     });
   }
 
-  public drillDown(id: string, type: 'Note') {
+  public drillDown(id: string, type: 'IR') {
     runInAction(() => {
       if (appState.local.selectedEntity) {
         // Push current to history
@@ -106,6 +109,38 @@ export class AppController {
       }
       appState.local.selectedEntity = { id, type };
     });
+  }
+
+  public validateCurrentIR() {
+    const ir = appState.database.ir;
+    const errors = validateIR(ir);
+    runInAction(() => {
+      appState.local.validationErrors = errors;
+    });
+  }
+
+  public compileCurrentIR() {
+    const ir = appState.database.ir;
+    const cpuJit = new CpuJitCompiler();
+    const wgslGen = new WgslGenerator();
+
+    try {
+      const js = cpuJit.compileToSource(ir, ir.entryPoint);
+      const wgsl: Record<string, string> = {};
+
+      ir.functions.forEach(f => {
+        if (f.type === 'shader') {
+          wgsl[f.id] = wgslGen.compile(ir, f.id);
+        }
+      });
+
+      runInAction(() => {
+        appState.local.compilationResult = { js, wgsl };
+      });
+    } catch (e: any) {
+      console.error(e);
+      alert("Compilation failed: " + e.message);
+    }
   }
 
   public goBack() {

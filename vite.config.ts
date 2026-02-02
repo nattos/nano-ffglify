@@ -33,6 +33,6 @@ export default defineConfig({
   },
   define: {
     'import.meta.env.GOOGLE_API_KEY': JSON.stringify(process.env.GOOGLE_API_KEY),
-    // 'import.meta.env.VITE_DB_NAME': JSON.stringify('notes-app'),
+    'import.meta.env.VITE_DB_NAME': JSON.stringify('nano-ffglify'),
   },
 });
