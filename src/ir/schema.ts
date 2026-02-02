@@ -307,24 +307,6 @@ export function validateIR(json: unknown): ValidationResult {
       }
     });
 
-    // D. Check Edges
-    (func.edges || []).forEach((edge, eIdx) => {
-      if (!nodeIds.has(edge.from)) {
-        semanticErrors.push({
-          path: ['functions', fIdx.toString(), 'edges', eIdx.toString(), 'from'],
-          message: `Edge references unknown source node '${edge.from}' in function '${func.id}'.`,
-          code: 'semantic_error'
-        });
-      }
-      if (!nodeIds.has(edge.to)) {
-        semanticErrors.push({
-          path: ['functions', fIdx.toString(), 'edges', eIdx.toString(), 'to'],
-          message: `Edge references unknown target node '${edge.to}' in function '${func.id}'.`,
-          code: 'semantic_error'
-        });
-      }
-    });
-
   });
 
   // 3. Static Logic Validation (Types, Swizzling, Arity, Struct recursion)

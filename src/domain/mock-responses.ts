@@ -52,12 +52,8 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
               localVars: [],
               nodes: [
                 { id: 'resize_w', op: 'cmd_resize_resource', resource: 'b_weights', size: 'u_kernel_size' },
-                { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [4, 1, 1], comment: 'Generate weights in parallel' },
-                { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1] }
-              ],
-              edges: [
-                { from: 'resize_w', portOut: 'exec_out', to: 'cmd_gen', portIn: 'exec_in', type: 'execution' },
-                { from: 'cmd_gen', portOut: 'exec_out', to: 'cmd_blur', portIn: 'exec_in', type: 'execution', comment: 'Wait for Gen to finish' }
+                { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [4, 1, 1], comment: 'Generate weights in parallel', exec_in: 'resize_w' },
+                { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1], exec_in: 'cmd_gen' }
               ]
             },
             {
@@ -71,12 +67,6 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
                 { id: 'idx', op: 'vec_get_element', vec: 'th_id', index: 0 },
                 { id: 'val', op: 'math_mul', a: 'idx', b: 10 },
                 { id: 'store', op: 'buffer_store', buffer: 'b_weights', index: 'idx', value: 'val' }
-              ],
-              edges: [
-                { from: 'th_id', portOut: 'val', to: 'idx', portIn: 'vec', type: 'data' },
-                { from: 'idx', portOut: 'val', to: 'val', portIn: 'a', type: 'data' },
-                { from: 'idx', portOut: 'val', to: 'store', portIn: 'index', type: 'data' },
-                { from: 'val', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }
               ]
             },
             {
@@ -93,15 +83,6 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
                 { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 2 },
                 { id: 'color', op: 'float4', x: 'w_val', y: 0, z: 0, w: 1 },
                 { id: 'store', op: 'texture_store', tex: 't_output', coords: 'coords', value: 'color' }
-              ],
-              edges: [
-                { from: 'th_id', portOut: 'val', to: 'x', portIn: 'vec', type: 'data' },
-                { from: 'th_id', portOut: 'val', to: 'y', portIn: 'vec', type: 'data' },
-                { from: 'x', portOut: 'val', to: 'coords', portIn: 'x', type: 'data' },
-                { from: 'y', portOut: 'val', to: 'coords', portIn: 'y', type: 'data' },
-                { from: 'w_val', portOut: 'val', to: 'color', portIn: 'x', type: 'data' },
-                { from: 'coords', portOut: 'val', to: 'store', portIn: 'coords', type: 'data' },
-                { from: 'color', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }
               ]
             }
           ]

@@ -48,10 +48,6 @@ describe('Conformance: Texture Sampling', () => {
           { id: 'uv', op: 'float2', x: 0.0, y: 0.0 }, // Mutated in tests
           { id: 'sample', op: 'texture_sample', tex: 't_src', uv: 'uv' },
           { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'sample' }
-        ],
-        edges: [
-          { from: 'uv', portOut: 'val', to: 'sample', portIn: 'uv', type: 'data' },
-          { from: 'sample', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }
         ]
       }
     ]

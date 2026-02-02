@@ -187,8 +187,7 @@ export const IRSchema = defineSchema<IRDocument & { id: string }>({
           inputs: { type: 'array', description: 'Args', required: true, items: { type: 'object', description: 'Port', properties: {} } as any },
           outputs: { type: 'array', description: 'Returns', required: true, items: { type: 'object', description: 'Port', properties: {} } as any },
           localVars: { type: 'array', description: 'Locals', required: true, items: { type: 'object', description: 'Variable', properties: {} } as any },
-          nodes: { type: 'array', description: 'Nodes', required: true, items: { type: 'object', description: 'Node', properties: {} } as any },
-          edges: { type: 'array', description: 'Edges', required: true, items: { type: 'object', description: 'Edge', properties: {} } as any }
+          nodes: { type: 'array', description: 'Nodes', required: true, items: { type: 'object', description: 'Node', properties: {} } as any }
         }
       }
     },

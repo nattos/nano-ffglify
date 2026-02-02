@@ -27,7 +27,7 @@ EXAMPLES:
        "entity": {
          "meta": { "name": "Triangle" },
          "functions": [
-           { "id": "main", "type": "shader", "nodes": [...], "edges": [...] }
+           { "id": "main", "type": "shader", "nodes": [...] }
          ]
        }
      }
@@ -52,7 +52,7 @@ ${EXAMPLES}
     INSTRUCTIONS:
 1. Analyze the user's request and the current IR state.
 2. Use 'upsertIR' to create or update the shader graph.
-3. Use 'patchIR' for small updates like changing defaults or adding nodes/edges.
+3. Use 'patchIR' for small updates like changing defaults or adding nodes/properties.
    - Use JSON Patch format(op: "replace", "add", "remove").
 4. When you are done, call 'final_response' with a natural language summary.
 `;

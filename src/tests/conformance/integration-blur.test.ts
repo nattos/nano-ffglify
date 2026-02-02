@@ -67,12 +67,6 @@ describe('Conformance: Integration - Precomputed Blur', () => {
 
           // Store: b_weights[idx] = val
           { id: 'store', op: 'buffer_store', buffer: 'b_weights', index: 'idx', value: 'val' }
-        ],
-        edges: [
-          { from: 'th_id', portOut: 'val', to: 'idx', portIn: 'vec', type: 'data' },
-          { from: 'idx', portOut: 'val', to: 'val', portIn: 'a', type: 'data' },
-          { from: 'idx', portOut: 'val', to: 'store', portIn: 'index', type: 'data' },
-          { from: 'val', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }
         ]
       },
       {
@@ -91,15 +85,6 @@ describe('Conformance: Integration - Precomputed Blur', () => {
           { id: 'color', op: 'float4', x: 'w_val', y: 0, z: 0, w: 1 },
 
           { id: 'store', op: 'texture_store', tex: 't_output', coords: 'coords', value: 'color' }
-        ],
-        edges: [
-          { from: 'th_id', portOut: 'val', to: 'x', portIn: 'vec', type: 'data' },
-          { from: 'th_id', portOut: 'val', to: 'y', portIn: 'vec', type: 'data' },
-          { from: 'x', portOut: 'val', to: 'coords', portIn: 'x', type: 'data' },
-          { from: 'y', portOut: 'val', to: 'coords', portIn: 'y', type: 'data' },
-          { from: 'w_val', portOut: 'val', to: 'color', portIn: 'x', type: 'data' },
-          { from: 'coords', portOut: 'val', to: 'store', portIn: 'coords', type: 'data' },
-          { from: 'color', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }
         ]
       }
     ]

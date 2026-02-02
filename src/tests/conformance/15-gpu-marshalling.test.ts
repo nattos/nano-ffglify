@@ -497,8 +497,7 @@ describe('Conformance: GPU Marshalling', () => {
             inputs: [{ id: 'msg', type: 'string' }],
             outputs: [],
             localVars: [],
-            nodes: [],
-            edges: []
+            nodes: []
           }
         ]
       };

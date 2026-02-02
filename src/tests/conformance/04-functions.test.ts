@@ -28,13 +28,7 @@ describe('Conformance: Functions', () => {
         localVars: [],
         nodes: [
           { id: 'c1', op: 'call_func', func: 'fn_square', arg_x: 5 }, // Call square(5)
-          { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'c1' } // Store result
-        ],
-        edges: [
-          // Logic: c1 -> store (Execution)
-          // Data: c1 (val) -> store (value)
-          { from: 'c1', portOut: 'exec_out', to: 'store', portIn: 'exec_in', type: 'execution' },
-          { from: 'c1', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }
+          { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'c1', exec_in: 'c1' } // Store result
         ]
       },
       {
@@ -84,23 +78,12 @@ describe('Conformance: Functions', () => {
           { id: 'in', op: 'var_get', var: 'arg' },
           { id: 'zero', op: 'const_data', value: 0 }, // Implicit 0
           { id: 'cond', op: 'math_gt', a: 'in', b: 0 },
-          { id: 'branch', op: 'flow_branch', cond: 'cond' },
+          { id: 'branch', op: 'flow_branch', cond: 'cond', exec_true: 'ret_pos', exec_false: 'ret_neg' },
           // True Path: Return arg
           { id: 'ret_pos', op: 'func_return', val: 'in' },
           // False Path: Return -arg
           { id: 'neg', op: 'math_mul', a: 'in', b: -1 },
           { id: 'ret_neg', op: 'func_return', val: 'neg' }
-        ],
-        edges: [
-          // Data
-          { from: 'in', portOut: 'val', to: 'cond', portIn: 'a', type: 'data' },
-          { from: 'cond', portOut: 'val', to: 'branch', portIn: 'cond', type: 'data' },
-          { from: 'in', portOut: 'val', to: 'ret_pos', portIn: 'val', type: 'data' },
-          { from: 'in', portOut: 'val', to: 'neg', portIn: 'a', type: 'data' },
-          { from: 'neg', portOut: 'val', to: 'ret_neg', portIn: 'val', type: 'data' },
-          // Execution Flow:
-          { from: 'branch', portOut: 'exec_true', to: 'ret_pos', portIn: 'exec_in', type: 'execution' },
-          { from: 'branch', portOut: 'exec_false', to: 'ret_neg', portIn: 'exec_in', type: 'execution' }
         ]
       }
     ]
@@ -122,8 +105,7 @@ describe('Conformance: Functions', () => {
         inputs: [],
         outputs: [],
         localVars: [],
-        nodes: [{ id: 'c1', op: 'call_func', func: 'fn_A' }],
-        edges: []
+        nodes: [{ id: 'c1', op: 'call_func', func: 'fn_A' }]
       },
       {
         id: 'fn_A',
@@ -131,8 +113,7 @@ describe('Conformance: Functions', () => {
         inputs: [],
         outputs: [],
         localVars: [],
-        nodes: [{ id: 'c2', op: 'call_func', func: 'fn_B' }],
-        edges: []
+        nodes: [{ id: 'c2', op: 'call_func', func: 'fn_B' }]
       },
       {
         id: 'fn_B',
@@ -140,8 +121,7 @@ describe('Conformance: Functions', () => {
         inputs: [],
         outputs: [],
         localVars: [],
-        nodes: [{ id: 'c3', op: 'call_func', func: 'fn_A' }], // Recursion back to A
-        edges: []
+        nodes: [{ id: 'c3', op: 'call_func', func: 'fn_A' }] // Recursion back to A
       }
     ]
   }, /Recursion detected|cyclic dependency/);

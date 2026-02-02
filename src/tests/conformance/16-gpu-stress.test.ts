@@ -50,10 +50,6 @@ describe('Conformance: GPU Stress Tests', () => {
           { id: 'v', op: 'buffer_load', buffer: 'b_rw', index: 0 },
           { id: 'v_inc', op: 'math_add', a: 'v', b: 5.0 },
           { id: 'store', op: 'buffer_store', buffer: 'b_rw', index: 0, value: 'v_inc' }
-        ],
-        edges: [
-          { from: 'v', to: 'v_inc', portIn: 'a', type: 'data' },
-          { from: 'v_inc', to: 'store', portIn: 'value', type: 'data' }
         ]
       }
     ]
@@ -108,12 +104,6 @@ describe('Conformance: GPU Stress Tests', () => {
           { id: 'idx', op: 'vec_swizzle', vec: 'gid', channels: 'x' },
           { id: 'fidx', op: 'static_cast_float', val: 'idx' }, // if we want to store float
           { id: 'store', op: 'buffer_store', buffer: 'b_out', index: 'idx', value: 'fidx' }
-        ],
-        edges: [
-          { from: 'gid', to: 'idx', portIn: 'vec', type: 'data' },
-          { from: 'idx', to: 'fidx', portIn: 'val', type: 'data' },
-          { from: 'idx', to: 'store', portIn: 'index', type: 'data' },
-          { from: 'fidx', to: 'store', portIn: 'value', type: 'data' }
         ]
       }
     ]
