@@ -35,47 +35,14 @@ describe('17-render-pipeline', () => {
       { id: 'idx', op: 'var_get', var: 'v_idx' },
       { id: 'pos_0', op: 'literal', val: '0.0' },
       { id: 'pos_1', op: 'literal', val: '0.5' },
-      // Hardcode triangle positions based on index?
-      // Index 0: (0, 0.5)
-      // Index 1: (0.5, -0.5)
-      // Index 2: (-0.5, -0.5)
-      // Simplified: Just one triangle covering center
-      // Let's use a switch/if chain or array lookup?
-      // Array lookup is easier if array_extract works.
-      // Positions Flat: [0, 0.5, 0.5, -0.5, -0.5, -0.5]
       { id: 'positions', op: 'array_construct', values: [0.0, 0.5, 0.5, -0.5, -0.5, -0.5] },
       { id: 'idx_2', op: 'math_mul', a: 'idx', b: 2 },
       { id: 'x', op: 'array_extract', array: 'positions', index: 'idx_2' },
       { id: 'idx_2_1', op: 'math_add', a: 'idx_2', b: 1 },
       { id: 'y', op: 'array_extract', array: 'positions', index: 'idx_2_1' },
-
       { id: 'pos', op: 'float4', x: 'x', y: 'y', z: 0.0, w: 1.0 },
-
-      // Struct Construction for Return?
-      // If VS returns 'pos' directly, WgslGenerator wraps it if outputs > 0?
-      // WgslGenerator: "must return a struct with @builtin(position)"
-      // If we return 'float4', generator infers it as Position?
-      // WgslGenerator logic check: "outputs[0]?.type || 'vec4<f32'".
-      // But the function signature return type must match.
-      // And generated main returns "VertexOutput".
-      // SO we MUST Define a struct in IR.
       { id: 'ret_struct', op: 'struct_construct', type: 'VertexOutput', pos: 'pos' },
       { id: 'ret', op: 'func_return', value: 'ret_struct' }
-    ],
-    edges: [
-      { from: 'idx', to: 'idx_2', portIn: 'a', portOut: 'val', type: 'data' },
-      { from: 'positions', to: 'x', portIn: 'array', portOut: 'val', type: 'data' },
-      { from: 'idx_2', to: 'x', portIn: 'index', portOut: 'val', type: 'data' },
-      { from: 'positions', to: 'y', portIn: 'array', portOut: 'val', type: 'data' },
-      { from: 'idx_2', to: 'idx_2_1', portIn: 'a', portOut: 'val', type: 'data' },
-      { from: 'idx_2_1', to: 'y', portIn: 'index', portOut: 'val', type: 'data' },
-      { from: 'x', to: 'pos', portIn: 'x', portOut: 'val', type: 'data' },
-      { from: 'y', to: 'pos', portIn: 'y', portOut: 'val', type: 'data' },
-      { from: 'pos', to: 'ret_struct', portIn: 'pos', portOut: 'val', type: 'data' },
-      { from: 'ret_struct', to: 'ret', portIn: 'value', portOut: 'val', type: 'data' },
-
-      // Execution
-      // Start -> ret
     ],
     localVars: []
   };
@@ -115,10 +82,6 @@ describe('17-render-pipeline', () => {
       { id: 'col', op: 'float4', x: 'red', y: 0.0, z: 0.0, w: 1.0 },
       { id: 'ret', op: 'func_return', value: 'col' }
     ],
-    edges: [
-      { from: 'red', to: 'col', portIn: 'x', portOut: 'val', type: 'data' },
-      { from: 'col', to: 'ret', portIn: 'value', portOut: 'val', type: 'data' }
-    ],
     localVars: []
   };
 
@@ -139,20 +102,25 @@ describe('17-render-pipeline', () => {
         pipeline: { topology: 'triangle-list' }
       }
     ],
-    edges: [],
     localVars: []
   };
 
   const doc: IRDocument = {
-    meta: { name: 'RenderTest', author: 'Test', version: '1' },
+    version: '1.0.0',
+    meta: { name: 'RenderTest', author: 'Test' },
     entryPoint: mainId,
     functions: [vsFunc, fsFunc, mainFunc],
     resources: [
-      { id: targetId, type: 'texture2d', size: { mode: 'fixed', value: [64, 64] }, format: TextureFormat.RGBA8, persistence: { clearOnResize: true, clearValue: 0 } }
+      {
+        id: targetId,
+        type: 'texture2d',
+        size: { mode: 'fixed', value: [64, 64] },
+        format: TextureFormat.RGBA8,
+        persistence: { retain: false, clearEveryFrame: true, clearOnResize: true, cpuAccess: true, clearValue: 0 }
+      }
     ],
     structs: [vertexOutputStruct],
-    inputs: [],
-    outputs: []
+    inputs: []
   };
 
   runFullGraphTest('Render Pipeline Triangle', doc, async (ctx) => {

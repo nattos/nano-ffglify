@@ -46,15 +46,7 @@ describe('Conformance: Functions', () => {
         nodes: [
           { id: 'in', op: 'var_get', var: 'arg_x' },
           { id: 'sq', op: 'math_mul', a: 'in', b: 'in' },
-          { id: 'ret', op: 'func_return', val: 'sq' }
-        ],
-        edges: [
-          { from: 'in', portOut: 'val', to: 'sq', portIn: 'a', type: 'data' },
-          { from: 'in', portOut: 'val', to: 'sq', portIn: 'b', type: 'data' },
-          { from: 'sq', portOut: 'val', to: 'ret', portIn: 'val', type: 'data' },
-          // Execution Flow:
-          // 'func_return' (ret) is an Executable Node.
-          // It has NO incoming execution edges, so it acts as the Entry Point.
+          { id: 'ret', op: 'func_return', val: 'sq', exec_in: 'sq' }
         ]
       }
     ]
@@ -79,11 +71,7 @@ describe('Conformance: Functions', () => {
         localVars: [],
         nodes: [
           { id: 'c1', op: 'call_func', func: 'fn_abs', arg: -10 },
-          { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'c1' }
-        ],
-        edges: [
-          { from: 'c1', portOut: 'exec_out', to: 'store', portIn: 'exec_in', type: 'execution' },
-          { from: 'c1', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }
+          { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'c1', exec_in: 'c1' }
         ]
       },
       {

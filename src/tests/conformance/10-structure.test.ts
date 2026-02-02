@@ -17,7 +17,6 @@ describe('Conformance: Structural Logic Validation', () => {
       inputs: [],
       outputs: [],
       localVars: [],
-      edges: [],
       nodes: nodes
     }]
   });

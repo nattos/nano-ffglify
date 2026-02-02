@@ -124,7 +124,7 @@ const FunctionDefSchema = z.object({
   outputs: z.array(PortDefSchema),
   localVars: z.array(VariableDefSchema),
   nodes: z.array(NodeSchema),
-  edges: z.array(EdgeSchema),
+  edges: z.array(EdgeSchema).optional(),
 });
 
 const StructMemberSchema = z.object({
@@ -308,7 +308,7 @@ export function validateIR(json: unknown): ValidationResult {
     });
 
     // D. Check Edges
-    func.edges.forEach((edge, eIdx) => {
+    (func.edges || []).forEach((edge, eIdx) => {
       if (!nodeIds.has(edge.from)) {
         semanticErrors.push({
           path: ['functions', fIdx.toString(), 'edges', eIdx.toString(), 'from'],

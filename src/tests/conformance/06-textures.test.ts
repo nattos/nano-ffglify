@@ -36,8 +36,7 @@ describe('Conformance: Texture Sampling', () => {
         localVars: [],
         nodes: [
           { id: 'call', op: 'cmd_dispatch', func: 'fn_sample', dispatch: [1, 1, 1] }
-        ],
-        edges: []
+        ]
       },
       {
         id: 'fn_sample',
@@ -140,8 +139,7 @@ describe('Conformance: Texture Sampling', () => {
                 clear: [0.5, 0, 0, 1]
               },
               { id: 'get_fmt', op: 'resource_get_format', resource: 't_internal' }
-            ],
-            edges: []
+            ]
           }
         ]
       };

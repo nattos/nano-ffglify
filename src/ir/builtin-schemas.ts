@@ -11,6 +11,8 @@ export type IRValueType =
   | 'float3x3' | 'float4x4'
   | 'array' | 'struct';
 
+export type RefType = 'data' | 'exec' | 'var' | 'func' | 'resource' | 'struct' | 'builtin' | 'loop' | 'field' | 'const';
+
 export interface OpArg<T = any> {
   type: z.ZodType<T>;
   doc: string;
@@ -18,11 +20,14 @@ export interface OpArg<T = any> {
   refable?: boolean;
   requiredRef?: boolean;
   literalTypes?: IRValueType[];
+  refType?: RefType; // Default is 'data' if refable/requiredRef
+  isArray?: boolean;
 }
 
 export interface OpDef<T = any> {
   doc: string;
   args: { [K in keyof T]: OpArg<T[K]> };
+  isDynamic?: boolean; // For nodes with arbitrary arguments (call_func, struct_construct)
 }
 
 /**
@@ -51,7 +56,8 @@ export function makeZodSchema(def: OpDef<any>): z.ZodObject<any> {
     }
     shape[key] = schema;
   }
-  return z.object(shape);
+  const schema = z.object(shape);
+  return def.isDynamic ? schema.passthrough() : schema;
 }
 
 
@@ -133,12 +139,12 @@ export interface QuatSlerpArgs { a: any; b: any; t: any;[key: string]: any; }
 export interface QuatRotateArgs { v: any; q: any;[key: string]: any; }
 export interface ConstGetArgs { name: string;[key: string]: any; }
 export interface LoopIndexArgs { loop: string;[key: string]: any; }
-export interface FlowBranchArgs { cond: any; true: string; false: string;[key: string]: any; }
+export interface FlowBranchArgs { cond: any; exec_true: string; exec_false: string;[key: string]: any; }
 export interface CallFuncArgs { func: string;[key: string]: any; }
 export interface CmdResizeResourceArgs { resource: string; size: any; clear?: any;[key: string]: any; }
 export interface FuncReturnArgs { val: any; value?: any;[key: string]: any; }
 export interface QuatToMatArgs { q: any;[key: string]: any; }
-export interface MathClampArgs { val: any; min: any; max: any;[key: string]: any; }
+export interface FlowLoopArgs { count?: any; start?: any; end?: any; exec_body: string; exec_completed?: string; tag?: string;[key: string]: any; }
 export interface MathStepArgs { edge: any; x: any;[key: string]: any; }
 export interface MathSmoothstepArgs { edge0: any; edge1: any; x: any;[key: string]: any; }
 export interface MathMixArgs { a: any; b: any; t: any;[key: string]: any; }
@@ -155,6 +161,11 @@ export interface MatMulArgs { a: any; b: any;[key: string]: any; }
 export interface MatUnaryArgs { val: any;[key: string]: any; }
 export interface QuatMulArgs { a: any; b: any;[key: string]: any; }
 export interface DynamicArgs { [key: string]: any; }
+
+export interface ArrayConstructArgs extends DynamicArgs {
+  values?: any[];
+  type?: string;
+}
 
 // --- Math ---
 
@@ -303,9 +314,9 @@ export interface CmdDrawArgs {
 export const CmdDrawDef = defineOp<CmdDrawArgs>({
   doc: "Draw primitives to a target resource.",
   args: {
-    target: { type: z.string(), doc: "ID of the target resource (e.g. 'screen')", requiredRef: true },
-    vertex: { type: z.string(), doc: "ID of the vertex shader function", requiredRef: true },
-    fragment: { type: z.string(), doc: "ID of the fragment shader function", requiredRef: true },
+    target: { type: z.string(), doc: "ID of the target resource (e.g. 'screen')", requiredRef: true, refType: 'resource' },
+    vertex: { type: z.string(), doc: "ID of the vertex shader function", requiredRef: true, refType: 'func' },
+    fragment: { type: z.string(), doc: "ID of the fragment shader function", requiredRef: true, refType: 'func' },
     count: { type: IntSchema, doc: "Number of vertices/indices to draw", refable: true },
     pipeline: { type: RenderPipelineSchema, doc: "Optional render pipeline state", optional: true }
   }
@@ -315,13 +326,14 @@ export interface CmdDispatchArgs { target: string; x: any; y: any; z: any;[key: 
 export const CmdDispatchDef = defineOp<CmdDispatchArgs>({
   doc: "Dispatch compute shader.",
   args: {
-    target: { type: z.string(), doc: "ID of the compute function", requiredRef: true, optional: true },
-    func: { type: z.string(), doc: "Alias for target", optional: true, requiredRef: true },
+    target: { type: z.string(), doc: "ID of the compute function", requiredRef: true, optional: true, refType: 'func' },
+    func: { type: z.string(), doc: "Alias for target", optional: true, requiredRef: true, refType: 'func' },
     x: { type: IntSchema, doc: "Group count X", refable: true, optional: true },
     y: { type: IntSchema, doc: "Group count Y", refable: true, optional: true },
     z: { type: IntSchema, doc: "Group count Z", refable: true, optional: true },
     dispatch: { type: z.array(z.number()), doc: "Group counts [x, y, z]", optional: true, literalTypes: ['float3'] }
-  }
+  },
+  isDynamic: true
 });
 
 // --- Resources ---
@@ -330,7 +342,7 @@ export interface TextureSampleArgs { tex: string; coords: any;[key: string]: any
 export const TextureSampleDef = defineOp<TextureSampleArgs>({
   doc: "Sample a texture at given coordinates.",
   args: {
-    tex: { type: z.string(), doc: "ID of the texture resource", requiredRef: true },
+    tex: { type: z.string(), doc: "ID of the texture resource", requiredRef: true, refType: 'resource' },
     coords: { type: AnyVector, doc: "Coordinates", refable: true, optional: true },
     uv: { type: AnyVector, doc: "Alias for coords (float2 expected)", refable: true, optional: true }
   }
@@ -339,7 +351,7 @@ export const TextureSampleDef = defineOp<TextureSampleArgs>({
 export const TextureLoadDef = defineOp<TextureLoadArgs>({
   doc: "Load pixel from texture",
   args: {
-    tex: { type: z.string(), doc: "Texture", requiredRef: true },
+    tex: { type: z.string(), doc: "Texture", requiredRef: true, refType: 'resource' },
     coords: { type: Float2Schema, doc: "Coords [x, y]", refable: true }
   }
 });
@@ -347,7 +359,7 @@ export const TextureLoadDef = defineOp<TextureLoadArgs>({
 export const TextureStoreDef = defineOp<TextureStoreArgs>({
   doc: "Store pixel to texture",
   args: {
-    tex: { type: z.string(), doc: "Texture", requiredRef: true },
+    tex: { type: z.string(), doc: "Texture", requiredRef: true, refType: 'resource' },
     coords: { type: Float2Schema, doc: "Coords [x, y]", refable: true },
     value: { type: Float4Schema, doc: "Color", refable: true }
   }
@@ -356,7 +368,7 @@ export const TextureStoreDef = defineOp<TextureStoreArgs>({
 export const BufferLoadDef = defineOp<BufferLoadArgs>({
   doc: "Load value from a buffer.",
   args: {
-    buffer: { type: z.string(), doc: "ID of the buffer resource", requiredRef: true },
+    buffer: { type: z.string(), doc: "ID of the buffer resource", requiredRef: true, refType: 'resource' },
     index: { type: IntSchema, doc: "Index", refable: true }
   }
 });
@@ -364,7 +376,7 @@ export const BufferLoadDef = defineOp<BufferLoadArgs>({
 export const BufferStoreDef = defineOp<BufferStoreArgs>({
   doc: "Store value to a buffer.",
   args: {
-    buffer: { type: z.string(), doc: "ID of the buffer resource", requiredRef: true },
+    buffer: { type: z.string(), doc: "ID of the buffer resource", requiredRef: true, refType: 'resource' },
     index: { type: IntSchema, doc: "Index", refable: true },
     value: { type: AnyData, doc: "Value to store", refable: true }
   }
@@ -372,7 +384,7 @@ export const BufferStoreDef = defineOp<BufferStoreArgs>({
 
 export const ResourceMetaDef = defineOp<ResourceMetaArgs>({
   doc: "Get resource metadata (size or format).",
-  args: { resource: { type: z.string(), doc: "ID of the resource", requiredRef: true } }
+  args: { resource: { type: z.string(), doc: "ID of the resource", requiredRef: true, refType: 'resource' } }
 });
 
 // --- Matrices ---
@@ -466,13 +478,13 @@ export const StructExtractDef = defineOp<StructExtractArgs>({
 export interface ArraySetArgs { array: any; index: any; value: any;[key: string]: any; }
 export const ArraySetDef = defineOp<ArraySetArgs>({
   doc: "Set an element in an array.",
-  args: { array: { type: z.string(), doc: "Array variable name", requiredRef: true }, index: { type: IntSchema, doc: "Index", refable: true }, value: { type: z.any(), doc: "Value", refable: true } }
+  args: { array: { type: z.string(), doc: "Array variable name", requiredRef: true, refType: 'var' }, index: { type: IntSchema, doc: "Index", refable: true }, value: { type: z.any(), doc: "Value", refable: true } }
 });
 
 export interface ArrayExtractArgs { array: any; index: any;[key: string]: any; }
 export const ArrayExtractDef = defineOp<ArrayExtractArgs>({
   doc: "Extract an element from an array.",
-  args: { array: { type: z.any(), doc: "Array", refable: true }, index: { type: IntSchema, doc: "Index", refable: true } }
+  args: { array: { type: z.any(), doc: "Array", refable: true, refType: 'data' }, index: { type: IntSchema, doc: "Index", refable: true } }
 });
 
 // --- Logic & Control ---
@@ -497,32 +509,34 @@ export const BuiltinNameSchema = z.enum([
 export interface BuiltinGetArgs { name: string;[key: string]: any; }
 export const BuiltinGetDef = defineOp<BuiltinGetArgs>({
   doc: "Get a GPU/Shader built-in variable.",
-  args: { name: { type: BuiltinNameSchema, doc: "Built-in name" } }
+  args: { name: { type: BuiltinNameSchema, doc: "Built-in name", refType: 'builtin' } }
 });
 
 export interface VarSetArgs { var: string; val: any;[key: string]: any; }
 export const VarSetDef = defineOp<VarSetArgs>({
   doc: "Set the value of a local variable.",
   args: {
-    var: { type: z.string(), doc: "Name of the variable", literalTypes: ['string'] },
+    var: { type: z.string(), doc: "Name of the variable", literalTypes: ['string'], refType: 'var' },
     val: { type: z.any(), doc: "Value to store", refable: true }
   }
 });
 
+export interface MathClampArgs { val: any; min: any; max: any;[key: string]: any; }
+
 export interface VarGetArgs { var: string;[key: string]: any; }
 export const VarGetDef = defineOp<VarGetArgs>({
   doc: "Get the value of a local variable.",
-  args: { var: { type: z.string(), doc: "Name of the variable", requiredRef: true } }
+  args: { var: { type: z.string(), doc: "Name of the variable", requiredRef: true, refType: 'var' } }
 });
 
-export interface FlowLoopArgs { count?: any; start?: any; end?: any; body?: string; tag?: string;[key: string]: any; }
 export const FlowLoopDef = defineOp<FlowLoopArgs>({
   doc: "Loop over a sequence.",
   args: {
     count: { type: IntSchema, doc: "Number of iterations", refable: true, optional: true },
     start: { type: IntSchema, doc: "Start index", refable: true, optional: true },
     end: { type: IntSchema, doc: "End index", refable: true, optional: true },
-    body: { type: z.string(), doc: "Node ID for loop body", requiredRef: true, optional: true },
+    exec_body: { type: z.string(), doc: "Node ID for loop body", requiredRef: true, optional: true, refType: 'exec' },
+    exec_completed: { type: z.string(), doc: "Node ID for after loop", optional: true, refType: 'exec' },
     tag: { type: z.string(), doc: "Loop tag for identification", optional: true, refable: true }
   }
 });
@@ -619,9 +633,16 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'math_ldexp': defineOp<MathLdexpArgs>({ doc: "ldexp function", args: { val: { type: AnyData, doc: "Value", refable: true }, exp: { type: AnyData, doc: "Exponent", refable: true } } }),
 
   // Structs & Arrays
-  'struct_construct': defineOp<DynamicArgs>({ doc: "Construct struct", args: {} }),
+  'struct_construct': defineOp<DynamicArgs>({ doc: "Construct struct", args: {}, isDynamic: true }),
   'struct_extract': StructExtractDef,
-  'array_construct': defineOp<DynamicArgs>({ doc: "Construct array", args: {} }),
+  'array_construct': defineOp<ArrayConstructArgs>({
+    doc: "Construct array",
+    args: {
+      values: { type: z.array(z.any()), doc: "Array elements", refable: true, isArray: true, optional: true },
+      type: { type: z.string(), doc: "Explicit array type", optional: true, refType: 'struct' }
+    },
+    isDynamic: true
+  }),
   'array_set': ArraySetDef,
   'array_extract': ArrayExtractDef,
   'array_length': defineOp<{ array: any }>({ doc: "Array length", args: { array: { type: z.any(), doc: "Array", refable: true, literalTypes: ['array'] } } }),
@@ -629,17 +650,17 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   // Commands
   'cmd_draw': CmdDrawDef,
   'cmd_dispatch': CmdDispatchDef,
-  'cmd_resize_resource': defineOp<CmdResizeResourceArgs>({ doc: "Resize a resource", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true }, size: { type: AnyData, doc: "New size [w, h] or scalar", refable: true }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
+  'cmd_resize_resource': defineOp<CmdResizeResourceArgs>({ doc: "Resize a resource", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' }, size: { type: AnyData, doc: "New size [w, h] or scalar", refable: true }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
 
   // Logic / Control
   'var_set': VarSetDef,
   'var_get': VarGetDef,
   'builtin_get': BuiltinGetDef,
-  'const_get': defineOp<ConstGetArgs>({ doc: "Get constant", args: { name: { type: z.string(), doc: "Name" } } }),
-  'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true } } }),
-  'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, true: { type: z.string(), doc: "Node ID for true", requiredRef: true, optional: true }, false: { type: z.string(), doc: "Node ID for false", requiredRef: true, optional: true } } }),
+  'const_get': defineOp<ConstGetArgs>({ doc: "Get constant", args: { name: { type: z.string(), doc: "Name", refType: 'const' } } }),
+  'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true, refType: 'loop' } } }),
+  'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, exec_true: { type: z.string(), doc: "Node ID for true", requiredRef: true, optional: true, refType: 'exec' }, exec_false: { type: z.string(), doc: "Node ID for false", requiredRef: true, optional: true, refType: 'exec' } } }),
   'flow_loop': FlowLoopDef,
-  'call_func': defineOp<CallFuncArgs>({ doc: "Call a function", args: { func: { type: z.string(), doc: "Function ID", requiredRef: true } } }),
+  'call_func': defineOp<CallFuncArgs>({ doc: "Call a function", args: { func: { type: z.string(), doc: "Function ID", requiredRef: true, refType: 'func' } }, isDynamic: true }),
   'func_return': defineOp<FuncReturnArgs>({ doc: "Return from function", args: { val: { type: z.any(), doc: "Return value", optional: true, refable: true }, value: { type: z.any(), doc: "Return value (alias)", optional: true, refable: true } } }),
 };
 

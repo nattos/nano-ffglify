@@ -1,7 +1,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { ComputeTestBackend } from './compute-test-backend';
-import { IRDocument } from '../../ir/types';
+import { IRDocument, TextureFormat } from '../../ir/types';
 
 describe('Compliance: Texture Sampling Modes', () => {
 
@@ -18,7 +18,7 @@ describe('Compliance: Texture Sampling Modes', () => {
         id: 't_check',
         type: 'texture2d',
         size: { mode: 'fixed', value: [2, 2] },
-        format: 'r32f',
+        format: TextureFormat.R32F, // Changed from 'r32f' to TextureFormat.R32F
         sampler: { filter: 'linear', wrap: 'repeat' }, // vary this in tests
         persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
       },
@@ -39,11 +39,8 @@ describe('Compliance: Texture Sampling Modes', () => {
         outputs: [],
         localVars: [],
         nodes: [
-          { id: 'n1', op: 'texture_sample', tex: 't_check', uv: [0.5, 0.5] }, // UV will be overridden by tests
-          { id: 'n2', op: 'buffer_store', buffer: 'b_res', index: 0 }
-        ],
-        edges: [
-          { from: 'n1', portOut: 'val', to: 'n2', portIn: 'value', type: 'data' }
+          { id: 'n1', op: 'texture_sample', tex: 't_check', uv: [0.5, 0.5], _next: 'n2' }, // UV will be overridden by tests
+          { id: 'n2', op: 'buffer_store', buffer: 'b_res', index: 0, value: 'n1' }
         ]
       }
     ]

@@ -1,5 +1,6 @@
 
 import { FunctionDef, Node, Edge, DataType, ResourceDef, IRDocument, StructDef } from '../ir/types';
+import { reconstructEdges } from '../ir/utils';
 
 /**
  * WGSL Generator
@@ -368,42 +369,37 @@ export class WgslGenerator {
       lines.push(`fn ${func.id}(${args})${retType === 'void' ? '' : ' -> ' + retType} {`);
     }
 
-    func.localVars.forEach(v => {
-      const type = this.resolveType(v.type);
-      const init = v.initialValue !== undefined ? this.formatLiteral(v.initialValue, v.type) : this.formatZero(v.type);
-      lines.push(`  var l_${v.id} : ${type} = ${init};`);
-    });
-
-    this.emitBody(func, lines, options, new Set(), ir);
+    const edges = reconstructEdges(func);
+    this.emitBody(func, lines, options, new Set(), ir, edges);
     lines.push(`}`);
   }
 
-  private emitBody(func: FunctionDef, lines: string[], options: WgslOptions, visited: Set<string>, ir: IRDocument) {
-    const entryNodes = func.nodes.filter(n => !func.edges.some(e => e.to === n.id && e.type === 'execution') && this.isExecutable(n.op));
-    for (const entry of entryNodes) this.emitChain(entry, func, lines, options, visited, ir);
+  private emitBody(func: FunctionDef, lines: string[], options: WgslOptions, visited: Set<string>, ir: IRDocument, edges: Edge[]) {
+    const entryNodes = func.nodes.filter(n => !edges.some(e => e.to === n.id && e.type === 'execution') && this.isExecutable(n.op));
+    for (const entry of entryNodes) this.emitChain(entry, func, lines, options, visited, ir, edges);
   }
 
   private isExecutable(op: string) {
     return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' || op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' || op === 'vec_set_element';
   }
 
-  private emitChain(startNode: Node, func: FunctionDef, lines: string[], options: WgslOptions, visited: Set<string>, ir: IRDocument) {
+  private emitChain(startNode: Node, func: FunctionDef, lines: string[], options: WgslOptions, visited: Set<string>, ir: IRDocument, edges: Edge[]) {
     let curr: Node | undefined = startNode;
     while (curr) {
       if (visited.has(curr.id)) break;
       visited.add(curr.id);
-      this.emitNode(curr, func, lines, options, ir);
+      this.emitNode(curr, func, lines, options, ir, edges);
       if (curr.op === 'flow_branch') break;
-      const edge = func.edges.find(e => e.from === curr!.id && e.portOut === 'exec_out' && e.type === 'execution');
+      const edge = edges.find(e => e.from === curr!.id && e.portOut === 'exec_out' && e.type === 'execution');
       curr = edge ? func.nodes.find(n => n.id === edge.to) : undefined;
     }
   }
 
-  private emitNode(node: Node, func: FunctionDef, lines: string[], options: WgslOptions, ir: IRDocument) {
+  private emitNode(node: Node, func: FunctionDef, lines: string[], options: WgslOptions, ir: IRDocument, edges: Edge[]) {
     const indent = '  ';
     if (node.op === 'var_set') {
       const varId = node['var'];
-      const valExpr = this.resolveArg(node, 'val', func, options, ir);
+      const valExpr = this.resolveArg(node, 'val', func, options, ir, 'float', edges);
       if (options.varMap?.has(varId)) {
         const idx = options.varMap.get(varId)!;
         const type = options.varTypes?.get(varId) || 'float';
@@ -414,14 +410,14 @@ export class WgslGenerator {
         }
       } else if (func.localVars.some(v => v.id === varId)) lines.push(`  l_${varId} = ${valExpr};`);
     } else if (node.op === 'array_set' || node.op === 'vec_set_element') {
-      const arr = this.resolveArg(node, 'array' in node ? 'array' : 'vec', func, options, ir);
-      const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
-      const val = this.resolveArg(node, 'value', func, options, ir);
+      const arr = this.resolveArg(node, 'array' in node ? 'array' : 'vec', func, options, ir, 'any', edges);
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
+      const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
       lines.push(`${indent}${arr}[u32(${idx})] = ${val};`);
     } else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'] as string;
-      const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
-      const val = this.resolveArg(node, 'value', func, options, ir);
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
+      const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
       const bufVar = this.getBufferVar(bufferId);
       const def = options.resourceDefs?.get(bufferId);
       const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
@@ -429,51 +425,56 @@ export class WgslGenerator {
     } else if (node.op === 'call_func') {
       const targetFunc = ir.functions.find(f => f.id === node['func']);
       if (targetFunc) {
-        const args = targetFunc.inputs.map(inp => this.resolveArg(node, inp.id, func, options, ir)).join(', ');
+        const args = targetFunc.inputs.map(inp => this.resolveArg(node, inp.id, func, options, ir, 'any', edges)).join(', ');
         if (targetFunc.outputs.length > 0) lines.push(`${indent}let v_${node.id} = ${node['func']}(${args});`);
         else lines.push(`${indent}${node['func']}(${args});`);
       }
     } else if (node.op === 'func_return') {
-      lines.push(`${indent}return ${this.resolveArg(node, 'value', func, options, ir)};`);
+      lines.push(`${indent}return ${this.resolveArg(node, 'value', func, options, ir, 'any', edges)};`);
     } else if (node.op === 'flow_branch') {
-      const cond = this.resolveArg(node, 'cond', func, options, ir);
+      const cond = this.resolveArg(node, 'cond', func, options, ir, 'any', edges);
       const condExpr = (cond === 'true' || cond === 'false' || cond.includes('==') || cond.includes('!=')) ? cond : `${cond} != 0.0`;
       lines.push(`${indent}if (${condExpr}) {`);
-      const trueEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_true');
+      const trueEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_true');
       if (trueEdge) {
         const trueNode = func.nodes.find(n => n.id === trueEdge.to);
-        if (trueNode) this.emitChain(trueNode, func, lines, options, new Set(), ir);
+        if (trueNode) this.emitChain(trueNode, func, lines, options, new Set(), ir, edges);
       }
       lines.push(`${indent}} else {`);
-      const falseEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_false');
+      const falseEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_false');
       if (falseEdge) {
         const falseNode = func.nodes.find(n => n.id === falseEdge.to);
-        if (falseNode) this.emitChain(falseNode, func, lines, options, new Set(), ir);
+        if (falseNode) this.emitChain(falseNode, func, lines, options, new Set(), ir, edges);
       }
       lines.push(`${indent}}`);
     } else if (node.op === 'flow_loop') {
-      const start = this.resolveArg(node, 'start', func, options, ir);
-      const end = this.resolveArg(node, 'end', func, options, ir);
+      const start = this.resolveArg(node, 'start', func, options, ir, 'int', edges);
+      const end = this.resolveArg(node, 'end', func, options, ir, 'int', edges);
       const loopVar = `i_${node.id}`;
       lines.push(`${indent}for (var ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
-      const bodyEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_body');
+      const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body');
       if (bodyEdge) {
         const bodyNode = func.nodes.find(n => n.id === bodyEdge.to);
-        if (bodyNode) this.emitChain(bodyNode, func, lines, options, new Set(), ir);
+        if (bodyNode) this.emitChain(bodyNode, func, lines, options, new Set(), ir, edges);
       }
       lines.push(`${indent}}`);
-      const compEdge = func.edges.find(e => e.from === node.id && e.portOut === 'exec_completed');
+      const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed');
       if (compEdge) {
         const compNode = func.nodes.find(n => n.id === compEdge.to);
-        if (compNode) this.emitChain(compNode, func, lines, options, new Set(), ir);
+        if (compNode) this.emitChain(compNode, func, lines, options, new Set(), ir, edges);
       }
     } else if (node.op === 'texture_store') {
-      const coords = this.resolveArg(node, 'coords', func, options, ir);
-      const val = this.resolveArg(node, 'value', func, options, ir);
+      const coords = this.resolveArg(node, 'coords', func, options, ir, 'any', edges);
+      const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
       lines.push(`${indent}textureStore(${node['tex']}, vec2<i32>(${coords}.xy), ${val});`);
     } else if (node.op === 'buffer_store') {
-      // Already handled above? Wait, I have two buffer_store blocks.
-      // I'll clean up.
+      const bufferId = node['buffer'] as string;
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
+      const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
+      const bufVar = this.getBufferVar(bufferId);
+      const def = options.resourceDefs?.get(bufferId);
+      const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
+      lines.push(`${indent}${bufVar}.data[u32(${idx})] = ${type}(${val});`);
     } else {
       lines.push(`${indent}// Op: ${node.op}`);
     }
@@ -521,11 +522,11 @@ export class WgslGenerator {
     return varId;
   }
 
-  private resolveArg(node: Node, key: string, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType?: string): string {
+  private resolveArg(node: Node, key: string, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType: string = 'float', edges: Edge[]): string {
     const keys = (key === 'val' || key === 'value') ? ['val', 'value'] : [key];
     let edge: Edge | undefined;
     for (const k of keys) {
-      edge = func.edges.find(e => e.to === node.id && e.portIn === k && e.type === 'data');
+      edge = edges.find(e => e.to === node.id && e.portIn === k && e.type === 'data');
       if (edge) break;
     }
 
@@ -534,20 +535,31 @@ export class WgslGenerator {
       if (src) {
         if (src.op === 'call_func') return `v_${src.id}`;
         if (src.op === 'var_get') return this.getVariableExpr(src['var'], func, options);
-        return this.compileExpression(src, func, options, ir, targetType);
+        return this.compileExpression(src, func, options, ir, targetType, edges);
       }
     }
 
     for (const k of keys) {
+      let val: any = undefined;
       if (node[k] !== undefined) {
-        const val = node[k];
+        val = node[k];
+      } else {
+        const match = k.match(/^(.+)\[(\d+)\]$/);
+        if (match) {
+          const baseKey = match[1];
+          const idx = parseInt(match[2], 10);
+          if (Array.isArray(node[baseKey])) val = node[baseKey][idx];
+        }
+      }
+
+      if (val !== undefined) {
         if (typeof val === 'string' && val.trim() !== '') {
           const tid = val.trim();
           if (func.localVars.some(v => v.id === tid) || func.inputs.some(i => i.id === tid) || options.varMap?.has(tid)) {
             return this.getVariableExpr(tid, func, options);
           }
           const targetNode = func.nodes.find(n => n.id === tid);
-          if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, options, ir, targetType);
+          if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, options, ir, targetType, edges);
         }
         return this.formatLiteral(val, targetType || 'unknown');
       }
@@ -555,12 +567,12 @@ export class WgslGenerator {
     return this.formatZero(targetType || 'float');
   }
 
-  private compileExpression(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType?: string | DataType): string {
+  private compileExpression(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType: string | DataType = 'float', edges: Edge[]): string {
     if (node.op === 'literal') return this.formatLiteral(node['val'], targetType || 'float');
     if (node.op === 'loop_index') return `i_${node['loop']}`;
-    if (node.op === 'float2') return `vec2<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float')}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float')}))`;
-    if (node.op === 'float3') return `vec3<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float')}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float')}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float')}))`;
-    if (node.op === 'float4' || node.op === 'quat') return `vec4<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float')}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float')}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float')}), f32(${this.resolveArg(node, 'w', func, options, ir, 'float')}))`;
+    if (node.op === 'float2') return `vec2<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}))`;
+    if (node.op === 'float3') return `vec3<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float', edges)}))`;
+    if (node.op === 'float4' || node.op === 'quat') return `vec4<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'w', func, options, ir, 'float', edges)}))`;
     if (node.op === 'float3x3' || node.op === 'float4x4') {
       const vals = node['vals'] as number[];
       if (vals) {
@@ -568,45 +580,40 @@ export class WgslGenerator {
         return `${node.op === 'float3x3' ? 'mat3x3<f32>' : 'mat4x4<f32>'}(${formatted.join(', ')})`;
       }
     }
-    if (node.op === 'static_cast_float') return `f32(${this.resolveArg(node, 'val', func, options, ir, 'float')})`;
-    if (node.op === 'static_cast_int') return `i32(${this.resolveArg(node, 'val', func, options, ir, 'int')})`;
+    if (node.op === 'static_cast_float') return `f32(${this.resolveArg(node, 'val', func, options, ir, 'float', edges)})`;
+    if (node.op === 'static_cast_int') return `i32(${this.resolveArg(node, 'val', func, options, ir, 'int', edges)})`;
     if (node.op === 'struct_construct') {
       const type = node['type'];
       const structDef = ir.structs?.find(s => s.id === type);
-      const args = structDef ? structDef.members.map(m => this.resolveArg(node, m.name, func, options, ir)) : [];
+      const args = structDef ? structDef.members.map(m => this.resolveArg(node, m.name, func, options, ir, 'any', edges)) : [];
       return `${type}(${args.join(', ')})`;
     }
     if (node.op === 'array_construct') {
-      if (node['values']) {
-        const vals = node['values'] as any[];
-        let type = 'f32';
-        if (vals.length > 0) {
-          // Check if ANY element is f32 (contains dot or is not integer)
-          const hasFloat = vals.some(v => typeof v === 'number' && !Number.isInteger(v));
-          if (!hasFloat) {
-            if (typeof vals[0] === 'number') type = 'i32';
-            else if (typeof vals[0] === 'boolean') type = 'bool';
-          }
-        }
-        return `array<${type}, ${vals.length}>(${vals.map(v => this.formatLiteral(v, type)).join(', ')})`;
+      const values = node['values'];
+      if (Array.isArray(values)) {
+        const items = values.map((_, i) => this.resolveArg(node, `values[${i}]`, func, options, ir, 'any', edges));
+        if (items.length === 0) return 'array<f32, 0>()';
+        // Try to infer type from first resolved item or default to f32
+        const type = options.varTypes?.get(values[0]) || 'f32';
+        return `array<${this.resolveType(type)}, ${items.length}>(${items.join(', ')})`;
       }
-      const len = node['length'];
-      const fillExpr = this.resolveArg(node, 'fill', func, options, ir);
+      const len = node['length'] || 0;
+      const fillExpr = this.resolveArg(node, 'fill', func, options, ir, 'any', edges);
       const vals = new Array(len).fill(null).map(() => fillExpr);
       return `array<f32, ${len}>(${vals.join(', ')})`;
     }
     if (node.op === 'array_length') {
-      const arr = this.resolveArg(node, 'array', func, options, ir);
+      const arr = this.resolveArg(node, 'array', func, options, ir, 'any', edges);
       return `i32(arrayLength(&${arr}))`;
     }
     if (node.op === 'texture_sample') {
       const tex = node['tex'];
-      const uv = (node['uv'] !== undefined) ? this.resolveArg(node, 'uv', func, options, ir) : this.resolveArg(node, 'coords', func, options, ir);
+      const uv = (node['uv'] !== undefined) ? this.resolveArg(node, 'uv', func, options, ir, 'any', edges) : this.resolveArg(node, 'coords', func, options, ir, 'any', edges);
       return `sample_${tex}(${uv})`;
     }
     if (node.op === 'texture_load') {
       const tex = node['tex'];
-      const coords = this.resolveArg(node, 'coords', func, options, ir);
+      const coords = this.resolveArg(node, 'coords', func, options, ir, 'any', edges);
       return `textureLoad(${tex}, vec2<i32>(${coords}.xy), 0)`;
     }
     if (node.op === 'resource_get_size') {
@@ -623,7 +630,7 @@ export class WgslGenerator {
     }
     if (node.op === 'buffer_load') {
       const bufferId = node['buffer'] as string;
-      const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
       const bufVar = this.getBufferVar(bufferId);
       const def = options.resourceDefs?.get(bufferId);
       const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
@@ -635,19 +642,19 @@ export class WgslGenerator {
   if (outA < 1e-6) { return vec4<f32>(0.0); }
   return vec4<f32>((src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / outA, outA);
 }`);
-      return `color_mix_impl(${this.resolveArg(node, 'a', func, options, ir, 'float4')}, ${this.resolveArg(node, 'b', func, options, ir, 'float4')})`;
+      return `color_mix_impl(${this.resolveArg(node, 'a', func, options, ir, 'float4', edges)}, ${this.resolveArg(node, 'b', func, options, ir, 'float4', edges)})`;
     }
     if (node.op === 'vec_swizzle') {
-      const vec = this.resolveArg(node, 'vec', func, options, ir);
+      const vec = this.resolveArg(node, 'vec', func, options, ir, 'any', edges);
       const swizzle = node['swizzle'] || node['channels'];
       return `${vec}.${swizzle}`;
     }
     if (node.op === 'vec_get_element' || node.op === 'array_extract') {
-      const vec = this.resolveArg(node, 'vec' in node ? 'vec' : 'array', func, options, ir);
-      const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
+      const vec = this.resolveArg(node, 'vec' in node ? 'vec' : 'array', func, options, ir, 'any', edges);
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
 
       // Matrix target detection for flat array access
-      const targetId = (node['vec'] || node['array']) as string;
+      const targetId = (node['vec' as keyof Node] || node['array' as keyof Node]) as string;
       if (targetId) {
         const targetIn = func.inputs.find(i => i.id === targetId);
         const targetVar = func.localVars.find(v => v.id === targetId);
@@ -662,19 +669,19 @@ export class WgslGenerator {
       return `${vec}[u32(${idx})]`;
     }
     if (node.op === 'vec_set_element' || node.op === 'array_set') {
-      const vec = this.resolveArg(node, 'vec' in node ? 'vec' : 'array', func, options, ir);
-      const idx = this.resolveArg(node, 'index', func, options, ir, 'int');
-      const val = this.resolveArg(node, 'value', func, options, ir);
+      const vec = this.resolveArg(node, 'vec' in node ? 'vec' : 'array', func, options, ir, 'any', edges);
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
+      const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
       return `${vec}[u32(${idx})] = ${val}`; // Note: used as statement in emitNode
     }
     if (node.op === 'mat_extract') {
-      const mat = this.resolveArg(node, 'mat', func, options, ir);
-      const row = this.resolveArg(node, 'row', func, options, ir, 'int');
-      const col = this.resolveArg(node, 'col', func, options, ir, 'int');
+      const mat = this.resolveArg(node, 'mat', func, options, ir, 'any', edges);
+      const row = this.resolveArg(node, 'row', func, options, ir, 'int', edges);
+      const col = this.resolveArg(node, 'col', func, options, ir, 'int', edges);
       return `${mat}[u32(${col})][u32(${row})]`;
     }
     if (node.op === 'struct_extract') {
-      const struct = this.resolveArg(node, 'struct', func, options, ir);
+      const struct = this.resolveArg(node, 'struct', func, options, ir, 'any', edges);
       const member = node['member'] || node['name'] || node['field'];
       if (!member) return `${struct}.undefined_member`;
       return `${struct}.${member}`;
@@ -689,19 +696,19 @@ export class WgslGenerator {
       };
       return builtinVarNames[name] || name;
     }
-    if (this.isMathOp(node.op)) return this.compileMath(node, func, options, ir);
+    if (this.isMathOp(node.op)) return this.compileMath(node, func, options, ir, edges);
     return '0.0';
   }
 
   private isMathOp(op: string) { return op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('quat_'); }
 
-  private compileMath(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument): string {
+  private compileMath(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, edges: Edge[]): string {
     const op = node.op;
     const isFloatOp = !op.includes('_gt') && !op.includes('_lt') && !op.includes('_ge') && !op.includes('_le') && !op.includes('_eq') && !op.includes('_neq') && !op.startsWith('bits_');
 
-    const a = (k = 'a') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir)})` : this.resolveArg(node, k, func, options, ir);
-    const b = (k = 'b') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir)})` : this.resolveArg(node, k, func, options, ir);
-    const val = (k = 'val') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir)})` : this.resolveArg(node, k, func, options, ir);
+    const a = (k = 'a') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir, 'float', edges)})` : this.resolveArg(node, k, func, options, ir, 'any', edges);
+    const b = (k = 'b') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir, 'float', edges)})` : this.resolveArg(node, k, func, options, ir, 'any', edges);
+    const val = (k = 'val') => isFloatOp ? `f32(${this.resolveArg(node, k, func, options, ir, 'float', edges)})` : this.resolveArg(node, k, func, options, ir, 'any', edges);
 
     // Core Arithmetic
     if (op === 'math_add') return `(${a()} + ${b()})`;
@@ -740,15 +747,15 @@ export class WgslGenerator {
 
     if (op === 'math_min') return `min(${a()}, ${b()})`;
     if (op === 'math_max') return `max(${a()}, ${b()})`;
-    if (op === 'math_clamp') return `clamp(${val()}, ${this.resolveArg(node, 'min', func, options, ir)}, ${this.resolveArg(node, 'max', func, options, ir)})`;
-    if (op === 'math_mix') return `mix(${a()}, ${b()}, ${this.resolveArg(node, 't', func, options, ir)})`;
-    if (op === 'math_step') return `step(${this.resolveArg(node, 'edge', func, options, ir)}, ${val()})`;
-    if (op === 'math_smoothstep') return `smoothstep(${this.resolveArg(node, 'edge0', func, options, ir)}, ${this.resolveArg(node, 'edge1', func, options, ir)}, ${val()})`;
+    if (op === 'math_clamp') return `clamp(${val()}, ${this.resolveArg(node, 'min', func, options, ir, 'float', edges)}, ${this.resolveArg(node, 'max', func, options, ir, 'float', edges)})`;
+    if (op === 'math_mix') return `mix(${a()}, ${b()}, ${this.resolveArg(node, 't', func, options, ir, 'float', edges)})`;
+    if (op === 'math_step') return `step(${this.resolveArg(node, 'edge', func, options, ir, 'float', edges)}, ${val()})`;
+    if (op === 'math_smoothstep') return `smoothstep(${this.resolveArg(node, 'edge0', func, options, ir, 'float', edges)}, ${this.resolveArg(node, 'edge1', func, options, ir, 'float', edges)}, ${val()})`;
 
     // Advanced Math / Bits
     if (op === 'math_frexp_mantissa' || op === 'math_mantissa') return `frexp(${val()}).fract`;
     if (op === 'math_frexp_exponent' || op === 'math_exponent') return `f32(frexp(${val()}).exp)`;
-    if (op === 'math_ldexp') return `ldexp(f32(${this.resolveArg(node, 'fract', func, options, ir)}), i32(${this.resolveArg(node, 'exp', func, options, ir)}))`;
+    if (op === 'math_ldexp') return `ldexp(f32(${this.resolveArg(node, 'fract', func, options, ir, 'float', edges)}), i32(${this.resolveArg(node, 'exp', func, options, ir, 'int', edges)}))`;
     if (op === 'math_flush_subnormal') {
       const v = val();
       return `select(${v}, 0.0, abs(${v}) < 1.17549435e-38)`;
@@ -773,7 +780,7 @@ export class WgslGenerator {
     if (op === 'vec_normalize') return `normalize(${a()})`;
     if (op === 'vec_distance') return `distance(${a()}, ${b()})`;
     if (op === 'vec_reflect') return `reflect(${a()}, ${b()})`;
-    if (op === 'vec_refract') return `refract(${a()}, ${b()}, ${this.resolveArg(node, 'eta', func, options, ir)})`;
+    if (op === 'vec_refract') return `refract(${a()}, ${b()}, ${this.resolveArg(node, 'eta', func, options, ir, 'float', edges)})`;
 
     return '0.0';
     return '0.0';

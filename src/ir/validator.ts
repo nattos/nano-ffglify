@@ -3,7 +3,8 @@ import { OpSignatures, OpSignature, ValidationType } from './signatures';
 import { OpSchemas } from './builtin-schemas';
 import { verifyLiteralsOrRefsExist } from './schema-verifier';
 
-import { TextureFormat, TextureFormatValues, PRIMITIVE_TYPES } from './types';
+import { TextureFormat, TextureFormatValues, PRIMITIVE_TYPES, Edge } from './types';
+import { reconstructEdges } from './utils';
 
 // Local Error Type (Internal to logic validator, mapped by schema.ts)
 export interface LogicValidationError {
@@ -44,8 +45,9 @@ export const inferFunctionTypes = (func: FunctionDef, ir: IRDocument): InferredT
   ]);
   const cache: InferredTypes = new Map();
   const errors: LogicValidationError[] = [];
+  const edges = reconstructEdges(func);
   func.nodes.forEach(node => {
-    resolveNodeType(node.id, func, ir, cache, resourceIds, errors);
+    resolveNodeType(node.id, func, ir, cache, resourceIds, errors, edges);
   });
   return cache;
 };
@@ -67,7 +69,8 @@ const resolveNodeType = (
   doc: IRDocument,
   cache: TypeCache,
   resourceIds: Set<string>,
-  errors: LogicValidationError[]
+  errors: LogicValidationError[],
+  edges: Edge[]
 ): ValidationType => {
   if (cache.has(nodeId)) return cache.get(nodeId)!;
 
@@ -90,14 +93,14 @@ const resolveNodeType = (
   const inputTypes: Record<string, ValidationType> = {};
 
   // 1. Gather Input Types from Edges
-  const incomingEdges = func.edges.filter(e => e.to === nodeId && e.type === 'data');
+  const incomingEdges = edges.filter(e => e.to === nodeId && e.type === 'data');
   incomingEdges.forEach(edge => {
-    const srcType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors);
+    const srcType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors, edges);
     inputTypes[edge.portIn] = srcType;
   });
 
   // 2. Gather Input Types from Literal Props
-  const reservedKeys = new Set(['id', 'op', 'metadata', 'const_data']);
+  const reservedKeys = new Set(['id', 'op', 'metadata', 'const_data', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', '_next', 'next', 'type', 'dataType']);
   Object.keys(node).forEach(key => {
     if (reservedKeys.has(key)) return;
     if (inputTypes[key]) return; // Already from edge
@@ -121,11 +124,11 @@ const resolveNodeType = (
         const refGlobal = doc.inputs.find(i => i.id === val);
 
         // Properties that are NAMES, not DATA references
-        const nameProperties = ['var', 'buffer', 'tex', 'resource', 'field', 'loop', 'name', 'func'];
+        const nameProperties = ['var', 'buffer', 'tex', 'resource', 'field', 'loop', 'name', 'func', 'member', 'channels', 'swizzle', 'target', 'vertex', 'fragment', 'mask', 'type', 'dataType'];
         const isNameProperty = nameProperties.includes(key);
 
         if (refNode && !isNameProperty) {
-          inputTypes[key] = resolveNodeType(val, func, doc, cache, resourceIds, errors);
+          inputTypes[key] = resolveNodeType(val, func, doc, cache, resourceIds, errors, edges);
         } else if (refInput && !isNameProperty) {
           inputTypes[key] = refInput.type as ValidationType;
         } else if (refGlobal && !isNameProperty) {
@@ -361,8 +364,9 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
   func.inputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' input '${param.id}'`));
   func.outputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' output '${param.id}'`));
   func.localVars.forEach(v => validateDataType(v.type, doc, errors, `Function '${func.id}' variable '${v.id}'`));
+  const edges = reconstructEdges(func);
   const nodeIds = new Set(func.nodes.map(n => n.id));
-  func.edges.forEach(edge => {
+  edges.forEach(edge => {
     if (!nodeIds.has(edge.from)) errors.push({ message: `Edge source '${edge.from}' not found`, severity: 'error' });
     if (!nodeIds.has(edge.to)) errors.push({ message: `Edge target '${edge.to}' not found`, severity: 'error' });
   });
@@ -378,7 +382,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       });
     }
 
-    resolveNodeType(node.id, func, doc, cache, resourceIds, errors);
+    resolveNodeType(node.id, func, doc, cache, resourceIds, errors, edges);
 
     if (node.op === 'builtin_get' && func.type === 'cpu') {
       errors.push({
@@ -444,9 +448,9 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
 
           // Resolve Actual Type
           let actualType: ValidationType = 'any';
-          const edge = func.edges.find(e => e.to === node.id && e.portIn === 'value');
+          const edge = edges.find(e => e.to === node.id && e.portIn === 'value');
           if (edge) {
-            actualType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors);
+            actualType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors, edges);
           } else if (node['value'] !== undefined) {
             const v = node['value'];
             if (typeof v === 'number') actualType = 'float';

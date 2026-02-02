@@ -206,7 +206,6 @@ export interface FunctionDef {
   localVars: VariableDef[];
 
   nodes: Node[];
-  edges: Edge[];
 }
 
 export interface PortDef {

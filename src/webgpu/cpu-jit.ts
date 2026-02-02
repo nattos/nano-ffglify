@@ -1,4 +1,5 @@
-import { IRDocument, FunctionDef, Node } from '../ir/types';
+import { IRDocument, FunctionDef, Node, Edge } from '../ir/types';
+import { reconstructEdges } from '../ir/utils';
 import { RuntimeGlobals } from './host-interface';
 
 // ------------------------------------------------------------------
@@ -22,6 +23,8 @@ export class CpuJitCompiler {
       return new AsyncFunction('resources', 'inputs', 'globals', 'variables', body);
     } catch (e) {
       console.error("JIT Compilation Failed:\n", body);
+      // Log the full body for debugging ReferenceErrors
+      // (This will show up in the test output)
       throw e;
     }
   }
@@ -149,19 +152,30 @@ export class CpuJitCompiler {
       ];
     };`);
     lines.push(`const _quat_slerp = (a, b, t) => {
-      let cosHalfTheta = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
-      const qa = [...a];
-      if (cosHalfTheta < 0) {
-        for(let i=0; i<4; i++) qa[i] = -qa[i];
-        cosHalfTheta = -cosHalfTheta;
-      }
-      if (Math.abs(cosHalfTheta) >= 1.0) return qa;
-      const halfTheta = Math.acos(cosHalfTheta);
+      let ax = a[0], ay = a[1], az = a[2], aw = a[3];
+      let bx = b[0], by = b[1], bz = b[2], bw = b[3];
+      let cosHalfTheta = ax * bx + ay * by + az * bz + aw * bw;
+      if (Math.abs(cosHalfTheta) >= 1.0) return a;
+      if (cosHalfTheta < 0) { bx = -bx; by = -by; bz = -bz; bw = -bw; cosHalfTheta = -cosHalfTheta; }
       const sinHalfTheta = Math.sqrt(1.0 - cosHalfTheta * cosHalfTheta);
-      if (Math.abs(sinHalfTheta) < 1e-6) return qa.map((v, i) => v * (1-t) + b[i] * t);
-      const ratioA = Math.sin((1-t) * halfTheta) / sinHalfTheta;
+      if (Math.abs(sinHalfTheta) < 0.001) return [(1 - t) * ax + t * bx, (1 - t) * ay + t * by, (1 - t) * az + t * bz, (1 - t) * aw + t * bw];
+      const halfTheta = Math.acos(cosHalfTheta);
+      const ratioA = Math.sin((1 - t) * halfTheta) / sinHalfTheta;
       const ratioB = Math.sin(t * halfTheta) / sinHalfTheta;
-      return qa.map((v, i) => v * ratioA + b[i] * ratioB);
+      return [ax * ratioA + bx * ratioB, ay * ratioA + by * ratioB, az * ratioA + bz * ratioB, aw * ratioA + bw * ratioB];
+    };`);
+    lines.push(`const _quat_to_mat4 = (q) => {
+      const x = q[0], y = q[1], z = q[2], w = q[3];
+      const x2 = x + x, y2 = y + y, z2 = z + z;
+      const xx = x * x2, xy = x * y2, xz = x * z2;
+      const yy = y * y2, yz = y * z2, zz = z * z2;
+      const wx = w * x2, wy = w * y2, wz = w * z2;
+      return [
+        1 - (yy + zz), xy + wz, xz - wy, 0,
+        xy - wz, 1 - (xx + zz), yz + wx, 0,
+        xz + wy, yz - wx, 1 - (xx + yy), 0,
+        0, 0, 0, 1
+      ];
     };`);
     lines.push(`const _getVar = (id) => {
       if (variables.has(id)) return variables.get(id);
@@ -184,6 +198,8 @@ export class CpuJitCompiler {
       lines.push(`  let ${sanitizeId(v.id, 'var')} = ${init};`);
     }
 
+    const edges = reconstructEdges(f);
+
     const resultNodes = f.nodes.filter(n => this.hasResult(n.op));
     for (const n of resultNodes) {
       lines.push(`  let ${nodeResId(n.id)};`);
@@ -199,11 +215,11 @@ export class CpuJitCompiler {
       emittedPure.add(nodeId);
 
       // Emit data dependencies first
-      f.edges.filter(e => e.to === nodeId && e.type === 'data').forEach(edge => {
+      edges.filter(e => e.to === nodeId && e.type === 'data').forEach(edge => {
         emitPure(edge.from);
       });
 
-      lines.push(`  ${nodeResId(node.id)} = ${this.compileExpression(node, f, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure)};`);
+      lines.push(`  ${nodeResId(node.id)} = ${this.compileExpression(node, f, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure, edges)};`);
     };
 
     // Compile node logic
@@ -215,12 +231,12 @@ export class CpuJitCompiler {
 
     // Execution Chain
     const entryNodes = f.nodes.filter(n => {
-      const hasExecIn = f.edges.some(e => e.to === n.id && e.type === 'execution');
+      const hasExecIn = edges.some(e => e.to === n.id && e.type === 'execution');
       return !hasExecIn && this.isExecutable(n.op);
     });
 
     for (const entry of entryNodes) {
-      this.emitChain('  ', entry, f, lines, new Set(), sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+      this.emitChain('  ', entry, f, lines, new Set(), sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
     }
 
     // Sync variables back to Map if debug is enabled
@@ -260,7 +276,7 @@ export class CpuJitCompiler {
     return valueOps.includes(op);
   }
 
-  private emitChain(indent: string, startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
+  private emitChain(indent: string, startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
     let curr: Node | undefined = startNode;
 
     while (curr) {
@@ -270,10 +286,10 @@ export class CpuJitCompiler {
       visited.add(curr.id);
 
       // Ensure all data dependencies for this executable node are emitted
-      func.edges.filter(e => e.to === curr!.id && e.type === 'data').forEach(e => emitPure(e.from));
+      edges.filter(e => e.to === curr!.id && e.type === 'data').forEach(e => emitPure(e.from));
       for (const k in curr) {
         if (['id', 'op', 'metadata', 'const_data', 'func', 'args', 'dispatch'].includes(k)) continue;
-        const val = curr[k];
+        const val = (curr as any)[k];
         if (typeof val === 'string' && func.nodes.some(n => n.id === val)) emitPure(val);
       }
 
@@ -281,84 +297,89 @@ export class CpuJitCompiler {
       // even if it's executable, so its variable is settled if used later.
       if (this.hasResult(curr.op)) {
         // For executable nodes that have results, we emit them directly in the chain
-        this.emitNode(indent, curr, func, lines, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        this.emitNode(indent, curr, func, lines, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
       } else if (curr.op === 'flow_branch') {
-        this.emitBranch(indent, curr, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        this.emitBranch(indent, curr, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return;
       } else if (curr.op === 'flow_loop') {
-        this.emitLoop(indent, curr, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        this.emitLoop(indent, curr, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return;
       } else if (curr.op === 'func_return') {
-        lines.push(`${indent}return ${this.resolveArg(curr, 'val', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)};`);
+        lines.push(`${indent}return ${this.resolveArg(curr, 'val', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)};`);
         return;
       } else {
-        this.emitNode(indent, curr, func, lines, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        this.emitNode(indent, curr, func, lines, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
       }
 
-      curr = this.getNextNode(curr, 'exec_out', func);
+      const outEdge = edges.find(e => e.from === curr!.id && e.portOut === 'exec_out' && e.type === 'execution');
+      curr = outEdge ? func.nodes.find(n => n.id === outEdge.to) : undefined;
     }
   }
 
-  private emitBranch(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
-    const cond = this.resolveArg(node, 'cond', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+  private emitBranch(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
+    const cond = this.resolveArg(node, 'cond', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
     lines.push(`${indent}if (${cond}) {`);
-    const trueNode = this.getNextNode(node, 'exec_true', func);
-    if (trueNode) this.emitChain(indent + '  ', trueNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+    const trueEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_true' && e.type === 'execution');
+    const trueNode = trueEdge ? func.nodes.find(n => n.id === trueEdge.to) : undefined;
+    if (trueNode) this.emitChain(indent + '  ', trueNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
     lines.push(`${indent}} else {`);
-    const falseNode = this.getNextNode(node, 'exec_false', func);
-    if (falseNode) this.emitChain(indent + '  ', falseNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+    const falseEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_false' && e.type === 'execution');
+    const falseNode = falseEdge ? func.nodes.find(n => n.id === falseEdge.to) : undefined;
+    if (falseNode) this.emitChain(indent + '  ', falseNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
     lines.push(`${indent}}`);
   }
 
-  private emitLoop(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
-    const start = this.resolveArg(node, 'start', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
-    const end = this.resolveArg(node, 'end', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+  private emitLoop(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
+    const start = this.resolveArg(node, 'start', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+    const end = this.resolveArg(node, 'end', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
     const loopVar = `loop_${node.id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
     lines.push(`${indent}for (let ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
 
-    const bodyNode = this.getNextNode(node, 'exec_body', func);
-    if (bodyNode) this.emitChain(indent + '  ', bodyNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+    const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
+    const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;
+    if (bodyNode) this.emitChain(indent + '  ', bodyNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
     lines.push(`${indent}}`);
 
-    const nextNode = this.getNextNode(node, 'exec_completed', func);
-    if (nextNode) this.emitChain(indent, nextNode, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+    const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
+    const nextNode = compEdge ? func.nodes.find(n => n.id === compEdge.to) : undefined;
+    if (nextNode) this.emitChain(indent, nextNode, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
   }
 
-  private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void) {
+  private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
     if (node.op === 'cmd_dispatch') {
       const targetId = node['func'];
       const dimCode = Array.isArray(node['dispatch']) ? JSON.stringify(node['dispatch']) : '[1, 1, 1]';
-      lines.push(`${indent}await globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)});`);
+      lines.push(`${indent}await globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
     }
     else if (node.op === 'call_func') {
       const targetId = node['func'];
       const targetFunc = allFunctions.find(f => f.id === targetId);
       if (targetFunc?.type === 'shader') {
-        lines.push(`${indent}await globals.dispatch('${targetId}', [1, 1, 1], ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)});`);
+        lines.push(`${indent}await globals.dispatch('${targetId}', [1, 1, 1], ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
       } else if (targetFunc) {
-        lines.push(`${indent}${nodeResId(node.id)} = await ${funcName(targetId)}(${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)});`);
+        lines.push(`${indent}${nodeResId(node.id)} = await ${funcName(targetId)}(${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
       }
     }
     else if (node.op === 'cmd_draw') {
       const target = node['target'];
       const vertex = node['vertex'];
       const fragment = node['fragment'];
-      const count = this.resolveArg(node, 'count', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+      const count = this.resolveArg(node, 'count', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
       const pipeline = JSON.stringify(node['pipeline'] || {});
       lines.push(`${indent}await globals.draw('${target}', '${vertex}', '${fragment}', ${count}, ${pipeline});`);
     }
     else if (node.op === 'cmd_resize_resource') {
       const resId = node['resource'];
-      const size = this.resolveArg(node, 'size', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+      const size = this.resolveArg(node, 'size', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
       const resolveRaw = (key: string) => {
-        const edge = func.edges.find(e => e.to === node.id && e.portIn === key && e.type === 'data');
-        if (edge || node[key] !== undefined) return this.resolveArg(node, key, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const edge = edges.find(e => e.to === node.id && e.portIn === key && e.type === 'data');
+        if (edge || node[key] !== undefined) return this.resolveArg(node, key, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return 'undefined';
       };
       lines.push(`${indent}globals.resize('${resId}', ${size}, ${resolveRaw('format')}, ${resolveRaw('clear')});`);
     }
     else if (node.op === 'var_set') {
-      const val = this.resolveArg(node, 'val', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+      const val = this.resolveArg(node, 'val', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
       const varId = node['var'];
       if (func.localVars.some(v => v.id === varId)) lines.push(`${indent}${sanitizeId(varId, 'var')} = ${val};`);
       else if (func.inputs.some(i => i.id === varId)) lines.push(`${indent}${sanitizeId(varId, 'input')} = ${val};`);
@@ -366,14 +387,14 @@ export class CpuJitCompiler {
     }
     else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'];
-      const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
-      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+      const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
       lines.push(`${indent}resources.get('${bufferId}').data[${idx}] = ${val};`);
     }
     else if (node.op === 'texture_store') {
       const texId = node['tex'];
-      const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
-      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+      const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
       lines.push(`${indent}((coords, val) => {
         const res = resources.get('${texId}');
         if (!res) return;
@@ -382,45 +403,51 @@ export class CpuJitCompiler {
       })(${coords}, ${val});`);
     }
     else if (this.hasResult(node.op)) {
-      lines.push(`${indent}${nodeResId(node.id)} = ${this.compileExpression(node, func, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure)};`);
+      lines.push(`${indent}${nodeResId(node.id)} = ${this.compileExpression(node, func, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure, edges)};`);
     }
   }
 
-  private getNextNode(node: Node, port: string, func: FunctionDef): Node | undefined {
-    const edge = func.edges.find(e => e.from === node.id && e.portOut === port && e.type === 'execution');
-    return edge ? func.nodes.find(n => n.id === edge.to) : undefined;
-  }
-
-  private resolveArg(node: Node, key: string, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void): string {
-    const edge = func.edges.find(e => e.to === node.id && (e.portIn === key || (key === 'val' && e.portIn === 'value')) && e.type === 'data');
+  private resolveArg(node: Node, key: string, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]): string {
+    const edge = edges.find(e => e.to === node.id && (e.portIn === key || (key === 'val' && e.portIn === 'value')) && e.type === 'data');
     if (edge) {
       const source = func.nodes.find(n => n.id === edge.from);
-      if (source) return this.compileExpression(source, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure);
+      if (source) return this.compileExpression(source, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure, edges);
     }
 
+    let val: any = undefined;
     if (node[key] !== undefined || (key === 'val' && node['value'] !== undefined)) {
-      const val = (node[key] !== undefined) ? node[key] : node['value'];
+      val = (node[key] !== undefined) ? node[key] : node['value'];
+    } else {
+      const match = key.match(/^(.+)\[(\d+)\]$/);
+      if (match) {
+        const baseKey = match[1];
+        const idx = parseInt(match[2], 10);
+        if (Array.isArray(node[baseKey])) val = node[baseKey][idx];
+      }
+    }
+
+    if (val !== undefined) {
       if (typeof val === 'string' && !['var', 'func', 'resource', 'buffer'].includes(key)) {
         if (func.localVars.some(v => v.id === val)) return sanitizeId(val, 'var');
         if (func.inputs.some(i => i.id === val)) return sanitizeId(val, 'input');
         if (this.ir?.inputs.some((i: any) => i.id === val)) return `inputs.get('${val}')`;
         const targetNode = func.nodes.find(n => n.id === val);
-        if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure);
+        if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure, edges);
       }
       return JSON.stringify(val);
     }
     return '0';
   }
 
-  private compileExpression(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], forceEmit: boolean = false, emitPure: (id: string) => void): string {
+  private compileExpression(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], forceEmit: boolean = false, emitPure: (id: string) => void, edges: Edge[]): string {
     if (!forceEmit && this.hasResult(node.op)) {
       emitPure(node.id);
       return nodeResId(node.id);
     }
 
-    const a = (k = 'a') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
-    const b = (k = 'b') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
-    const val = (k = 'val') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+    const a = (k = 'a') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+    const b = (k = 'b') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+    const val = (k = 'val') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
 
     switch (node.op) {
       case 'var_get': {
@@ -443,7 +470,7 @@ export class CpuJitCompiler {
       }
       case 'texture_load': {
         const texId = node['tex'];
-        const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `((coords) => {
           const res = resources.get('${texId}');
           if (!res) return [0, 0, 0, 0];
@@ -454,7 +481,7 @@ export class CpuJitCompiler {
       }
       case 'texture_sample': {
         const texId = node['tex'];
-        const uv = (node['uv'] !== undefined) ? this.resolveArg(node, 'uv', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure) : this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const uv = (node['uv'] !== undefined) ? this.resolveArg(node, 'uv', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges) : this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `((uv) => {
           const res = resources.get('${texId}');
           if (!res) return [0, 0, 0, 0];
@@ -532,23 +559,23 @@ export class CpuJitCompiler {
       case 'math_max': return `_applyBinary(${a()}, ${b()}, Math.max)`;
       case 'math_atan2': return `_applyBinary(${a()}, ${b()}, Math.atan2)`;
       case 'math_clamp': {
-        const minVal = this.resolveArg(node, 'min', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
-        const maxVal = this.resolveArg(node, 'max', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const minVal = this.resolveArg(node, 'min', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const maxVal = this.resolveArg(node, 'max', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `((v, min, max) => _applyBinary(_applyBinary(v, min, Math.max), max, Math.min))(${val()}, ${minVal}, ${maxVal})`;
       }
       case 'math_mad': {
-        const cVal = this.resolveArg(node, 'c', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const cVal = this.resolveArg(node, 'c', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `_applyBinary(_applyBinary(${a()}, ${b()}, (x, y) => x * y), ${cVal}, (x, y) => x + y)`;
       }
 
       case 'math_mix': {
-        const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${a()}, ${b()}, ${t})`;
       }
-      case 'math_step': return `_applyBinary(${this.resolveArg(node, 'edge', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}, ${val()}, (e, x) => x < e ? 0 : 1)`;
+      case 'math_step': return `_applyBinary(${this.resolveArg(node, 'edge', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}, ${val()}, (e, x) => x < e ? 0 : 1)`;
       case 'math_smoothstep': {
-        const e0 = this.resolveArg(node, 'edge0', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
-        const e1 = this.resolveArg(node, 'edge1', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const e0 = this.resolveArg(node, 'edge0', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const e1 = this.resolveArg(node, 'edge1', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `((v, edge0, edge1) => _applyUnary(_applyBinary(_applyBinary(v, edge0, (x, e) => (x - e)), _applyBinary(edge1, edge0, (e1, e0) => (e1 - e0)), (n, d) => Math.max(0, Math.min(1, n / d))), t => t * t * (3 - 2 * t)))(${val()}, ${e0}, ${e1})`;
       }
 
@@ -575,9 +602,9 @@ export class CpuJitCompiler {
       case 'color_mix': {
         const dst = a();
         const src = b();
-        const tEdge = func.edges.find(e => e.to === node.id && e.portIn === 't' && e.type === 'data');
+        const tEdge = edges.find(e => e.to === node.id && e.portIn === 't' && e.type === 'data');
         if (tEdge || (node['t'] !== undefined)) {
-          const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+          const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
           return `_applyBinary(_applyBinary(${dst}, _applyBinary(1, ${t}, (x, y) => x - y), (x, y) => x * y), _applyBinary(${src}, ${t}, (x, y) => x * y), (x, y) => x + y)`;
         }
         return `((d, s) => {
@@ -593,9 +620,9 @@ export class CpuJitCompiler {
       }
 
       // Vectors / Arrays
-      case 'vec_get_element': return `(${this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}[${this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}])`;
+      case 'vec_get_element': return `(${this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}[${this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}])`;
       case 'vec_mix': {
-        const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${a()}, ${b()}, ${t})`;
       }
 
@@ -634,18 +661,18 @@ export class CpuJitCompiler {
       case 'float3x3':
       case 'float4x4': {
         const size = node.op === 'float3x3' ? 9 : 16;
-        if (node['vals'] !== undefined || func.edges.some(e => e.to === node.id && e.portIn === 'vals')) {
+        if (node['vals'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'vals')) {
           return a('vals');
         }
         const keys = size === 9 ? ['m00', 'm10', 'm20', 'm01', 'm11', 'm21', 'm02', 'm12', 'm22'] :
           ['m00', 'm10', 'm20', 'm30', 'm01', 'm11', 'm21', 'm31', 'm02', 'm12', 'm22', 'm32', 'm03', 'm13', 'm23', 'm33'];
-        return `[${keys.map(k => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)).join(', ')}]`;
+        return `[${keys.map(k => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)).join(', ')}]`;
       }
       case 'vec_dot': return `_vec_dot(${a()}, ${b()})`;
       case 'vec_length': return `_vec_length(${a()})`;
       case 'vec_normalize': return `_vec_normalize(${a()})`;
       case 'vec_swizzle': {
-        const vec = this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const vec = this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         const channels = node['channels'] || node['swizzle'] || 'x';
         const map: any = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3 };
         const idxs = channels.split('').map((c: string) => map[c]);
@@ -658,44 +685,31 @@ export class CpuJitCompiler {
         const parts = [];
         for (const k in node) {
           if (['id', 'op', 'metadata', 'const_data', 'type'].includes(k)) continue;
-          parts.push(`'${k}': ${this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}`);
+          parts.push(`'${k}': ${this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}`);
         }
         return `{ ${parts.join(', ')} }`;
       }
-      case 'struct_extract': return `(${this.resolveArg(node, 'struct', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}['${node['field'] || node['member']}'])`;
+      case 'struct_extract': return `(${this.resolveArg(node, 'struct', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}['${node['field'] || node['member']}'])`;
 
       // Arrays
       case 'array_construct': {
-        if (node['values']) return JSON.stringify(node['values']);
-        const len = this.resolveArg(node, 'length', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
-        const fill = this.resolveArg(node, 'fill', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        const values = node['values'];
+        if (Array.isArray(values)) {
+          const items = values.map((_, i) => this.resolveArg(node, `values[${i}]`, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges));
+          return `[${items.join(', ')}]`;
+        }
+        const len = this.resolveArg(node, 'length', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const fill = this.resolveArg(node, 'fill', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `new Array(${len}).fill(${fill})`;
       }
-      case 'array_extract': return `${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}[${a('index')}]`;
-      case 'array_length': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}.length)`;
-      case 'array_set': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}[${a('index')}] = ${val('value')})`;
+      case 'array_extract': return `${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}[${a('index')}]`;
+      case 'array_length': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}.length)`;
+      case 'array_set': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}[${a('index')}] = ${val('value')})`;
 
       // Quaternions
       case 'quat': return `[${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}]`;
       case 'quat_identity': return `[0, 0, 0, 1]`;
       case 'quat_mul': return `_quat_mul(${a()}, ${b()})`;
-      case 'quat_slerp': return `_quat_slerp(${a()}, ${b()}, ${this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)})`;
-      case 'quat_to_float4x4': {
-        const q = a('q');
-        return `((q) => {
-          const [x, y, z, w] = q;
-          const x2 = x + x; const y2 = y + y; const z2 = z + z;
-          const xx = x * x2; const xy = x * y2; const xz = x * z2;
-          const yy = y * y2; const yz = y * z2; const zz = z * z2;
-          const wx = w * x2; const wy = w * y2; const wz = w * z2;
-          return [
-            1 - (yy + zz), xy + wz, xz - wy, 0,
-            xy - wz, 1 - (xx + zz), yz + wx, 0,
-            xz + wy, yz - wx, 1 - (xx + yy), 0,
-            0, 0, 0, 1
-          ];
-        })(${q})`;
-      }
       case 'quat_rotate': {
         const v = a('v');
         const q = a('q');
@@ -713,12 +727,14 @@ export class CpuJitCompiler {
           ];
         })(${v}, ${q})`;
       }
+      case 'quat_slerp': return `_quat_slerp(${a()}, ${b()}, ${this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)})`;
+      case 'quat_to_float4x4': return `_quat_to_mat4(${this.resolveArg(node, 'q', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)})`;
 
       default: return '0';
     }
   }
 
-  private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void): string {
+  private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]): string {
     const parts: string[] = [];
     const targetId = node['func'];
     const targetFunc = allFunctions.find(f => f.id === targetId);
@@ -727,13 +743,13 @@ export class CpuJitCompiler {
       targetFunc.inputs.forEach((input, idx) => {
         let valExpr = '0';
         if (node['args'] && node['args'][idx] !== undefined) valExpr = JSON.stringify(node['args'][idx]);
-        else valExpr = this.resolveArg(node, input.id, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure);
+        else valExpr = this.resolveArg(node, input.id, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         parts.push(`'${input.id}': ${valExpr}`);
       });
     } else {
       for (const k in node) {
         if (['id', 'op', 'metadata', 'const_data', 'func', 'args', 'dispatch'].includes(k)) continue;
-        parts.push(`'${k}': ${this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure)}`);
+        parts.push(`'${k}': ${this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}`);
       }
     }
     return `{ ${parts.join(', ')} }`;

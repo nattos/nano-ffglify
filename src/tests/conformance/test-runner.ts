@@ -22,20 +22,19 @@ if (process.env.TEST_BACKEND && availableBackends.length === 0) {
 // ------------------------------------------------------------------
 
 export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [], extraEdges: any[] = [], localVars: any[] = [{ id: 'res', type: 'float' }], structs: any[] = [], globalVars: any[] = []): IRDocument => {
-  const edges: any[] = [];
-  const nodeIds = new Set(nodes.map(n => n.id));
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-  // Auto-wire 'data' edges based on matching IDs in properties
-  nodes.forEach(node => {
-    Object.keys(node).forEach(key => {
-      // Skip properties that are structural references, not data edges
-      if (['var', 'func', 'resource', 'buffer', 'tex', 'loop'].includes(key)) return;
+  // Apply extra edges (execution or manual data) back to node properties
+  extraEdges.forEach(e => {
+    const from = nodeMap.get(e.from);
+    const to = nodeMap.get(e.to);
+    if (!from || !to) return;
 
-      const val = node[key];
-      if (typeof val === 'string' && nodeIds.has(val) && val !== node.id) {
-        edges.push({ from: val, portOut: 'val', to: node.id, portIn: key, type: 'data' });
-      }
-    });
+    if (e.type === 'execution') {
+      from[e.portOut || 'exec_out'] = e.to;
+    } else if (e.type === 'data') {
+      to[e.portIn] = e.from;
+    }
   });
 
   return {
@@ -51,8 +50,7 @@ export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [],
       inputs: [],
       outputs: [],
       localVars: localVars,
-      nodes: nodes,
-      edges: [...edges, ...extraEdges]
+      nodes: nodes
     }]
   };
 };

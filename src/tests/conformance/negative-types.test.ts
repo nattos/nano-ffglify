@@ -18,8 +18,7 @@ describe('Compliance: Negative Data Type Validation', () => {
         inputs: [],
         outputs: [],
         localVars: [],
-        nodes: [],
-        edges: []
+        nodes: []
       }
     ]
   };

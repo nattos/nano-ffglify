@@ -41,8 +41,7 @@ describe('Conformance: GPU Marshalling', () => {
               { id: 'i_val', op: 'int', val: 42 },
               { id: 'b_val', op: 'bool', val: true },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], f: 'f_val', i: 'i_val', b: 'b_val' }
-            ],
-            edges: []
+            ]
           },
           {
             id: 'shader_main',
@@ -61,8 +60,7 @@ describe('Conformance: GPU Marshalling', () => {
               { id: 's2', op: 'buffer_store', buffer: 'b_res', index: 1, value: 'f_i' },
               { id: 'f_b', op: 'static_cast_float', val: 'b' },
               { id: 's3', op: 'buffer_store', buffer: 'b_res', index: 2, value: 'f_b' }
-            ],
-            edges: []
+            ]
           }
         ]
       };
@@ -106,8 +104,7 @@ describe('Conformance: GPU Marshalling', () => {
               { id: 'v3', op: 'float3', x: 3, y: 4, z: 5 },
               { id: 'v4', op: 'float4', x: 6, y: 7, z: 8, w: 9 },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], v2: 'v2', v3: 'v3', v4: 'v4' }
-            ],
-            edges: []
+            ]
           },
           {
             id: 'shader_main',
@@ -141,8 +138,7 @@ describe('Conformance: GPU Marshalling', () => {
               { id: 's7', op: 'buffer_store', buffer: 'b_res', index: 6, value: 'v4y' },
               { id: 's8', op: 'buffer_store', buffer: 'b_res', index: 7, value: 'v4z' },
               { id: 's9', op: 'buffer_store', buffer: 'b_res', index: 8, value: 'v4w' }
-            ],
-            edges: []
+            ]
           }
         ]
       };
@@ -184,8 +180,7 @@ describe('Conformance: GPU Marshalling', () => {
               // 4x4 diagonal
               { id: 'm4', op: 'float4x4', vals: [4, 0, 0, 0, 0, 5, 0, 0, 0, 0, 6, 0, 0, 0, 0, 7] },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], m3: 'm3', m4: 'm4' }
-            ],
-            edges: []
+            ]
           },
           {
             id: 'shader_main',
@@ -213,8 +208,7 @@ describe('Conformance: GPU Marshalling', () => {
               { id: 's5_m4', op: 'buffer_store', buffer: 'b_res', index: 14, value: 'm4_5' },
               { id: 's10_m4', op: 'buffer_store', buffer: 'b_res', index: 19, value: 'm4_10' },
               { id: 's15_m4', op: 'buffer_store', buffer: 'b_res', index: 24, value: 'm4_15' }
-            ],
-            edges: []
+            ]
           }
         ]
       };
@@ -272,8 +266,7 @@ describe('Conformance: GPU Marshalling', () => {
               { id: 'v2', op: 'float2', x: 20, y: 30 },
               { id: 's', op: 'struct_construct', type: 'Simple', a: 10, b: 'v2' },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], data: 's' }
-            ],
-            edges: []
+            ]
           },
           {
             id: 'shader_main',
@@ -289,8 +282,7 @@ describe('Conformance: GPU Marshalling', () => {
               { id: 's1', op: 'buffer_store', buffer: 'b_res', index: 0, value: 'a' },
               { id: 's2', op: 'buffer_store', buffer: 'b_res', index: 1, value: 'bx' },
               { id: 's3', op: 'buffer_store', buffer: 'b_res', index: 2, value: 'by' }
-            ],
-            edges: []
+            ]
           }
         ]
       };
@@ -330,8 +322,7 @@ describe('Conformance: GPU Marshalling', () => {
             nodes: [
               { id: 'arr', op: 'array_construct', length: 3, fill: 7.0 },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], data: 'arr' }
-            ],
-            edges: []
+            ]
           },
           {
             id: 'shader_main',
@@ -346,8 +337,7 @@ describe('Conformance: GPU Marshalling', () => {
               { id: 's0', op: 'buffer_store', buffer: 'b_res', index: 0, value: 'e0' },
               { id: 's1', op: 'buffer_store', buffer: 'b_res', index: 1, value: 'e1' },
               { id: 's2', op: 'buffer_store', buffer: 'b_res', index: 2, value: 'e2' }
-            ],
-            edges: []
+            ]
           }
         ]
       };
@@ -387,8 +377,7 @@ describe('Conformance: GPU Marshalling', () => {
             nodes: [
               { id: 'arr', op: 'array_construct', length: 4, fill: 9.0 },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], data: 'arr' }
-            ],
-            edges: []
+            ]
           },
           {
             id: 'shader_main',
@@ -404,8 +393,7 @@ describe('Conformance: GPU Marshalling', () => {
               // Store length as float at index 1
               { id: 'flen', op: 'static_cast_float', val: 'len' },
               { id: 's1', op: 'buffer_store', buffer: 'b_res', index: 1, value: 'flen' }
-            ],
-            edges: []
+            ]
           }
         ]
       };
@@ -451,12 +439,9 @@ describe('Conformance: GPU Marshalling', () => {
             nodes: [
               { id: 'p1', op: 'struct_construct', type: 'Point', val: 123 },
               { id: 'p2', op: 'struct_construct', type: 'Point', val: 456 },
-              { id: 'arr', op: 'array_construct', length: 2, fill: 'p1' },
-              { id: 'set', op: 'array_set', array: 'arr', index: 1, value: 'p2' },
+              { id: 'arr', op: 'array_construct', length: 2, fill: 'p1', next: 'set' },
+              { id: 'set', op: 'array_set', array: 'arr', index: 1, value: 'p2', exec_out: 'disp' },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], points: 'arr' }
-            ],
-            edges: [
-              { from: 'set', portOut: 'exec_out', to: 'disp', portIn: 'exec_in', type: 'execution' }
             ]
           },
           {
@@ -472,8 +457,7 @@ describe('Conformance: GPU Marshalling', () => {
               { id: 'v1', op: 'struct_extract', struct: 'e1', field: 'val' },
               { id: 's0', op: 'buffer_store', buffer: 'b_res', index: 0, value: 'v0' },
               { id: 's1', op: 'buffer_store', buffer: 'b_res', index: 1, value: 'v1' }
-            ],
-            edges: []
+            ]
           }
         ]
       };
@@ -505,8 +489,7 @@ describe('Conformance: GPU Marshalling', () => {
             nodes: [
               { id: 'str', op: 'string', val: 'hello' },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], msg: 'str' }
-            ],
-            edges: []
+            ]
           },
           {
             id: 'shader_main',

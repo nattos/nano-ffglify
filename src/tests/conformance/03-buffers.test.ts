@@ -116,10 +116,6 @@ describe('Conformance: Buffers', () => {
             { id: 'bad_store_1', op: 'buffer_store', buffer: 'b_int', index: 0, value: 'f_val' },
             // Store int into float buffer -> Error
             { id: 'bad_store_2', op: 'buffer_store', buffer: 'b_float', index: 0, value: 'i_val' }
-          ],
-          edges: [
-            { from: 'f_val', portOut: 'val', to: 'bad_store_1', portIn: 'value', type: 'data' },
-            { from: 'i_val', portOut: 'val', to: 'bad_store_2', portIn: 'value', type: 'data' }
           ]
         }
       ]
