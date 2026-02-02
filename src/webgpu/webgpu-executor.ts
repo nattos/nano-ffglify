@@ -141,7 +141,10 @@ export class WebGpuExecutor {
       const res = state.def;
       if (res.type === 'texture2d') {
         const tex = this.ensureTexture(res.id);
-        if (tex) entries.push({ binding, resource: tex.createView() });
+        if (tex) {
+          this.writeTextureData(res.id);
+          entries.push({ binding, resource: tex.createView() });
+        }
       } else {
         const compCount = this.getComponentCount(res.dataType || 'float');
         const finalSize = Math.max(state.width * compCount * 4, 16);
@@ -407,7 +410,10 @@ export class WebGpuExecutor {
 
       if (state.def.type === 'texture2d') {
         const tex = this.ensureTexture(resId);
-        if (tex) entries.push({ binding, resource: tex.createView() });
+        if (tex) {
+          this.writeTextureData(resId);
+          entries.push({ binding, resource: tex.createView() });
+        }
       } else {
         if (!(state as any).gpuBuffer) {
           const compCount = this.getComponentCount(state.def.dataType || 'float');
@@ -452,6 +458,57 @@ export class WebGpuExecutor {
       (state as any).gpuTexture = gpuTexture;
     }
     return (state as any).gpuTexture;
+  }
+
+  private writeTextureData(id: string) {
+    const state = this.resources.get(id);
+    if (!state || !state.data || state.def.type !== 'texture2d') return;
+
+    const gpuTexture = (state as any).gpuTexture as GPUTexture;
+    if (!gpuTexture) return;
+
+    const irFormat = (state.def.format || 'rgba8').toString().toLowerCase();
+    const isFloat = irFormat.includes('32f') || irFormat.includes('16f') || irFormat.includes('float');
+
+    if (isFloat) {
+      const flatData = new Float32Array(state.width * state.height * 4);
+      for (let i = 0; i < state.data.length && i < state.width * state.height; i++) {
+        const val = state.data[i] as number[];
+        if (Array.isArray(val)) {
+          flatData.set(val, i * 4);
+        } else {
+          flatData[i * 4] = val as any;
+        }
+      }
+      this.device.queue.writeTexture(
+        { texture: gpuTexture },
+        flatData,
+        { bytesPerRow: state.width * 16 },
+        [state.width, state.height, 1]
+      );
+    } else {
+      const flatData = new Uint8Array(state.width * state.height * 4);
+      for (let i = 0; i < state.data.length && i < state.width * state.height; i++) {
+        const val = state.data[i] as number[];
+        if (Array.isArray(val)) {
+          flatData[i * 4] = Math.max(0, Math.min(255, val[0] * 255));
+          flatData[i * 4 + 1] = Math.max(0, Math.min(255, (val[1] ?? 0) * 255));
+          flatData[i * 4 + 2] = Math.max(0, Math.min(255, (val[2] ?? 0) * 255));
+          flatData[i * 4 + 3] = Math.max(0, Math.min(255, (val[3] ?? 1) * 255));
+        } else {
+          flatData[i * 4] = Math.max(0, Math.min(255, (val as any) * 255));
+          flatData[i * 4 + 1] = flatData[i * 4];
+          flatData[i * 4 + 2] = flatData[i * 4];
+          flatData[i * 4 + 3] = 255;
+        }
+      }
+      this.device.queue.writeTexture(
+        { texture: gpuTexture },
+        flatData,
+        { bytesPerRow: state.width * 4 },
+        [state.width, state.height, 1]
+      );
+    }
   }
 
   private getComponentCount(type: string): number {

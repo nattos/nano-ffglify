@@ -21,6 +21,8 @@ export interface WgslOptions {
   entryPointId?: string; // Cache entry point ID for resolution
   structs?: StructDef[]; // Optional structs for dependency resolution
   workgroupSize?: [number, number, number];
+  storageResources?: Set<string>; // Pre-calculated resources used with texture_store
+  sampledResources?: Set<string>; // Pre-calculated resources used with texture_sample/texture_load
 }
 
 export interface CompilationMetadata {
@@ -78,7 +80,6 @@ export class WgslGenerator {
     // 2. Structs
     this.generateStructs(fullIr, lines);
 
-    // 4. Entry point and dependencies
     const emitted = new Set<string>();
     const toEmit = [entryPointId];
 
@@ -89,8 +90,6 @@ export class WgslGenerator {
 
       const f = functions.find(func => func.id === fid);
       if (f) {
-        this.emitFunction(f, fid === entryPointId, functionLines, options, fullIr);
-        functionLines.push(''); // Decorate with newline
         // Find called functions
         f.nodes.forEach(n => {
           if (n.op === 'call_func' && typeof n.func === 'string') {
@@ -100,19 +99,35 @@ export class WgslGenerator {
       }
     }
 
-    // Identify used resources for sampler helpers
+    // Identify used resources and storage/sampled access for reachable functions
     const usedResources = new Set<string>();
-    emitted.forEach(fid => {
-      const f = functions.find(func => func.id === fid);
-      if (f) {
-        const used = WgslGenerator.findUsedResources(f, fullIr);
-        used.forEach(r => usedResources.add(r));
-      }
-    });
+    const storageResources = new Set<string>();
+    const sampledResources = new Set<string>();
+    const finalEmittedFunctions = functions.filter(f => emitted.has(f.id));
 
-    // 3. Resources (Textures/Buffers) - Sampler Helpers
-    const emittedFunctions = functions.filter(f => emitted.has(f.id));
-    this.emitTextureSamplers(lines, options, fullIr, usedResources, emittedFunctions);
+    for (const f of finalEmittedFunctions) {
+      const used = WgslGenerator.findUsedResources(f, fullIr);
+      used.forEach(r => usedResources.add(r));
+
+      // Centralized detection of access modes
+      f.nodes.forEach(n => {
+        if (n.op === 'texture_store' && typeof n['tex'] === 'string') {
+          storageResources.add(n['tex']);
+        }
+        if ((n.op === 'texture_sample' || n.op === 'texture_load') && typeof n['tex'] === 'string') {
+          sampledResources.add(n['tex']);
+        }
+      });
+    }
+    options.storageResources = storageResources;
+    options.sampledResources = sampledResources;
+
+    for (const f of finalEmittedFunctions) {
+      this.emitFunction(f, f.id === entryPointId, functionLines, options, fullIr, finalEmittedFunctions);
+      functionLines.push('');
+    }
+
+    this.emitTextureSamplers(lines, options, fullIr, usedResources);
 
     // Assemble final shader code
     const finalLines: string[] = [];
@@ -165,8 +180,10 @@ export class WgslGenerator {
           const bufVar = this.getBufferVar(resId);
           finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> ${bufVar} : ${structName};`);
         } else if (def.type === 'texture2d') {
-          // Identify if USED as storage IN THIS MODULE (only among emitted functions)
-          const isStorage = emittedFunctions.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === resId));
+          // Identify if USED as storage IN THIS MODULE (pre-calculated based on reachable functions)
+          const isStorage = options.storageResources?.has(resId);
+          const isSampled = options.sampledResources?.has(resId);
+
           if (isStorage) {
             let format = 'rgba8unorm';
             const irFormat = def.format;
@@ -174,7 +191,9 @@ export class WgslGenerator {
               const formatMap: Record<string, string> = { 'rgba8': 'rgba8unorm', 'rgba16f': 'rgba16float', 'rgba32f': 'rgba32float', 'r32f': 'r32float' };
               format = formatMap[irFormat] || irFormat;
             }
-            finalLines.push(`@group(0) @binding(${bindingIdx}) var ${resId} : texture_storage_2d<${format}, write>;`);
+            // Use read_write if both read and written, otherwise write only
+            const mode = isSampled ? 'read_write' : 'write';
+            finalLines.push(`@group(0) @binding(${bindingIdx}) var ${resId} : texture_storage_2d<${format}, ${mode}>;`);
           } else {
             finalLines.push(`@group(0) @binding(${bindingIdx}) var ${resId} : texture_2d<f32>;`);
           }
@@ -227,7 +246,17 @@ export class WgslGenerator {
   }
 
   compile(ir: IRDocument, entryPointId: string, options: WgslOptions = {}): CompilationResult {
-    if (!options.resourceDefs) options.resourceDefs = new Map(ir.resources.map(r => [r.id, r]));
+    if (!options.resourceDefs) {
+      options.resourceDefs = new Map<string, any>(ir.resources.map(r => [r.id, r]));
+      // Also include texture-inputs as resources so resource_get_size works for them
+      ir.inputs.forEach(input => {
+        if (input.type === 'texture2d' || input.type === 'texture_2d') {
+          if (!options.resourceDefs!.has(input.id)) {
+            options.resourceDefs!.set(input.id, { ...input, type: 'texture2d' } as any);
+          }
+        }
+      });
+    }
     if (!options.stage) options.stage = 'compute';
     if (options.inputBinding === undefined) options.inputBinding = 1;
     if (!options.resourceBindings) {
@@ -250,24 +279,27 @@ export class WgslGenerator {
     this.helpers.add(code);
   }
 
-  private emitTextureSamplers(lines: string[], options: WgslOptions, ir: IRDocument, usedResources: Set<string>, emittedFunctions?: FunctionDef[]) {
+  private emitTextureSamplers(lines: string[], options: WgslOptions, ir: IRDocument, usedResources: Set<string>) {
     if (!options.resourceDefs) return;
-    const funcs = emittedFunctions || ir.functions;
     options.resourceDefs.forEach((def, id) => {
       if (!usedResources.has(id)) return;
       if (def.type === 'texture2d') {
-        const isStorage = funcs.some(f => f.nodes.some(n => n.op === 'texture_store' && n['tex'] === id));
-        if (isStorage) return; // Skip sampling helper for storage textures
+        const isSampled = options.sampledResources?.has(id);
+        if (!isSampled) return; // Skip helper if never sampled/read
+
+        const isStorage = options.storageResources?.has(id);
+        // We emit the helper even for storage textures, because they might be sampled too.
+        // The helper uses textureLoad which works for both.
 
         const wrap = def.sampler?.wrap || 'clamp';
         const filter = def.sampler?.filter || 'nearest';
 
         lines.push(`fn sample_${id}(uv: vec2<f32>) -> vec4<f32> {`);
-        lines.push(`  let size = vec2<f32>(textureDimensions(${id}, 0u));`);
+        lines.push(`  let size = vec2<f32>(textureDimensions(${id}${isStorage ? "" : ", 0u"}));`);
         lines.push(`  let uv_wrap = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));`);
         lines.push(`  let coord = vec2<i32>(floor(uv_wrap * size));`);
         lines.push(`  let safe_coord = clamp(coord, vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));`);
-        lines.push(`  return textureLoad(${id}, safe_coord, 0u);`);
+        lines.push(`  return textureLoad(${id}, safe_coord${isStorage ? "" : ", 0u"});`);
         lines.push(`}`);
         lines.push('');
       }
@@ -294,12 +326,13 @@ export class WgslGenerator {
     }
   }
 
-  private emitPlaceholders(lines: string[], options: WgslOptions, includeInputs: boolean) {
+  private emitPlaceholders(lines: string[], options: WgslOptions, includeInputs: boolean, emittedFunctions: FunctionDef[]) {
     if (options.resourceBindings) {
       options.resourceBindings.forEach((_, resId) => {
         const def = options.resourceDefs?.get(resId);
         if (def?.type === 'texture2d') {
-          lines.push(`  _ = textureDimensions(${resId});`);
+          const isStorage = options.storageResources?.has(resId);
+          lines.push(`  _ = textureDimensions(${resId}${isStorage ? "" : ", 0u"});`);
         } else {
           const bufVar = this.getBufferVar(resId);
           lines.push(`  _ = &${bufVar}.data;`);
@@ -311,7 +344,7 @@ export class WgslGenerator {
     }
   }
 
-  private emitFunction(func: FunctionDef, isEntryPoint: boolean, lines: string[], options: WgslOptions, ir: IRDocument) {
+  private emitFunction(func: FunctionDef, isEntryPoint: boolean, lines: string[], options: WgslOptions, ir: IRDocument, emittedFunctions: FunctionDef[]) {
     const nonBuiltinInputs = func.inputs.filter(i => !(i as any).builtin);
 
     if (isEntryPoint) {
@@ -322,7 +355,7 @@ export class WgslGenerator {
         if (this.allUsedBuiltins.has('vertex_index')) lines.push(`  VertexIndex = vertex_index;`);
         if (this.allUsedBuiltins.has('instance_index')) lines.push(`  InstanceIndex = instance_index;`);
 
-        this.emitPlaceholders(lines, options, false);
+        this.emitPlaceholders(lines, options, false, emittedFunctions);
 
         for (const input of func.inputs) {
           if (input.builtin === 'vertex_index') lines.push(`  let l_${input.id} = i32(vertex_index);`);
@@ -360,7 +393,7 @@ export class WgslGenerator {
         if (this.allUsedBuiltins.has('sample_index')) lines.push(`  SampleIndex = si;`);
         if (this.allUsedBuiltins.has('position')) lines.push(`  Position = pos;`);
 
-        this.emitPlaceholders(lines, options, false);
+        this.emitPlaceholders(lines, options, false, emittedFunctions);
 
         for (const input of func.inputs) {
           if (input.builtin === 'frag_coord') lines.push(`  let l_${input.id} = fc;`);
@@ -383,7 +416,7 @@ export class WgslGenerator {
         if (this.allUsedBuiltins.has('local_invocation_index')) lines.push(`  LocalInvocationIndex = lidx;`);
         if (this.allUsedBuiltins.has('num_workgroups')) lines.push(`  NumWorkgroups = nw;`);
 
-        this.emitPlaceholders(lines, options, nonBuiltinInputs.length > 0);
+        this.emitPlaceholders(lines, options, nonBuiltinInputs.length > 0, emittedFunctions);
 
         for (const input of func.inputs) {
           if (input.builtin === 'global_invocation_id') lines.push(`  let l_${input.id} = gid;`);
@@ -659,13 +692,14 @@ export class WgslGenerator {
     if (node.op === 'texture_load') {
       const tex = node['tex'];
       const coords = this.resolveArg(node, 'coords', func, options, ir, 'any', edges);
-      return `textureLoad(${tex}, vec2<i32>(${coords}), 0u)`;
+      const isStorage = options.storageResources?.has(tex);
+      return `textureLoad(${tex}, vec2<i32>(${coords})${isStorage ? "" : ", 0u"})`;
     }
     if (node.op === 'resource_get_size') {
       const resId = node['resource'];
       const def = options.resourceDefs?.get(resId);
       if (def?.type === 'texture2d') {
-        const isStorage = func.nodes.some(n => n.op === 'texture_store' && n['tex'] === resId);
+        const isStorage = options.storageResources?.has(resId);
         return `vec2<f32>(textureDimensions(${resId}${isStorage ? '' : ', 0u'}))`;
       }
       if (def?.type === 'buffer') return `vec2<f32>(f32(arrayLength(&${this.getBufferVar(resId)}.data)), 0.0)`;

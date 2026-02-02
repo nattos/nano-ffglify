@@ -257,7 +257,8 @@ export class CpuJitCompiler {
 
   private isExecutable(op: string) {
     return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
-      op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set';
+      op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' ||
+      op === 'cmd_resize_resource' || op === 'cmd_draw' || op === 'cmd_dispatch';
   }
 
   private hasResult(op: string) {
@@ -271,7 +272,8 @@ export class CpuJitCompiler {
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length', 'array_set',
       'var_get', 'buffer_load', 'texture_load', 'call_func', 'vec_swizzle',
-      'color_mix', 'vec_get_element', 'quat'
+      'color_mix', 'vec_get_element', 'quat',
+      'resource_get_size', 'resource_get_format', 'builtin_get', 'const_get'
     ];
     return valueOps.includes(op);
   }
@@ -348,14 +350,26 @@ export class CpuJitCompiler {
   private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
     if (node.op === 'cmd_dispatch') {
       const targetId = node['func'];
-      const dimCode = Array.isArray(node['dispatch']) ? JSON.stringify(node['dispatch']) : '[1, 1, 1]';
+      let dimCode: string;
+      if (Array.isArray(node['dispatch'])) {
+        dimCode = JSON.stringify(node['dispatch']);
+      } else {
+        const dx = this.resolveArg(node, 'x', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const dy = this.resolveArg(node, 'y', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const dz = this.resolveArg(node, 'z', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        dimCode = `[${dx === '0' ? 1 : dx}, ${dy === '0' ? 1 : dy}, ${dz === '0' ? 1 : dz}]`;
+      }
       lines.push(`${indent}await globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
     }
     else if (node.op === 'call_func') {
       const targetId = node['func'];
       const targetFunc = allFunctions.find(f => f.id === targetId);
       if (targetFunc?.type === 'shader') {
-        lines.push(`${indent}await globals.dispatch('${targetId}', [1, 1, 1], ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
+        const dx = this.resolveArg(node, 'x', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const dy = this.resolveArg(node, 'y', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const dz = this.resolveArg(node, 'z', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const dimCode = `[${dx === '0' ? 1 : dx}, ${dy === '0' ? 1 : dy}, ${dz === '0' ? 1 : dz}]`;
+        lines.push(`${indent}await globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
       } else if (targetFunc) {
         lines.push(`${indent}${nodeResId(node.id)} = await ${funcName(targetId)}(${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
       }
