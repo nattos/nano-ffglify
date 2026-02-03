@@ -138,7 +138,10 @@ export class WgslGenerator {
     this.validateRecursion(ir?.functions || []);
 
     // 1. Emit Globals struct
-    if (ir?.globals && ir.globals.length > 0) {
+    // Check if we have explicit globals in IR OR if we have mapped variables (Compute backend)
+    const hasGlobals = (ir?.globals && ir.globals.length > 0) || (options.varMap && options.varMap.size > 0);
+
+    if (hasGlobals && options.globalBufferBinding !== undefined) {
       finalLines.push('struct GlobalsBuffer { data: array<f32> }');
       finalLines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : GlobalsBuffer;`);
       finalLines.push('');
