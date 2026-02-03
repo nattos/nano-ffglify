@@ -1000,6 +1000,11 @@ export class WgslGenerator {
     if (op === 'math_eq') return `(${arg('a')} == ${arg('b')})`;
     if (op === 'math_neq') return `(${arg('a')} != ${arg('b')})`;
 
+    if (op === 'math_and') return `(${arg('a')} && ${arg('b')})`;
+    if (op === 'math_or') return `(${arg('a')} || ${arg('b')})`;
+    if (op === 'math_xor') return `(${arg('a')} != ${arg('b')})`; // Boolean XOR is !=
+    if (op === 'math_not') return `(!${arg('val')})`;
+
     // Vectors
     if (op === 'vec_dot') return `dot(${arg('a')}, ${arg('b')})`;
     if (op === 'vec_cross') return `cross(${arg('a')}, ${arg('b')})`;
