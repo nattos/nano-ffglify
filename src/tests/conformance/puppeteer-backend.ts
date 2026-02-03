@@ -67,7 +67,21 @@ export const PuppeteerBackend: TestBackend = {
     // Run the test in the browser
     const backendName = process.env.PUPPETEER_SUB_BACKEND || 'Compute';
     const results = await page.evaluate(
-      (ir, ep, inputs, resources, bName) => (window as any).runGpuTest(ir, ep, inputs, resources, bName),
+      async (ir, ep, inputs, resources, bName) => {
+        const res = await (window as any).runGpuTest(ir, ep, inputs, resources, bName);
+        // Serialize special float values to avoid JSON.stringify converting to null
+        if (res && res.vars) {
+          for (const k in res.vars) {
+            const v = res.vars[k];
+            if (typeof v === 'number') {
+              if (Number.isNaN(v)) res.vars[k] = 'NaN';
+              else if (v === Infinity) res.vars[k] = 'Infinity';
+              else if (v === -Infinity) res.vars[k] = '-Infinity';
+            }
+          }
+        }
+        return res;
+      },
       ctx.ir,
       entryPoint,
       inputsObj,
@@ -79,7 +93,12 @@ export const PuppeteerBackend: TestBackend = {
     ctx.pushFrame(entryPoint);
     if (results.vars) {
       for (const [key, val] of Object.entries(results.vars)) {
-        ctx.setVar(key, val as any);
+        let v = val;
+        // Parse special float values
+        if (v === 'NaN') v = NaN;
+        else if (v === 'Infinity') v = Infinity;
+        else if (v === '-Infinity') v = -Infinity;
+        ctx.setVar(key, v as any);
       }
     }
 
