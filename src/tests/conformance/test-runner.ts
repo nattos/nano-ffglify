@@ -1,18 +1,17 @@
 import { expect, it } from 'vitest';
 import { EvaluationContext } from '../../interpreter/context';
 import { IRDocument, FunctionType } from '../../ir/types';
-import { WebGpuBackend } from './webgpu-backend';
-import { ComputeTestBackend } from './compute-test-backend';
 import { TestBackend } from './types';
 import { InterpreterBackend } from './interpreter-backend';
-import { PuppeteerBackend, PuppeteerFullBackend } from './puppeteer-backend';
-import { GpuCache } from '../../webgpu/gpu-cache';
+import { BrowserCpuBackend, BrowserGpuBackend } from './puppeteer-backend';
 
-const backends = [InterpreterBackend, WebGpuBackend, ComputeTestBackend, PuppeteerBackend, PuppeteerFullBackend];
+const backends = [InterpreterBackend, BrowserCpuBackend, BrowserGpuBackend];
 
 export const availableBackends = process.env.TEST_BACKEND
   ? backends.filter(b => b.name === process.env.TEST_BACKEND)
   : backends;
+export const cpuBackends = availableBackends.filter(backend => [InterpreterBackend, BrowserCpuBackend].includes(backend));
+export const gpuBackends = availableBackends.filter(backend => [BrowserGpuBackend].includes(backend));
 
 if (process.env.TEST_BACKEND && availableBackends.length === 0) {
   console.warn(`[TestRunner] Warning: No backend found matching TEST_BACKEND='${process.env.TEST_BACKEND}'. Available: ${backends.map(b => b.name).join(', ')}`);

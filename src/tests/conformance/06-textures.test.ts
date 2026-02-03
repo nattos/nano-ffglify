@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { availableBackends } from './test-runner';
+import { availableBackends, cpuBackends } from './test-runner';
 import { IRDocument } from '../../ir/types';
 
 describe('Conformance: Texture Sampling', () => {
@@ -102,7 +102,7 @@ describe('Conformance: Texture Sampling', () => {
     });
 
     it(`should handle Format and Clear Operations [${backend.name}]`, async (testCtx) => {
-      if (backend.name === 'Puppeteer') {
+      if (!cpuBackends.includes(backend)) {
         testCtx.skip();
       }
       const ir: IRDocument = {

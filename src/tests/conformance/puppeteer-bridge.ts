@@ -16,7 +16,7 @@ import { WebGpuBackend } from './webgpu-backend';
   throw new Error(message);
 };
 
-(window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any, resourcesObj: any, backendName: string = 'Compute') => {
+(window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any, resourcesObj: any, backendName: string) => {
   // console.log(`[Bridge] runGpuTest called with backend: ${backendName}`, { entryPoint, inputsObj });
 
   // Convert plain object inputs back to Map

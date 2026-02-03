@@ -70,8 +70,7 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
   });
 
   // Run the test in the browser
-  // Allow env override, but default to the configured subBackend
-  const backendName = process.env.PUPPETEER_SUB_BACKEND || subBackend;
+  const backendName = subBackend;
   const results = await page.evaluate(
     async (ir, ep, inputs, resources, bName) => {
       const res = await (window as any).runGpuTest(ir, ep, inputs, resources, bName);
@@ -123,23 +122,23 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
   }
 };
 
-export const PuppeteerBackend: TestBackend = {
-  name: 'Puppeteer',
+export const BrowserCpuBackend: TestBackend = {
+  name: 'CPU',
   createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
     return new EvaluationContext(ir, inputs);
   },
   run: async (ctx: EvaluationContext, entryPoint: string) => {
-    await runImplementation(ctx, entryPoint, 'Compute');
+    await runImplementation(ctx, entryPoint, 'WebGPU');
   },
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
     const ctx = new EvaluationContext(ir, inputs);
-    await runImplementation(ctx, entryPoint, 'Compute');
+    await runImplementation(ctx, entryPoint, 'WebGPU');
     return ctx;
   }
 };
 
-export const PuppeteerFullBackend: TestBackend = {
-  name: 'PuppeteerFull',
+export const BrowserGpuBackend: TestBackend = {
+  name: 'GPU',
   createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
     return new EvaluationContext(ir, inputs);
   },

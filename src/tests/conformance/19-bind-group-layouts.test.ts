@@ -1,10 +1,10 @@
 
 import { describe, expect, it } from 'vitest';
-import { runFullGraphTest, availableBackends } from './test-runner';
+import { runFullGraphTest, cpuBackends } from './test-runner';
 import { IRDocument, TextureFormat } from '../../ir/types';
 
 // CPU specific tests
-const backends = availableBackends.filter(b => b.name !== 'Compute' && b.name !== 'Puppeteer');
+const backends = cpuBackends;
 
 describe('Conformance: Bind Group Layouts', () => {
   if (backends.length === 0) {

@@ -9,9 +9,6 @@ import { WebGpuBackend } from './webgpu-backend';
 import { WgslGenerator } from '../../webgpu/wgsl-generator';
 import { GpuCache } from '../../webgpu/gpu-cache';
 
-// WebGPU Globals are now managed in gpu-singleton.ts
-
-
 // Helper: Calculate size per element
 const getElementSize = (type?: string) => {
   if (!type) return 4;

@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { availableBackends } from './test-runner';
+import { cpuBackends } from './test-runner';
 import { RuntimeValue } from '../../interpreter/context';
 import { IRDocument, TextureFormat } from '../../ir/types';
 
-// Marshalling is critical for backends that can dispatch compute jobs.
-const backends = availableBackends.filter(b => b.name !== 'Compute' && b.name !== 'Puppeteer');
+// Requires shader dispatch.
+const backends = cpuBackends;
 
 describe('Conformance: Integration - Precomputed Blur', () => {
   if (backends.length === 0) {

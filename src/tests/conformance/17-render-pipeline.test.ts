@@ -1,11 +1,11 @@
 import { describe, it } from 'vitest';
-import { runFullGraphTest, availableBackends } from './test-runner';
-import { IRDocument, FunctionDef, BuiltinOp, DataType, TextureFormat, ResourceDef } from '../../ir/types';
+import { runFullGraphTest, cpuBackends } from './test-runner';
+import { IRDocument, FunctionDef, DataType, TextureFormat } from '../../ir/types';
 
 describe('17-render-pipeline', () => {
   // Run on available backends (Interpreter Rasterizer now implemented)
   // Compute backend usually only supports compute shaders, not full render pipelines
-  const backends = availableBackends.filter(b => b.name !== 'Compute' && b.name !== 'Puppeteer');
+  const backends = cpuBackends;
 
   if (backends.length === 0) {
     it.skip('Skipping Render Pipeline tests for current backend', () => { });

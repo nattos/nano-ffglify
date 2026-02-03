@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runParametricTest, buildSimpleIR, availableBackends, runFullGraphErrorTest } from './test-runner';
+import { runParametricTest, buildSimpleIR, availableBackends, runFullGraphErrorTest, cpuBackends } from './test-runner';
 import { validateIR } from '../../ir/validator';
 
 describe('Conformance: Buffers', () => {
@@ -27,7 +27,7 @@ describe('Conformance: Buffers', () => {
   ],
     [], // localVars
     [], // structs
-    availableBackends.filter(b => b.name !== 'Compute' && b.name !== 'Puppeteer')
+    cpuBackends
   );
 
   runParametricTest('Typed Buffer Storage (vec4)', [
