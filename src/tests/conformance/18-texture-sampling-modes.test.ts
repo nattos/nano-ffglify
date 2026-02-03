@@ -1,127 +1,123 @@
 
 import { describe, it, expect } from 'vitest';
-import { ComputeTestBackend } from './compute-test-backend';
+import { availableBackends } from './test-runner';
 import { IRDocument, TextureFormat } from '../../ir/types';
 
 describe('Compliance: Texture Sampling Modes', () => {
 
-  // define a simple 2x2 texture
-  // [ 0.0, 1.0 ]
-  // [ 0.0, 1.0 ]
-  const ir: IRDocument = {
-    version: '1.0.0',
-    meta: { name: 'Sampling Modes' },
-    entryPoint: 'main',
-    inputs: [],
-    resources: [
-      {
-        id: 't_check',
-        type: 'texture2d',
-        size: { mode: 'fixed', value: [2, 2] },
-        format: TextureFormat.R32F, // Changed from 'r32f' to TextureFormat.R32F
-        sampler: { filter: 'linear', wrap: 'repeat' }, // vary this in tests
-        persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
-      },
-      {
-        id: 'b_res',
-        type: 'buffer',
-        dataType: 'float',
-        size: { mode: 'fixed', value: 1 },
-        persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: true }
-      }
-    ],
-    structs: [],
-    functions: [
-      {
-        id: 'main',
-        type: 'cpu',
-        inputs: [],
-        outputs: [],
-        localVars: [],
-        nodes: [
-          { id: 'n1', op: 'texture_sample', tex: 't_check', uv: [0.5, 0.5], _next: 'n2' }, // UV will be overridden by tests
-          { id: 'n2', op: 'buffer_store', buffer: 'b_res', index: 0, value: 'n1' }
-        ]
-      }
-    ]
+  // Helper to create fresh IR for each test
+  const getIR = (filter: 'nearest' | 'linear', wrap: 'clamp' | 'repeat' | 'mirror', u: number, v: number): IRDocument => {
+    return {
+      version: '1.0.0',
+      meta: { name: 'Sampling Modes' },
+      entryPoint: 'main',
+      inputs: [],
+      resources: [
+        {
+          id: 't_check',
+          type: 'texture2d',
+          size: { mode: 'fixed', value: [2, 2] },
+          format: TextureFormat.R32F,
+          sampler: { filter, wrap },
+          persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
+        },
+        {
+          id: 'b_res',
+          type: 'buffer',
+          dataType: 'float4', // Use float4 as per original test override
+          size: { mode: 'fixed', value: 1 },
+          persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: true }
+        }
+      ],
+      structs: [],
+      functions: [
+        {
+          id: 'main',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'n1', op: 'texture_sample', tex: 't_check', uv: [u, v], _next: 'n2' },
+            { id: 'n2', op: 'buffer_store', buffer: 'b_res', index: 0, value: 'n1' }
+          ]
+        }
+      ]
+    };
   };
 
-  // Fixup buffer type to float4 for easier testing
-  ir.resources[1].dataType = 'float4';
+  availableBackends.forEach(backend => {
+    describe(`Backend: ${backend.name}`, () => {
 
-  const setSampler = (filter: 'nearest' | 'linear', wrap: 'clamp' | 'repeat' | 'mirror') => {
-    (ir.resources[0] as any).sampler = { filter, wrap };
-  };
+      it('should interpolate linearly', async () => {
+        // U = 0.5 (Midpoint of 0 and 1). Expect 0.5
+        // V = 0.25 (Row 0).
+        const ir = getIR('linear', 'clamp', 0.5, 0.25);
 
-  const setUV = (u: number, v: number) => {
-    ir.functions[0].nodes[0].uv = [u, v];
-  };
+        const ctx = await backend.createContext(ir);
 
-  // Re-write test to be split
-  it('should interpolate linearly', async () => {
-    setSampler('linear', 'clamp');
-    // U = 0.5 (Midpoint of 0 and 1). Expect 0.5
-    // V = 0.25 (Row 0).
-    // Texel centers are at 0.25, 0.75 for 2px width?
-    // 2px width:
-    // Pixel 0: [0.0, 0.5] range, center 0.25
-    // Pixel 1: [0.5, 1.0] range, center 0.75
-    // value at 0.25 is 0.
-    // value at 0.75 is 1.
-    // Sample at 0.5 (exactly between centers). Should be 0.5.
+        // Setup Texture Data
+        const tex = ctx.resources.get('t_check');
+        tex.data = [0, 1, 0, 1]; // Flattened 2x2. Row 0: 0,1. Row 1: 0,1.
+        tex.width = 2;
+        tex.height = 2;
 
-    // Setup Context
-    const ctx = await ComputeTestBackend.createContext(ir);
-    // Write Data
-    const tex = ctx.resources.get('t_check');
-    tex.data = [0, 1, 0, 1]; // Flattened 2x2
-    tex.width = 2;
-    tex.height = 2;
+        await backend.run(ctx, 'main');
 
-    setUV(0.5, 0.25);
+        const res = ctx.resources.get('b_res');
+        // Interpreter might store as array of arrays or flat array depending on implementation
+        // But getVar/getResource logic usually standardizes.
+        // float4 output implies array of 4 or similar.
+        // Let's inspect the structure safely.
 
-    await ComputeTestBackend.run(ctx, 'main');
+        let val = 0;
+        if (Array.isArray(res.data) && Array.isArray(res.data[0])) {
+          val = (res.data[0] as any)[0]; // float4[0].x
+        } else if (Array.isArray(res.data)) {
+          val = res.data[0] as number;
+        }
 
-    const res = ctx.resources.get('b_res');
-    const r = res.data[0][0]; // float4[0].x
+        expect(val).toBeCloseTo(0.5, 2);
+        ctx.destroy();
+      });
 
-    expect(r).toBeCloseTo(0.5, 2);
-  });
+      it('should mirror wrap', async () => {
+        // Test 1.25 -> 0.75 -> Val 1 (Pixel 1)
+        const ir1 = getIR('nearest', 'mirror', 1.25, 0.25);
+        const ctx1 = await backend.createContext(ir1);
+        const tex1 = ctx1.resources.get('t_check');
+        tex1.data = [0, 1, 0, 1];
+        tex1.width = 2; tex1.height = 2;
 
-  it('should mirror wrap', async () => {
-    setSampler('nearest', 'mirror');
-    // 2px texture.
-    // [0]=0 (Val 0), [1]=1 (Val 1).
-    // Range [0..1] maps to texture.
-    // > 1.0 starts mirroring.
-    // 1.25:
-    // 1.0 - 2.0 mirrors back from 1.0 to 0.0.
-    // 1.25 corresponds to 0.75 in texture space.
-    // 0.75 is center of Pixel 1 (Val 1).
-    // Wait, Mirror Repeat math:
-    // (1.25 - 0.5) * 2 = 1.5. abs...
-    // Standard trace:
-    // 1.1 -> 0.9
-    // 1.25 -> 0.75
-    // 1.75 -> 0.25
-    // 1.9 -> 0.1
+        await backend.run(ctx1, 'main');
 
-    // Sample at 1.25. Expect 0.75 equivalent -> Pixel 1 -> Value 1.
-    // Sample at 1.75. Expect 0.25 equivalent -> Pixel 0 -> Value 0.
+        let val1 = 0;
+        const res1 = ctx1.resources.get('b_res');
+        if (Array.isArray(res1.data) && Array.isArray(res1.data[0])) val1 = (res1.data[0] as any)[0];
+        else if (Array.isArray(res1.data)) val1 = res1.data[0] as number;
 
-    const ctx = await ComputeTestBackend.createContext(ir);
-    const tex = ctx.resources.get('t_check');
-    tex.data = [0, 1, 0, 1];
-    tex.width = 2; tex.height = 2;
+        expect(val1).toBe(1);
+        ctx1.destroy();
 
-    // Test 1.25 -> 0.75 -> Val 1
-    setUV(1.25, 0.25);
-    await ComputeTestBackend.run(ctx, 'main');
-    expect(ctx.resources.get('b_res').data[0][0]).toBe(1);
 
-    // Test 1.75 -> 0.25 -> Val 0
-    setUV(1.75, 0.25);
-    await ComputeTestBackend.run(ctx, 'main');
-    expect(ctx.resources.get('b_res').data[0][0]).toBe(0);
+        // Test 1.75 -> 0.25 -> Val 0 (Pixel 0)
+        const ir2 = getIR('nearest', 'mirror', 1.75, 0.25);
+        const ctx2 = await backend.createContext(ir2);
+        const tex2 = ctx2.resources.get('t_check');
+        tex2.data = [0, 1, 0, 1];
+        tex2.width = 2; tex2.height = 2;
+
+        await backend.run(ctx2, 'main');
+
+        let val2 = 0;
+        const res2 = ctx2.resources.get('b_res');
+        if (Array.isArray(res2.data) && Array.isArray(res2.data[0])) val2 = (res2.data[0] as any)[0];
+        else if (Array.isArray(res2.data)) val2 = res2.data[0] as number;
+
+        expect(val2).toBe(0);
+        ctx2.destroy();
+      });
+
+    });
   });
 });

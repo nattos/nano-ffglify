@@ -363,7 +363,7 @@ export class WgslGenerator {
       });
     }
     if (!options.stage) options.stage = 'compute';
-    if (options.inputBinding === undefined) options.inputBinding = 1;
+    // if (options.inputBinding === undefined) options.inputBinding = 1; // Do not force default, let caller decide
     if (!options.resourceBindings) {
       options.resourceBindings = new Map();
       let bindingIdx = 2;
@@ -575,8 +575,10 @@ export class WgslGenerator {
           if (input.builtin === 'num_workgroups') lines.push(`  let l_${input.id} = nw;`);
         }
 
-        // Automatic Bounds Check - u_dispatch_size is always present for compute now
-        lines.push(`  if (any(gid >= b_inputs.u_dispatch_size)) { return; }`);
+        // Automatic Bounds Check - u_dispatch_size is present if inputBinding set
+        if (options.inputBinding !== undefined) {
+          lines.push(`  if (any(gid >= b_inputs.u_dispatch_size)) { return; }`);
+        }
       }
     } else {
       const args = func.inputs.map(arg => `${arg.id}: ${this.resolveType(arg.type)}`).join(', ');
@@ -747,6 +749,7 @@ export class WgslGenerator {
       const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
       const bufVar = this.getBufferVar(bufferId);
       const def = options.resourceDefs?.get(bufferId);
+      const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
       lines.push(`${indent}if (u32(${idx}) < arrayLength(&${bufVar}.data)) {`);
       lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
       lines.push(`${indent}}`);

@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { runFullGraphTest, availableBackends } from './test-runner';
 import { IRDocument, TextureFormat } from '../../ir/types';
 
-// WebGPU specific tests
-const backends = availableBackends.filter(b => b.name === 'WebGPU' || b.name === 'Puppeteer' || b.name === 'PuppeteerFull');
+// CPU specific tests
+const backends = availableBackends.filter(b => b.name !== 'Compute' && b.name !== 'Puppeteer');
 
 describe('Conformance: Bind Group Layouts', () => {
   if (backends.length === 0) {
