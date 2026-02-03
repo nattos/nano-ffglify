@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { runFullGraphTest, runFullGraphErrorTest, availableBackends } from './test-runner';
 import { IRDocument } from '../../ir/types';
 
-// Marshalling is critical for all backends
-const backends = availableBackends;
+// Marshalling is critical for backends that can dispatch compute jobs.
+const backends = availableBackends.filter(b => b.name !== 'Compute' && b.name !== 'Puppeteer');
 
 describe('Conformance: GPU Marshalling', () => {
   if (backends.length === 0) {

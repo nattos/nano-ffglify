@@ -675,7 +675,7 @@ export class WgslGenerator {
       const prop = node['value'] !== undefined ? 'value' : 'val';
       lines.push(`${indent}return ${this.resolveArg(node, prop, func, options, ir, 'any', edges)};`);
     } else if (node.op === 'flow_branch') {
-      const cond = this.resolveArg(node, 'cond', func, options, ir, 'any', edges);
+      const cond = this.resolveArg(node, 'cond', func, options, ir, 'bool', edges);
       const isBoolExpr =
         cond === 'true' || cond === 'false' ||
         cond.includes('==') || cond.includes('!=') ||
@@ -1138,17 +1138,19 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
       }
       return expr;
     }
-    if (this.isMathOp(node.op)) return this.compileMath(node, func, options, ir, edges);
+    if (this.isMathOp(node.op)) return this.compileMath(node, func, options, ir, edges, targetType);
     return '0.0';
   }
 
   private isMathOp(op: string) { return op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('quat_') || op.startsWith('mat_'); }
 
-  private compileMath(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, edges: Edge[]): string {
+  private compileMath(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, edges: Edge[], targetType: string | DataType = 'float'): string {
     const op = node.op;
     const outType = options.nodeTypes?.get(node.id) || 'float';
-    const isFloatResult = outType.startsWith('float') || outType === 'float' || outType.includes('x');
-    const isBoolResult = outType === 'boolean' || outType === 'bool';
+    // If target type implies boolean, force bool result (disable float casting)
+    const forceBool = targetType === 'bool' || targetType === 'boolean';
+    const isFloatResult = !forceBool && (outType.startsWith('float') || outType === 'float' || outType.includes('x'));
+    const isBoolResult = forceBool || outType === 'boolean' || outType === 'bool';
 
     // Helper to resolve argument type
     const getType = (k: string) => {

@@ -57,34 +57,6 @@ describe('Compliance: Texture Sampling Modes', () => {
     ir.functions[0].nodes[0].uv = [u, v];
   };
 
-  const runTest = async (u: number, v: number) => {
-    setUV(u, v);
-    // Data: 2x2 R32F
-    // (0,0)=0, (1,0)=1
-    // (0,1)=0, (1,1)=1
-    const data = [0, 1, 0, 1];
-
-    const ctx = await ComputeTestBackend.execute(ir, 'main');
-    // Hack inject data
-    // Actually we need to upload data. ComputeTestBackend.execute creates context but we can't inject data easily *before* run unless we use `createContext` manually.
-    // But verify `execute` calls `createContext` then `run`.
-    // We need to inject data into `t_check`.
-    // Let's use `compute-test-backend`'s pattern: we pass input map, but resources are internal?
-    // Actually `ComputeTestBackend` doesn't support pre-populating resources easily from outside unless they are INPUTS?
-    // No, resources are state.
-    // We need to mock the `t_check` data.
-    // In `06-textures.test.ts`, we used `buffer_store` to write to it, or used `persistence`?
-    // No, we used `cmd_resize_resource` or assumption?
-    // Wait, `06-textures` uses `t_src` which is initialized by `writeTexture` logic in backend IIF `state.data` is present.
-    // We need `state.data` to be present.
-    // `createContext` initializes state. We can pass a `inputs` map, but that's for inputs.
-    // Helpers in backend: `ctx.resources.get('t_check').data = [...]`.
-    // But `execute` runs immediately.
-    // We should manually verify by splitting execute.
-
-    // RE-PLAN: Use split createContext / run.
-  };
-
   // Re-write test to be split
   it('should interpolate linearly', async () => {
     setSampler('linear', 'clamp');
