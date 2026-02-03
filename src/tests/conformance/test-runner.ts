@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { EvaluationContext } from '../../interpreter/context';
-import { IRDocument } from '../../ir/types';
+import { IRDocument, FunctionType } from '../../ir/types';
 import { WebGpuBackend } from './webgpu-backend';
 import { ComputeTestBackend } from './compute-test-backend';
 import { TestBackend } from './types';
@@ -22,7 +22,7 @@ if (process.env.TEST_BACKEND && availableBackends.length === 0) {
 // Test Helpers
 // ------------------------------------------------------------------
 
-export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [], extraEdges: any[] = [], localVars: any[] = [{ id: 'res', type: 'float' }], structs: any[] = [], globalVars: any[] = []): IRDocument => {
+export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [], extraEdges: any[] = [], localVars: any[] = [{ id: 'res', type: 'float' }], structs: any[] = [], globalVars: any[] = [], functionType: FunctionType = 'cpu'): IRDocument => {
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
   // Apply extra edges (execution or manual data) back to node properties
@@ -47,7 +47,7 @@ export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [],
     structs: structs,
     functions: [{
       id: 'main',
-      type: 'cpu',
+      type: functionType,
       inputs: [],
       outputs: [],
       localVars: localVars,
@@ -131,8 +131,9 @@ export const runGraphErrorTest = (
       let ctx: EvaluationContext | undefined;
       try {
         ctx = await backend.execute(ir, 'main');
-        expect.fail('Expected execution to throw error, but it succeeded');
+        throw new Error('Expected execution to throw error, but it succeeded');
       } catch (e: any) {
+        if (e.message === 'Expected execution to throw error, but it succeeded') throw e;
         if (e.name === 'AssertionError') throw e;
         expect(e.message).toMatch(expectedError);
       } finally {
@@ -194,8 +195,9 @@ export const runFullGraphErrorTest = (
       let ctx: EvaluationContext | undefined;
       try {
         ctx = await backend.execute(ir, ir.entryPoint);
-        expect.fail('Expected execution to throw error, but it succeeded');
+        throw new Error('Expected execution to throw error, but it succeeded');
       } catch (e: any) {
+        if (e.message === 'Expected execution to throw error, but it succeeded') throw e;
         if (e.name === 'AssertionError') throw e;
         expect(e.message).toMatch(expectedError);
       } finally {

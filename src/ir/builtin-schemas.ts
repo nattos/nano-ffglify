@@ -650,7 +650,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   // Commands
   'cmd_draw': CmdDrawDef,
   'cmd_dispatch': CmdDispatchDef,
-  'cmd_resize_resource': defineOp<CmdResizeResourceArgs>({ doc: "Resize a resource", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' }, size: { type: AnyData, doc: "New size [w, h] or scalar", refable: true }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
+  'cmd_resize_resource': defineOp<CmdResizeResourceArgs>({ doc: "Resize a resource", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' }, size: { type: AnyData, doc: "New size [w, h] or scalar", refable: true, literalTypes: ['float', 'int', 'float2'] }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
 
   // Logic / Control
   'var_set': VarSetDef,

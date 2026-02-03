@@ -427,6 +427,19 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
 
 
 
+
+    // Forbidden Ops in Shader Context
+    if (func.type !== 'cpu') {
+      const forbiddenOps = ['cmd_dispatch', 'cmd_draw', 'cmd_resize_resource'];
+      if (forbiddenOps.includes(node.op)) {
+        errors.push({
+          nodeId: node.id,
+          message: `Operation '${node.op}' is not allowed in shader functions (function type '${func.type || 'shader'}')`,
+          severity: 'error'
+        });
+      }
+    }
+
     if (node.op.startsWith('buffer_') || node.op.startsWith('texture_') || node.op === 'cmd_resize_resource') {
       const resId = node['buffer'] || node['tex'] || node['resource'];
       if (typeof resId === 'string' && !resourceIds.has(resId)) {

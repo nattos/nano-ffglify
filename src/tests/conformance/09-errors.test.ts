@@ -4,9 +4,9 @@ import { validateIR, ValidationError } from '../../ir/schema';
 
 describe('Conformance: Error Handling & Negative Tests', () => {
 
-  const runStaticBadIR = (name: string, nodes: any[], resources: any[] = [], expectedErrorSnippet?: string) => {
+  const runStaticBadIR = (name: string, nodes: any[], resources: any[] = [], expectedErrorSnippet?: string, functionType: 'cpu' | 'shader' = 'cpu') => {
     it(`[Static] ${name}`, () => {
-      const ir = buildSimpleIR(name, nodes, resources);
+      const ir = buildSimpleIR(name, nodes, resources, [], [], [], [], functionType);
       const result = validateIR(ir);
 
       // Assume we expect errors
@@ -145,11 +145,6 @@ describe('Conformance: Error Handling & Negative Tests', () => {
   describe('Control Flow', () => {
     skipBadIR('Infinite Loop (Timeout Check)', [
       // while(true) {}
-      // Requires flow loops which are mock-implemented in ops but handled in executor
-      // We'll simulate a loop node structure directly?
-      // Actually `flow_loop` op is just a marker.
-      // Let's rely on max iteration limits (if we implement them).
-      // For now, this is a placeholder.
       { id: 'loop', op: 'flow_loop', start: 0, end: 1000000 }
     ]);
 
@@ -157,6 +152,22 @@ describe('Conformance: Error Handling & Negative Tests', () => {
       { id: 'recurse', op: 'call_func', func: 'main' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'recurse' }
     ], /Recursion/);
+  });
+
+  // ----------------------------------------------------------------
+  // Forbidden Shader Operations
+  // ----------------------------------------------------------------
+  describe('Forbidden Shader Operations', () => {
+    // Tests that host commands cannot be used in logic/shader functions
+
+    runStaticBadIR('cmd_dispatch in Shader', [
+      { id: 'exec', op: 'cmd_dispatch', dispatch: [1, 1, 1], func: 'other' }
+    ], [], 'not allowed in shader functions', 'shader');
+
+    runStaticBadIR('cmd_draw in Shader', [
+      { id: 'draw', op: 'cmd_draw', count: 6, target: 's', vertex: 'v', fragment: 'f' } // valid-ish args
+    ], [], 'not allowed in shader functions', 'shader');
+
   });
 
 });
