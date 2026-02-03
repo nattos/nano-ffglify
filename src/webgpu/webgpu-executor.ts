@@ -148,6 +148,7 @@ export class WebGpuExecutor {
       } else {
         const compCount = this.getComponentCount(res.dataType || 'float');
         const finalSize = Math.max(state.width * compCount * 4, 16);
+        console.log(`[WebGpuExecutor] Creating buffer ${resId}. Width: ${state.width}, Comp: ${compCount}, Size: ${finalSize}`);
 
         if ((state as any).gpuBuffer && (state as any).gpuBuffer.size < finalSize) {
           (state as any).gpuBuffer.destroy();
@@ -323,9 +324,13 @@ export class WebGpuExecutor {
       }]
     });
 
-    const bindGroup = await this.createUniversalBindGroup(pipeline, metadata, [targetId]);
+    const hasBindings = metadata.resourceBindings.size > 0 || (metadata.inputBinding !== undefined);
+    if (hasBindings) {
+      const bindGroup = await this.createUniversalBindGroup(pipeline, metadata, [targetId]);
+      pass.setBindGroup(0, bindGroup);
+    }
+
     pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
     pass.setViewport(0, 0, texture.width, texture.height, 0, 1);
     pass.setScissorRect(0, 0, texture.width, texture.height);
     pass.draw(vertexCount);

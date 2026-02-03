@@ -722,8 +722,16 @@ export class WgslGenerator {
       const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
       const bufVar = this.getBufferVar(bufferId);
       const def = options.resourceDefs?.get(bufferId);
-      const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
-      lines.push(`${indent}${bufVar}.data[u32(${idx})] = ${type}(${val});`);
+      lines.push(`${indent}if (u32(${idx}) < arrayLength(&${bufVar}.data)) {`);
+      lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
+      lines.push(`${indent}}`);
+      lines.push(`${indent}if (u32(${idx}) < 4) {`);
+      lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
+      lines.push(`${indent}}`);
+      lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
+      lines.push(`${indent}}`);
+      lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
+      lines.push(`${indent}}`);
     } else {
       lines.push(`${indent}// Op: ${node.op}`);
     }
@@ -1556,3 +1564,4 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
     }
   }
 }
+
