@@ -104,6 +104,10 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
       state.data = r.data;
     }
   }
+
+  if (results.log && Array.isArray(results.log)) {
+    ctx.log.push(...results.log);
+  }
 };
 
 export const PuppeteerBackend: TestBackend = {

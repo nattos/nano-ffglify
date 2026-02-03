@@ -1450,9 +1450,17 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
       if (type === 'int' || type === 'i32' || type === 'u32' || type === 'uint') {
         return Math.floor(val).toString();
       }
+
       const s = val.toString();
-      if (s.toLowerCase().includes('e')) return s;
-      return s.includes('.') ? s : s + '.0';
+
+      // If type is explicitly float, we must ensure it looks like a float
+      if (type === 'float' || type === 'f32' || type.startsWith('vec') || type.startsWith('mat')) {
+        if (s.toLowerCase().includes('e')) return s;
+        return s.includes('.') ? s : s + '.0';
+      }
+
+      // If type is unknown/any, preserve apparent type (AbstractInt vs AbstractFloat)
+      return s;
     }
     if (typeof val === 'boolean') return val.toString();
     if (Array.isArray(val)) {
@@ -1465,7 +1473,7 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
       if (val.length === 16) return `mat4x4<f32>(${items.join(', ')})`;
       return `array<f32, ${val.length}>(${items.join(', ')})`;
     }
-    return val.toString();
+    return '0.0';
   }
 
   private formatZero(type: string | DataType): string {

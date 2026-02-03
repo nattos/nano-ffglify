@@ -1,5 +1,6 @@
 import { InterpreterBackend } from './interpreter-backend';
 import { ComputeTestBackend } from './compute-test-backend';
+import { WebGpuBackend } from './webgpu-backend';
 
 /**
  * Browser-side bridge for Puppeteer-based tests.
@@ -26,44 +27,68 @@ import { ComputeTestBackend } from './compute-test-backend';
     }
   }
 
-  const backend = backendName === 'Interpreter' ? InterpreterBackend : ComputeTestBackend;
+  let backend = ComputeTestBackend;
+  if (backendName === 'Interpreter') backend = InterpreterBackend;
+  else if (backendName === 'WebGPU') backend = WebGpuBackend;
+
   const ctx = await backend.createContext(ir, inputsMap);
 
   // Hydrate resources
-  if (resourcesObj) {
-    for (const [key, state] of Object.entries(resourcesObj)) {
-      const res = ctx.getResource(key);
-      if (res) {
-        if ((state as any).width) res.width = (state as any).width;
-        if ((state as any).height) res.height = (state as any).height;
-        if ((state as any).data) res.data = (state as any).data;
+  try {
+    if (resourcesObj) {
+      for (const [key, state] of Object.entries(resourcesObj)) {
+        // console.log(`[Bridge] Hydrating resource ${key}`);
+        const res = ctx.getResource(key);
+        if (res && state) {
+          if ((state as any).width !== undefined) res.width = (state as any).width;
+          if ((state as any).height !== undefined) res.height = (state as any).height;
+          if ((state as any).data !== undefined) res.data = (state as any).data;
+        }
       }
     }
+  } catch (e: any) {
+    console.error('[Bridge] Error hydrating resources:', e.message);
+    throw e;
   }
 
-  await backend.run(ctx, entryPoint);
+  try {
+    await backend.run(ctx, entryPoint);
+  } catch (e: any) {
+    console.error('[Bridge] Error running backend:', e.message, e.stack);
+    throw e;
+  }
 
   // Serialize context back to plain object
-  // We only need the results (vars from the top frame) and resources for now
   const results: any = {
     vars: {},
     resources: {}
   };
 
-  if (ctx.stack.length > 0) {
-    const frame = ctx.currentFrame;
-    frame.vars.forEach((val, key) => {
-      results.vars[key] = val;
-    });
-  }
+  try {
+    if (ctx.stack.length > 0) {
+      const frame = ctx.currentFrame;
+      frame.vars.forEach((val, key) => {
+        results.vars[key] = val;
+      });
+    }
 
-  ctx.resources.forEach((state, key) => {
-    results.resources[key] = {
-      width: state.width,
-      height: state.height,
-      data: state.data
-    };
-  });
+    ctx.resources.forEach((state, key) => {
+      if (!state) {
+        console.warn(`[Bridge] Resource ${key} state is undefined!`);
+        return;
+      }
+      results.resources[key] = {
+        width: state.width,
+        height: state.height,
+        data: state.data
+      };
+    });
+
+    results.log = ctx.log;
+  } catch (e: any) {
+    console.error('[Bridge] Error serializing results:', e.message);
+    throw e;
+  }
 
   console.log('[Bridge] Execution complete, returning results');
   return results;

@@ -300,7 +300,7 @@ export class WebGpuExecutor {
    */
   async executeDraw(targetId: string, vertexId: string, fragmentId: string, vertexCount: number, pipelineDef: RenderPipelineDef, allResources: ResourceDef[]) {
     // 1. Prepare Pipeline
-    const entry = await this.prepareRenderPipeline(vertexId, fragmentId, pipelineDef, allResources);
+    const entry = await this.prepareRenderPipeline(vertexId, fragmentId, pipelineDef, allResources, [targetId]);
     const { pipeline, metadata } = entry;
 
     // 2. Prepare Target Texture
@@ -311,6 +311,9 @@ export class WebGpuExecutor {
 
     // 3. Encoder & Pass
     const encoder = this.device.createCommandEncoder();
+
+    this.device.pushErrorScope('validation');
+
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
         view: view,
@@ -323,8 +326,16 @@ export class WebGpuExecutor {
     const bindGroup = await this.createUniversalBindGroup(pipeline, metadata, [targetId]);
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
+    pass.setViewport(0, 0, texture.width, texture.height, 0, 1);
+    pass.setScissorRect(0, 0, texture.width, texture.height);
     pass.draw(vertexCount);
     pass.end();
+
+    const drawError = await this.device.popErrorScope();
+    if (drawError) {
+      console.error(`[WebGpuExecutor] Draw Validation Error: ${drawError.message}`);
+      throw new Error(`WebGPU Draw Validation Error: ${drawError.message}`);
+    }
 
     // 4. Readback
     const bytesPerRow = Math.ceil((texture.width * 4) / 256) * 256;
@@ -336,8 +347,10 @@ export class WebGpuExecutor {
     encoder.copyTextureToBuffer({ texture }, { buffer: stagingBuffer, bytesPerRow }, [texture.width, texture.height, 1]);
     this.device.queue.submit([encoder.finish()]);
 
+    await this.device.queue.onSubmittedWorkDone();
     await stagingBuffer.mapAsync((globalThis as any).GPUMapMode.READ);
     const data = new Uint8Array(stagingBuffer.getMappedRange());
+
     const res = this.resources.get(targetId);
     if (res) {
       const reshaped = [];
@@ -354,8 +367,8 @@ export class WebGpuExecutor {
     stagingBuffer.destroy();
   }
 
-  private async prepareRenderPipeline(vertexId: string, fragmentId: string, def: RenderPipelineDef, allResources: ResourceDef[]): Promise<{ pipeline: GPURenderPipeline, metadata: CompilationMetadata }> {
-    const key = `${vertexId}|${fragmentId}|${JSON.stringify(def)}`;
+  private async prepareRenderPipeline(vertexId: string, fragmentId: string, def: RenderPipelineDef, allResources: ResourceDef[], excludeBindings: string[] = []): Promise<{ pipeline: GPURenderPipeline, metadata: CompilationMetadata }> {
+    const key = `${vertexId}|${fragmentId}|${JSON.stringify(def)}|${excludeBindings.join(',')}`;
     if (this.activeRenderPipelines.has(key)) return this.activeRenderPipelines.get(key)!;
 
     const generator = new WgslGenerator();
@@ -367,6 +380,7 @@ export class WebGpuExecutor {
 
     let bindingIdx = 2;
     this.resources.forEach((state, id) => {
+      if (excludeBindings.includes(id)) return;
       options.resourceBindings.set(id, bindingIdx++);
       options.resourceDefs.set(id, state.def);
     });
@@ -391,8 +405,8 @@ export class WebGpuExecutor {
       },
       primitive: {
         topology: (def.topology || 'triangle-list') as any,
-        cullMode: def.cullMode as any,
-        frontFace: def.frontFace as any
+        cullMode: (def.cullMode || 'none') as any,
+        frontFace: (def.frontFace || 'ccw') as any
       }
     });
 
