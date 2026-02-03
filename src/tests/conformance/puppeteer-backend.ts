@@ -6,6 +6,19 @@ import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 let sharedBrowser: Browser | null = null;
 let sharedPage: Page | null = null;
 
+if (import.meta.env.DEV) {
+  const originalLog = console.log;
+  console.log = (...args) => {
+    if (args[0] && typeof args[0] === 'string') {
+      if (args[0].startsWith('[Browser] [vite] ') ||
+        args[0].includes('[Browser] Failed to load resource: the server responded with a status of 404 (Not Found)')) {
+        return; // Silence vite logs
+      }
+    }
+    originalLog(...args);
+  };
+}
+
 async function getBrowser() {
   if (!sharedBrowser) {
     sharedBrowser = await puppeteer.launch({
