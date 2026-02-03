@@ -267,6 +267,18 @@ export class WgslGenerator {
       fn is_finite(v: f32) -> bool {
         return (bitcast<u32>(v) & 0x7fffffffu) < 0x7f800000u;
       }
+      fn is_nan_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) > vec2<u32>(0x7f800000u); }
+      fn is_nan_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) > vec3<u32>(0x7f800000u); }
+      fn is_nan_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) > vec4<u32>(0x7f800000u); }
+
+      fn is_inf_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) == vec2<u32>(0x7f800000u); }
+      fn is_inf_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) == vec3<u32>(0x7f800000u); }
+      fn is_inf_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) == vec4<u32>(0x7f800000u); }
+
+      fn is_finite_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) < vec2<u32>(0x7f800000u); }
+      fn is_finite_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) < vec3<u32>(0x7f800000u); }
+      fn is_finite_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) < vec4<u32>(0x7f800000u); }
+
       fn flush_subnormal(v: f32) -> f32 {
         let u = bitcast<u32>(v);
         if ((u & 0x7f800000u) == 0u && (u & 0x007fffffu) != 0u) {
@@ -1141,9 +1153,36 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
     // Helper to resolve argument type
     const getType = (k: string) => {
       const val = node[k];
-      if (typeof val === 'string') return options.nodeTypes?.get(val) || 'float';
+      let t = (typeof val === 'string' ? options.nodeTypes?.get(val) : null) || 'float';
+
+      // Normalize IR types to WGSL types
+      if (t === 'float2') t = 'vec2<f32>';
+      if (t === 'float3') t = 'vec3<f32>';
+      if (t === 'float4') t = 'vec4<f32>';
+
+      if (t === 'float' && typeof val === 'string') {
+        const def = func.nodes.find(n => n.id === val);
+        if (def) {
+          if (def.op === 'float2') t = 'vec2<f32>';
+          else if (def.op === 'float3') t = 'vec3<f32>';
+          else if (def.op === 'float4') t = 'vec4<f32>';
+        }
+      }
+
       if (Array.isArray(val)) return `float${val.length}`;
-      return 'float';
+      return t;
+    };
+
+    // Helper for comparisons/logic that might need float casting
+    const cmp = (expr: string) => {
+      if (isFloatResult) {
+        const count = this.getComponentCount(outType);
+        const type = count > 1 ? `vec${count}<f32>` : 'f32';
+        const zero = count > 1 ? `vec${count}<f32>(0.0)` : '0.0';
+        const one = count > 1 ? `vec${count}<f32>(1.0)` : '1.0';
+        return `select(${zero}, ${one}, ${expr})`;
+      }
+      return expr;
     };
 
     // Helper to resolve argument generic expression
@@ -1283,16 +1322,70 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
     }
 
     // Comparison & Logic
-    if (op === 'math_is_nan') return `is_nan(${arg('val')})`;
-    if (op === 'math_is_inf') return `is_inf(${arg('val')})`;
-    if (op === 'math_is_finite') return `is_finite(${arg('val')})`;
+    if (op === 'math_is_nan') {
+      let type = getType('val');
+      const valExpr = arg('val');
+      if (type === 'float' && (valExpr.startsWith('vec') || valExpr.startsWith('bitcast<vec'))) {
+        if (valExpr.includes('vec2')) type = 'vec2<f32>';
+        if (valExpr.includes('vec3')) type = 'vec3<f32>';
+        if (valExpr.includes('vec4')) type = 'vec4<f32>';
+      }
 
-    if (op === 'math_gt') return `(${arg('a')} > ${arg('b')})`;
-    if (op === 'math_lt') return `(${arg('a')} < ${arg('b')})`;
-    if (op === 'math_ge') return `(${arg('a')} >= ${arg('b')})`;
-    if (op === 'math_le') return `(${arg('a')} <= ${arg('b')})`;
-    if (op === 'math_eq') return `(${arg('a')} == ${arg('b')})`;
-    if (op === 'math_neq') return `(${arg('a')} != ${arg('b')})`;
+      if (type.startsWith('vec2')) return cmp(`is_nan_vec2(${valExpr})`);
+      if (type.startsWith('vec3')) return cmp(`is_nan_vec3(${valExpr})`);
+      if (type.startsWith('vec4')) return cmp(`is_nan_vec4(${valExpr})`);
+      return cmp(`is_nan(${valExpr})`);
+    }
+    if (op === 'math_is_inf') {
+      let type = getType('val');
+      const valExpr = arg('val');
+      if (type === 'float' && (valExpr.startsWith('vec') || valExpr.startsWith('bitcast<vec'))) {
+        if (valExpr.includes('vec2')) type = 'vec2<f32>';
+        if (valExpr.includes('vec3')) type = 'vec3<f32>';
+        if (valExpr.includes('vec4')) type = 'vec4<f32>';
+      }
+
+      if (type.startsWith('vec2')) return cmp(`is_inf_vec2(${valExpr})`);
+      if (type.startsWith('vec3')) return cmp(`is_inf_vec3(${valExpr})`);
+      if (type.startsWith('vec4')) return cmp(`is_inf_vec4(${valExpr})`);
+      return cmp(`is_inf(${valExpr})`);
+    }
+    if (op === 'math_is_finite') {
+      let type = getType('val');
+      const valExpr = arg('val');
+      if (type === 'float' && (valExpr.startsWith('vec') || valExpr.startsWith('bitcast<vec'))) {
+        if (valExpr.includes('vec2')) type = 'vec2<f32>';
+        if (valExpr.includes('vec3')) type = 'vec3<f32>';
+        if (valExpr.includes('vec4')) type = 'vec4<f32>';
+      }
+
+      if (type.startsWith('vec2')) return cmp(`is_finite_vec2(${valExpr})`);
+      if (type.startsWith('vec3')) return cmp(`is_finite_vec3(${valExpr})`);
+      if (type.startsWith('vec4')) return cmp(`is_finite_vec4(${valExpr})`);
+      return cmp(`is_finite(${valExpr})`);
+    }
+
+    if (op === 'math_mix' || op === 'vec_mix') {
+      const tType = getType('t');
+      // If mixing condition is boolean (scalar or vector), use select(falseVal, trueVal, cond)
+      // Note: mix(a, b, t) corresponds to select(a, b, t) logic if we treat false->a, true->b?
+      // Wait, mix(x, y, a): x*(1-a) + y*a.
+      // If a is 0 (false), result is x. If a is 1 (true), result is y.
+      // select(f, t, cond): if cond is false -> f, true -> t.
+      // So mix(a, b, cond) maps exactly to select(a, b, cond).
+      if (tType === 'bool' || tType === 'boolean' || tType.includes('bool')) {
+        return `select(${arg('a')}, ${arg('b')}, ${arg('t')})`;
+      }
+      return `mix(${arg('a')}, ${arg('b')}, ${arg('t')})`;
+    }
+
+
+    if (op === 'math_gt') return cmp(`(${arg('a')} > ${arg('b')})`);
+    if (op === 'math_lt') return cmp(`(${arg('a')} < ${arg('b')})`);
+    if (op === 'math_ge') return cmp(`(${arg('a')} >= ${arg('b')})`);
+    if (op === 'math_le') return cmp(`(${arg('a')} <= ${arg('b')})`);
+    if (op === 'math_eq') return cmp(`(${arg('a')} == ${arg('b')})`);
+    if (op === 'math_neq') return cmp(`(${arg('a')} != ${arg('b')})`);
 
     if (op === 'math_and') return `(${arg('a')} && ${arg('b')})`;
     if (op === 'math_or') return `(${arg('a')} || ${arg('b')})`;
