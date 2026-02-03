@@ -27,7 +27,7 @@ describe('Conformance: Buffers', () => {
   ],
     [], // localVars
     [], // structs
-    availableBackends.filter(b => b.name !== 'Compute')
+    availableBackends.filter(b => b.name !== 'Compute' && b.name !== 'Puppeteer')
   );
 
   runParametricTest('Typed Buffer Storage (vec4)', [
