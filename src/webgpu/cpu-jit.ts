@@ -18,6 +18,7 @@ export class CpuJitCompiler {
 
   compile(ir: IRDocument, entryPointId: string): Function {
     const body = this.compileToSource(ir, entryPointId);
+    // console.log(body);
     try {
       const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
       return new AsyncFunction('resources', 'inputs', 'globals', 'variables', body);
@@ -271,7 +272,7 @@ export class CpuJitCompiler {
       'static_cast_float', 'static_cast_int', 'static_cast_uint', 'static_cast_bool',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length', 'array_set',
-      'var_get', 'buffer_load', 'texture_load', 'call_func', 'vec_swizzle',
+      'var_get', 'buffer_load', 'texture_load', 'texture_sample', 'call_func', 'vec_swizzle',
       'color_mix', 'vec_get_element', 'quat',
       'resource_get_size', 'resource_get_format', 'builtin_get', 'const_get'
     ];
@@ -500,16 +501,78 @@ export class CpuJitCompiler {
           const res = resources.get('${texId}');
           if (!res) return [0, 0, 0, 0];
           const wrap = res.def.sampler?.wrap || 'clamp';
-          let u = uv[0], v = uv[1];
-          if (wrap === 'repeat') { u -= Math.floor(u); v -= Math.floor(v); }
-          else if (wrap === 'mirror') {
-            const u2 = u - 2.0 * Math.floor(u * 0.5); u = 1.0 - Math.abs(u2 - 1.0);
-            const v2 = v - 2.0 * Math.floor(v * 0.5); v = 1.0 - Math.abs(v2 - 1.0);
+          const filter = res.def.sampler?.filter || 'nearest';
+
+          const applyWrap = (c) => {
+            if (wrap === 'repeat') return c - Math.floor(c);
+            if (wrap === 'mirror') {
+              const m = (c % 2 + 2) % 2;
+              return m > 1 ? 2 - m : m;
+            }
+            return Math.max(0, Math.min(1, c));
+          };
+
+          const u = applyWrap(uv[0]);
+          const v = applyWrap(uv[1]);
+          const w = res.width;
+          const h = res.height;
+
+          const getSample = (x, y) => {
+             // Safe Clamp for pixel access after wrapping normalized coords
+             const sx = Math.max(0, Math.min(w - 1, x));
+             const sy = Math.max(0, Math.min(h - 1, y));
+             const val = res.data[sy * w + sx];
+             return val !== undefined ? val : [0, 0, 0, 0];
+          };
+
+          if (filter === 'nearest') {
+            const x = Math.min(Math.floor(u * w), w - 1);
+            const y = Math.min(Math.floor(v * h), h - 1);
+            const val = res.data[y * w + x];
+            return val !== undefined ? val : [0, 0, 0, 0];
           }
-          else { u = Math.max(0, Math.min(1, u)); v = Math.max(0, Math.min(1, v)); }
-          const x = Math.min(res.width - 1, Math.floor(u * res.width));
-          const y = Math.min(res.height - 1, Math.floor(v * res.height));
-          return res.data[y * res.width + x] || [0, 0, 0, 0];
+
+          // Bilinear
+          const tx = u * w - 0.5;
+          const ty = v * h - 0.5;
+          const x0 = Math.floor(tx);
+          const y0 = Math.floor(ty);
+          const fx = tx - x0;
+          const fy = ty - y0;
+
+          // Helper to handle wrapping at the TEXEL level for neighborhood
+          const getWrappedSample = (targetX, targetY) => {
+             let sx = targetX;
+             let sy = targetY;
+             if (wrap === 'clamp') {
+                sx = Math.max(0, Math.min(w - 1, sx));
+                sy = Math.max(0, Math.min(h - 1, sy));
+             } else if (wrap === 'repeat') {
+                sx = ((sx % w) + w) % w;
+                sy = ((sy % h) + h) % h;
+             } else if (wrap === 'mirror') {
+                const mx = ((sx % (2 * w)) + (2 * w)) % (2 * w);
+                sx = mx >= w ? 2 * w - 1 - mx : mx;
+                const my = ((sy % (2 * h)) + (2 * h)) % (2 * h);
+                sy = my >= h ? 2 * h - 1 - my : my;
+             }
+             const val = res.data[sy * w + sx];
+             return val !== undefined ? val : [0, 0, 0, 0];
+          };
+
+          const s00 = getWrappedSample(x0, y0);
+          const s10 = getWrappedSample(x0 + 1, y0);
+          const s01 = getWrappedSample(x0, y0 + 1);
+          const s11 = getWrappedSample(x0 + 1, y0 + 1);
+
+          const lerp = (a, b, t) => {
+             if (Array.isArray(a)) return a.map((v, i) => v * (1 - t) + b[i] * t);
+             return a * (1 - t) + b * t;
+          };
+
+          const top = lerp(s00, s10, fx);
+          const bot = lerp(s01, s11, fx);
+          return lerp(top, bot, fy);
         })(${uv})`;
       }
       case 'resource_get_size': {
