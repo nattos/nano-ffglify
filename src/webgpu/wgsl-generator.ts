@@ -134,8 +134,11 @@ export class WgslGenerator {
     // diagnostic(off, derivative_uniformity);
     finalLines.push('');
 
-    // Globals Buffer
-    if (options.globalBufferBinding !== undefined && options.varMap && options.varMap.size > 0) {
+    // Pre-validate
+    this.validateRecursion(ir?.functions || []);
+
+    // 1. Emit Globals struct
+    if (ir?.globals && ir.globals.length > 0) {
       finalLines.push('struct GlobalsBuffer { data: array<f32> }');
       finalLines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : GlobalsBuffer;`);
       finalLines.push('');
@@ -562,10 +565,17 @@ export class WgslGenerator {
         else lines.push(`${indent}${node['func']}(${args});`);
       }
     } else if (node.op === 'func_return') {
-      lines.push(`${indent}return ${this.resolveArg(node, 'value', func, options, ir, 'any', edges)};`);
+      const prop = node['value'] !== undefined ? 'value' : 'val';
+      lines.push(`${indent}return ${this.resolveArg(node, prop, func, options, ir, 'any', edges)};`);
     } else if (node.op === 'flow_branch') {
       const cond = this.resolveArg(node, 'cond', func, options, ir, 'any', edges);
-      const condExpr = (cond === 'true' || cond === 'false' || cond.includes('==') || cond.includes('!=')) ? cond : `${cond} != 0.0`;
+      const isBoolExpr =
+        cond === 'true' || cond === 'false' ||
+        cond.includes('==') || cond.includes('!=') ||
+        cond.includes('<') || cond.includes('>') ||
+        cond.includes('&&') || cond.includes('||');
+
+      const condExpr = isBoolExpr ? cond : `${cond} != 0.0`;
       lines.push(`${indent}if (${condExpr}) {`);
       const trueEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_true');
       if (trueEdge) {
@@ -1118,5 +1128,40 @@ export class WgslGenerator {
     }
 
     return expr;
+  }
+
+  private validateRecursion(functions: FunctionDef[]) {
+    const adj = new Map<string, string[]>();
+    for (const f of functions) {
+      const calls = f.nodes.filter(n => n.op === 'call_func').map(n => n['func'] as string);
+      adj.set(f.id, calls);
+    }
+
+    const visited = new Set<string>();
+    const stack = new Set<string>();
+
+    const dfs = (id: string, path: string[]) => {
+      visited.add(id);
+      stack.add(id);
+      path.push(id);
+
+      const children = adj.get(id) || [];
+      for (const child of children) {
+        if (!visited.has(child)) {
+          dfs(child, path);
+        } else if (stack.has(child)) {
+          throw new Error(`Recursion detected|cyclic dependency: ${path.join(' -> ')} -> ${child}`);
+        }
+      }
+
+      stack.delete(id);
+      path.pop();
+    };
+
+    for (const f of functions) {
+      if (!visited.has(f.id)) {
+        dfs(f.id, []);
+      }
+    }
   }
 }

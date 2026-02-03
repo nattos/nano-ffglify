@@ -25,6 +25,7 @@ export interface IRDocument {
   entryPoint: string; // ID of the root CPU function
   inputs: InputDef[];
   resources: ResourceDef[];
+  globals?: any[]; // Globals for inter-node communication
   structs: StructDef[]; // Shared struct type definitions
   functions: FunctionDef[];
   comment?: string;
