@@ -4,9 +4,15 @@ import { getSharedDevice, gpuSemaphore } from './gpu-singleton';
 import type { TestBackend } from './types';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { WebGpuExecutor } from '../../webgpu/webgpu-executor';
-import { IRDocument, FunctionDef, TextureFormatFromId, RenderPipelineDef } from '../../ir/types';
+import { IRDocument } from '../../ir/types';
 import { WebGpuHostExecutor } from '../../webgpu/webgpu-host-executor';
 
+/**
+ * A full backend that runs both CPU and GPU code.
+ *
+ * CPU code is transformed into JavaScript, and GPU code is translated into
+ * WGSL, with WebGPU bindings to dispatch shaders.
+ */
 export const WebGpuBackend: TestBackend = {
   name: 'WebGPU',
 

@@ -108,7 +108,7 @@ While WebGPU provides native `sampler` and `textureSample` logic, it has strict 
     - The `WgslOptions` preserve `samplerBindings` infrastructure in TypeScript (currently inactive) to support this transition.
 
 3.  **Hardware Sampler Bypass**:
-    - Hardware samplers are currently explicitly *not* allocated or bound in the `ComputeTestBackend` to prevent validation errors on unfilterable formats.
+    - Hardware samplers are currently explicitly *not* allocated or bound in the `ForceOntoGPUTestBackend` to prevent validation errors on unfilterable formats.
 
 ## Anticipated Issues & mitigations
 

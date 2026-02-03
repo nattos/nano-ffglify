@@ -2,7 +2,6 @@
 import { IRDocument, DataType, ResourceDef } from '../../ir/types';
 import { validateIR, inferFunctionTypes } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
-import { InterpretedExecutor } from '../../interpreter/executor';
 import { gpuSemaphore } from './gpu-singleton';
 import { TestBackend } from './types';
 import { WebGpuBackend } from './webgpu-backend';
@@ -20,7 +19,7 @@ const getElementSize = (type?: string) => {
 };
 
 /**
- * ComputeTestBackend
+ * ForceOntoGPUTestBackend
  *
  * A specialized backend that forces the Execution Graph (which is usually CPU logic in conformance tests)
  * to run as a Compute Shader on the GPU.
@@ -42,15 +41,15 @@ const getComponentCount = (type: string): number => {
   return 1;
 };
 
-export const ComputeTestBackend: TestBackend = {
-  name: 'Compute',
+export const ForceOntoGPUTestBackend: TestBackend = {
+  name: 'ForceOntoGPU',
 
   createContext: async (ir: IRDocument, inputs?: Map<string, RuntimeValue>) => {
     // Validate IR
     const errors = validateIR(ir);
     const criticalErrors = errors.filter(e => e.severity === 'error');
     if (criticalErrors.length > 0) {
-      console.error('[ComputeTestBackend] IR Validation Failed:', criticalErrors);
+      console.error('[ForceOntoGPUTestBackend] IR Validation Failed:', criticalErrors);
       throw new Error(`IR Validation Failed:\n${criticalErrors.map(e => e.message).join('\n')}`);
     }
 
@@ -63,7 +62,7 @@ export const ComputeTestBackend: TestBackend = {
 
   run: async (ctx: EvaluationContext, entryPoint: string) => {
     const ir = (ctx as any)._ir as IRDocument;
-    if (!ir) throw new Error('[ComputeTestBackend] IR not found on context private _ir field');
+    if (!ir) throw new Error('[ForceOntoGPUTestBackend] IR not found on context private _ir field');
 
     const func = ir.functions.find(f => f.id === entryPoint);
     if (!func) throw new Error('Entry point not found');
@@ -416,8 +415,8 @@ export const ComputeTestBackend: TestBackend = {
   },
 
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    const ctx = await ComputeTestBackend.createContext(ir, inputs);
-    await ComputeTestBackend.run(ctx, entryPoint);
+    const ctx = await ForceOntoGPUTestBackend.createContext(ir, inputs);
+    await ForceOntoGPUTestBackend.run(ctx, entryPoint);
     return ctx;
   }
 };

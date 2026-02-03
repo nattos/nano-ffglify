@@ -1,5 +1,5 @@
 import { InterpreterBackend } from './interpreter-backend';
-import { ComputeTestBackend } from './compute-test-backend';
+import { ForceOntoGPUTestBackend } from './force-on-gpu-test-backend';
 import { WebGpuBackend } from './webgpu-backend';
 
 /**
@@ -27,7 +27,7 @@ import { WebGpuBackend } from './webgpu-backend';
     }
   }
 
-  let backend = ComputeTestBackend;
+  let backend = ForceOntoGPUTestBackend;
   if (backendName === 'Interpreter') backend = InterpreterBackend;
   else if (backendName === 'WebGPU') backend = WebGpuBackend;
 
