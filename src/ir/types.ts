@@ -279,6 +279,7 @@ export interface Edge {
 // Most Math Ops support overloaded signatures:
 // - Scalar: (float, float) -> float
 // - Vector: (floatN, floatN) -> floatN
+// - Broadcast: (floatN, float) -> floatN (and vice versa)
 //
 export type BuiltinOp =
   // ----------------------------------------------------------------

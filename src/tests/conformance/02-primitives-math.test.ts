@@ -147,4 +147,23 @@ describe('Conformance: Advanced Math Primitives', () => {
     { op: 'vec_mix', args: { a: [0, 0], b: [10, 10], t: 0.5 }, expected: [5, 5] },
   ]);
 
+  runBatchTest('Broadcasting (Vector + Scalar)', [
+    // Vector + Scalar
+    { op: 'math_add', args: { a: [1, 2, 3], b: 10 }, expected: [11, 12, 13] },
+    { op: 'math_sub', args: { a: [10, 20, 30], b: 5 }, expected: [5, 15, 25] },
+    { op: 'math_mul', args: { a: [1, 2, 3], b: 2 }, expected: [2, 4, 6] },
+    { op: 'math_div', args: { a: [10, 20, 30], b: 2 }, expected: [5, 10, 15] },
+
+    // Scalar + Vector
+    { op: 'math_add', args: { a: 10, b: [1, 2, 3] }, expected: [11, 12, 13] },
+    { op: 'math_sub', args: { a: 10, b: [1, 2, 3] }, expected: [9, 8, 7] },
+    { op: 'math_mul', args: { a: 2, b: [1, 2, 3] }, expected: [2, 4, 6] },
+
+    // MAD Broadcasting (Vector * Scalar + Scalar)
+    { op: 'math_mad', args: { a: [1, 2], b: 2, c: 1 }, expected: [3, 5] },
+
+    // Clamp Broadcasting (Vector, Scalar, Scalar)
+    { op: 'math_clamp', args: { val: [0, 5, 10], min: 2, max: 8 }, expected: [2, 5, 8] }
+  ]);
+
 });

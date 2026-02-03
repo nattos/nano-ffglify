@@ -3,11 +3,6 @@ import { runParametricTest, buildSimpleIR, availableBackends, runFullGraphErrorT
 import { validateIR } from '../../ir/validator';
 
 describe('Conformance: Buffers', () => {
-  // ... (previous lines)
-
-  // ...
-
-
   runParametricTest('should handle Resize and Clear', [
     // 1. Write data
     { id: 'store', op: 'buffer_store', buffer: 'buf', index: 0, value: 50 },

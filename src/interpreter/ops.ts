@@ -68,14 +68,26 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   'math_mul': (ctx, args) => applyBinary(args.a, args.b, (a, b) => a * b),
   'math_div': (ctx, args) => applyBinary(args.a, args.b, (a, b) => a / b),
   'math_mad': (ctx, args) => {
-    // a * b + c (Vectorized)
+    // a * b + c
     const A = args.a;
     const B = args.b;
     const C = args.c;
-    // Manual expansion since it's ternary
-    if (Array.isArray(A) && Array.isArray(B) && Array.isArray(C)) {
-      return A.map((v, i) => (v as number) * (B[i] as number) + (C[i] as number));
+
+    const isVecA = Array.isArray(A);
+    const isVecB = Array.isArray(B);
+    const isVecC = Array.isArray(C);
+
+    if (isVecA || isVecB || isVecC) {
+      // Determine output size
+      const size = (isVecA ? A.length : (isVecB ? B.length : C.length));
+
+      const vA = isVecA ? A : new Array(size).fill(A);
+      const vB = isVecB ? B : new Array(size).fill(B);
+      const vC = isVecC ? C : new Array(size).fill(C);
+
+      return vA.map((v: number, i: number) => v * (vB[i] as number) + (vC[i] as number));
     }
+
     const a = A as number, b = B as number, c = C as number;
     return (a * b) + c;
   },
