@@ -150,7 +150,7 @@ export class WgslGenerator {
     // 2.5. Inputs Buffer (Uniforms / Non-Stage IO)
     // For shaders, we use the function's own inputs. For direct execution of a graph, we might use global inputs.
     const inputSource = (entryFunc.type === 'shader') ? entryFunc.inputs : fullIr.inputs;
-    const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin && i.type !== 'texture2d' && i.type !== 'texture_2d');
+    const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin && i.type !== 'texture2d' && i.type !== 'texture_2d' && !options.varMap?.has(i.id));
 
     if (options.stage === 'compute' && options.inputBinding !== undefined && nonBuiltinInputs.length > 0) {
       const docInputs = [...nonBuiltinInputs];
@@ -528,17 +528,17 @@ export class WgslGenerator {
         const count = this.getComponentCount(type);
 
         if (count === 1) {
-          lines.push(`  b_globals.data[${idx}] = ${valExpr};`);
+          lines.push(`  b_globals.data[${idx}] = f32(${valExpr});`);
         } else if (isMatrix) {
           const dims = type.includes('3x3') ? 3 : 4;
           for (let c = 0; c < dims; c++) {
             for (let r = 0; r < dims; r++) {
-              lines.push(`  b_globals.data[${idx + c * dims + r}] = ${valExpr}[${c}][${r}];`);
+              lines.push(`  b_globals.data[${idx + c * dims + r}] = f32(${valExpr}[${c}][${r}]);`);
             }
           }
         } else {
           for (let i = 0; i < count; i++) {
-            lines.push(`  b_globals.data[${idx + i}] = ${valExpr}[${i}];`);
+            lines.push(`  b_globals.data[${idx + i}] = f32(${valExpr}[${i}]);`);
           }
         }
       } else if (func.localVars.some(v => v.id === varId)) {
@@ -658,6 +658,9 @@ export class WgslGenerator {
       const idx = options.varMap.get(varId)!;
       const type = options.varTypes?.get(varId) || 'float';
       const count = this.getComponentCount(type);
+      if (type === 'bool') return `bool(b_globals.data[${idx}])`;
+      if (type === 'int') return `i32(b_globals.data[${idx}])`;
+      if (type === 'uint') return `u32(b_globals.data[${idx}])`;
       if (count === 1) return `b_globals.data[${idx}]`;
       if (type === 'float2' || type === 'vec2<f32>') return `vec2<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}])`;
       if (type === 'float3' || type === 'vec3<f32>') return `vec3<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}], b_globals.data[${idx + 2}])`;
@@ -752,6 +755,7 @@ export class WgslGenerator {
     }
     if (node.op === 'static_cast_float') return `f32(${this.resolveArg(node, 'val', func, options, ir, 'float', edges)})`;
     if (node.op === 'static_cast_int') return `i32(${this.resolveArg(node, 'val', func, options, ir, 'int', edges)})`;
+    if (node.op === 'static_cast_bool') return `bool(${this.resolveArg(node, 'val', func, options, ir, 'any', edges)})`;
     if (node.op === 'struct_construct') {
       const type = node['type'];
       const structDef = ir.structs?.find(s => s.id === type);

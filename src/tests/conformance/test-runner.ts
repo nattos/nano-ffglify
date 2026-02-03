@@ -76,6 +76,8 @@ export const runGraphTest = (
         else inferredType = 'float[]'; // Generic array? Or float4?
       } else if (typeof expectedVal === 'number') {
         inferredType = 'float';
+      } else if (typeof expectedVal === 'boolean') {
+        inferredType = 'bool';
       }
 
       const globalVars = [
