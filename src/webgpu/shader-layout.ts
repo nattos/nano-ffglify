@@ -179,7 +179,7 @@ export class ShaderLayout {
       return this.getAlignment(inner, mode);
     }
 
-    const s = this.structs.get(type);
+    const s = this.structs.get(t);
     if (s) {
       // Struct alignment
       const layout = this.getStructLayout(type, mode);
@@ -194,13 +194,6 @@ export class ShaderLayout {
     const t = type.toLowerCase();
 
     if (['f32', 'i32', 'u32', 'float', 'int', 'bool', 'uint'].some(x => t === x)) return 4;
-
-    if (t.includes('mat3') || t.includes('float3x3')) return 48; // 3 * 16 (std140/std430 same for matrix columns?) yes columns 16-align
-    if (t.includes('mat4') || t.includes('float4x4')) return 64;
-
-    if (['vec2', 'float2'].some(x => t.includes(x))) return 8;
-    if (['vec3', 'float3'].some(x => t.includes(x))) return 12;
-    if (['vec4', 'float4', 'quat'].some(x => t.includes(x))) return 16;
 
     if (t.endsWith(']') || t.startsWith('array<')) {
       let inner = 'float';
@@ -221,7 +214,14 @@ export class ShaderLayout {
       return count * stride;
     }
 
-    const s = this.structs.get(type);
+    if (t.includes('mat3') || t.includes('float3x3')) return 48; // 3 * 16 (std140/std430 same for matrix columns?) yes columns 16-align
+    if (t.includes('mat4') || t.includes('float4x4')) return 64;
+
+    if (['vec2', 'float2'].some(x => t.includes(x))) return 8;
+    if (['vec3', 'float3'].some(x => t.includes(x))) return 12;
+    if (['vec4', 'float4', 'quat'].some(x => t.includes(x))) return 16;
+
+    const s = this.structs.get(t);
     if (s) return this.getStructLayout(type, mode).size;
 
     return 16;
