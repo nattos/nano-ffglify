@@ -258,6 +258,28 @@ export class WgslGenerator {
           (a20 * b03 - a21 * b01 + a22 * b00) * invDet
         );
       }
+      fn is_nan(v: f32) -> bool {
+        return (bitcast<u32>(v) & 0x7fffffffu) > 0x7f800000u;
+      }
+      fn is_inf(v: f32) -> bool {
+        return (bitcast<u32>(v) & 0x7fffffffu) == 0x7f800000u;
+      }
+      fn is_finite(v: f32) -> bool {
+        return (bitcast<u32>(v) & 0x7fffffffu) < 0x7f800000u;
+      }
+      fn flush_subnormal(v: f32) -> f32 {
+        let u = bitcast<u32>(v);
+        if ((u & 0x7f800000u) == 0u && (u & 0x007fffffu) != 0u) {
+          return 0.0;
+        }
+        return v;
+      }
+      fn get_mantissa(v: f32) -> f32 {
+        return frexp(v).fract;
+      }
+      fn get_exponent(v: f32) -> f32 {
+        return f32(frexp(v).exp);
+      }
     `);
     if (this.helpers.size > 0) {
       finalLines.push('// Injected Helpers');
@@ -1248,19 +1270,22 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
     if (op === 'math_step') return `step(${arg('edge')}, ${arg('val')})`;
     if (op === 'math_smoothstep') return `smoothstep(${arg('edge0')}, ${arg('edge1')}, ${arg('val')})`;
 
+    // Rounding
+    if (op === 'math_fract') return `fract(${arg('val')})`;
+    if (op === 'math_trunc') return `trunc(${arg('val')})`;
+
     // Advanced Math / Bits
-    if (op === 'math_frexp_mantissa' || op === 'math_mantissa') return `frexp(${arg('val')}).fract`;
-    if (op === 'math_frexp_exponent' || op === 'math_exponent') return `f32(frexp(${arg('val')}).exp)`;
+    if (op === 'math_frexp_mantissa' || op === 'math_mantissa') return `get_mantissa(${arg('val')})`;
+    if (op === 'math_frexp_exponent' || op === 'math_exponent') return `get_exponent(${arg('val')})`;
     if (op === 'math_ldexp') return `ldexp(f32(${this.resolveArg(node, 'fract', func, options, ir, 'float', edges)}), i32(${this.resolveArg(node, 'exp', func, options, ir, 'int', edges)}))`;
     if (op === 'math_flush_subnormal') {
-      const v = arg('val');
-      return `select(${v}, 0.0, abs(${v}) < 1.17549435e-38)`;
+      return `flush_subnormal(${arg('val')})`;
     }
 
     // Comparison & Logic
-    if (op === 'math_is_nan') return `isnan(${arg('val')})`;
-    if (op === 'math_is_inf') return `isinf(${arg('val')})`;
-    if (op === 'math_is_finite') return `isfinite(${arg('val')})`;
+    if (op === 'math_is_nan') return `is_nan(${arg('val')})`;
+    if (op === 'math_is_inf') return `is_inf(${arg('val')})`;
+    if (op === 'math_is_finite') return `is_finite(${arg('val')})`;
 
     if (op === 'math_gt') return `(${arg('a')} > ${arg('b')})`;
     if (op === 'math_lt') return `(${arg('a')} < ${arg('b')})`;
@@ -1331,6 +1356,7 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
         return Math.floor(val).toString();
       }
       const s = val.toString();
+      if (s.toLowerCase().includes('e')) return s;
       return s.includes('.') ? s : s + '.0';
     }
     if (typeof val === 'boolean') return val.toString();
