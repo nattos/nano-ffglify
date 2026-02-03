@@ -17,7 +17,7 @@ import { WebGpuBackend } from './webgpu-backend';
 };
 
 (window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any, resourcesObj: any, backendName: string = 'Compute') => {
-  console.log(`[Bridge] runGpuTest called with backend: ${backendName}`, { entryPoint, inputsObj });
+  // console.log(`[Bridge] runGpuTest called with backend: ${backendName}`, { entryPoint, inputsObj });
 
   // Convert plain object inputs back to Map
   const inputsMap = new Map<string, any>();
@@ -90,9 +90,9 @@ import { WebGpuBackend } from './webgpu-backend';
     throw e;
   }
 
-  console.log('[Bridge] Execution complete, returning results');
+  // console.log('[Bridge] Execution complete, returning results');
   return results;
 };
 
-console.log('[Bridge] Initialized');
+// console.log('[Bridge] Initialized');
 (window as any).bridgeReady = true;

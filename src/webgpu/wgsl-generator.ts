@@ -129,10 +129,6 @@ export class WgslGenerator {
       });
       options.resourceBindings = filtered;
     }
-    console.log(`[WgslGenerator] Used: ${Array.from(usedResources).join(', ')}`);
-    if (options.resourceBindings) {
-      console.log(`[WgslGenerator] Bindings: ${Array.from(options.resourceBindings.entries()).map(([k, v]) => `${k}:${v}`).join(', ')}`);
-    }
 
     options.storageResources = storageResources;
     options.sampledResources = sampledResources;
@@ -858,6 +854,9 @@ export class WgslGenerator {
   private compileExpression(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType: string | DataType = 'float', edges: Edge[]): string {
     if (node.op === 'literal') return this.formatLiteral(node['val'], targetType || 'float');
     if (node.op === 'loop_index') return `i_${node['loop']}`;
+    if (node.op === 'float') return this.resolveArg(node, 'val', func, options, ir, 'float', edges);
+    if (node.op === 'int') return this.resolveArg(node, 'val', func, options, ir, 'int', edges);
+    if (node.op === 'bool') return this.resolveArg(node, 'val', func, options, ir, 'bool', edges);
     if (node.op === 'float2') return `vec2<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}))`;
     if (node.op === 'float3') return `vec3<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float', edges)}))`;
     if (node.op === 'float4' || node.op === 'quat') return `vec4<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'w', func, options, ir, 'float', edges)}))`;

@@ -42,7 +42,7 @@ export class WebGpuExecutor {
     const computeShaders = new Set<string>();
     const renderShaders = new Set<string>();
 
-    console.log(`[WebGpuExecutor] Initializing with ${functions.length} functions and ${allResources.length} resources`);
+    // console.log(`[WebGpuExecutor] Initializing with ${functions.length} functions and ${allResources.length} resources`);
 
     for (const f of functions) {
       if (f.type !== 'cpu') continue;
@@ -108,7 +108,6 @@ export class WebGpuExecutor {
     const nonBuiltinInputs = func.inputs.filter(i => !i.builtin && i.type !== 'texture2d' && i.type !== 'texture_2d');
 
     // Inject dispatch size for bounds checking
-    console.log(`[Executor] Injecting dispatch size: ${JSON.stringify(workgroups)}`);
     nonBuiltinInputs.push({ id: 'u_dispatch_size', type: 'vec3<u32>' } as any);
     args['u_dispatch_size'] = [workgroups[0], workgroups[1], workgroups[2]];
 
@@ -122,7 +121,6 @@ export class WebGpuExecutor {
     let inputBuffer: GPUBuffer | undefined;
 
     if (inputLayout.fields.length > 0) {
-      console.log(`[Executor] Packing inputs with layout: ${JSON.stringify(inputLayout.fields)}`);
       // Use packBuffer from shader-layout
       const bufferData = packBuffer(inputLayout, args, layout, 'std430');
       const usage = (globalThis as any).GPUBufferUsage.STORAGE;
@@ -141,7 +139,6 @@ export class WebGpuExecutor {
 
     // 3. Create BindGroup using compiled metadata
     metadata.resourceBindings.forEach((binding, resId) => {
-      console.log(`[Executor] Processing binding for ${resId} at ${binding}`);
       const state = this.resources.get(resId);
       if (!state) return;
 
