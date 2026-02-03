@@ -19,19 +19,19 @@ export async function getSharedDevice(): Promise<GPUDevice> {
   if (typeof navigator !== 'undefined' && navigator.gpu) {
     gpu = navigator.gpu;
   } else {
-    // Node.js / Environment without native WebGPU (e.g. testing)
-    try {
-      // Use dynamic import with a template literal to further hide it from some bundlers
-      const packageName = 'webgpu';
-      const { create, globals } = await import(packageName);
+    // // Node.js / Environment without native WebGPU (e.g. testing)
+    // try {
+    //   // Use dynamic import with a template literal to further hide it from some bundlers
+    //   const packageName = 'webgpu';
+    //   const { create, globals } = await import(packageName);
 
-      if (typeof global !== 'undefined' && !(global as any).GPUBufferUsage) {
-        Object.assign(global, globals);
-      }
-      gpu = create([]);
-    } catch (e) {
-      throw new Error('WebGPU is not supported in this environment (no navigator.gpu or webgpu package)');
-    }
+    //   if (typeof global !== 'undefined' && !(global as any).GPUBufferUsage) {
+    //     Object.assign(global, globals);
+    //   }
+    //   gpu = create([]);
+    // } catch (e) {
+    throw new Error('WebGPU is not supported in this environment (no navigator.gpu or webgpu package)');
+    // }
   }
 
   const adapter = await gpu.requestAdapter();

@@ -3,6 +3,7 @@ import { RuntimeValue, ResourceState } from '../ir/resource-store';
 import { BuiltinOp, TextureFormatFromId, RenderPipelineDef } from '../ir/types';
 import { WgslGenerator, CompilationMetadata } from './wgsl-generator';
 import { GpuCache } from './gpu-cache';
+import { ShaderLayout, packBuffer } from './shader-layout';
 
 /**
  * WebGPU Executor
@@ -78,7 +79,7 @@ export class WebGpuExecutor {
       });
 
       const result = generator.compileFunctions(functions, func.id, options, { structs });
-      console.log(`[WebGpuExecutor] Generated WGSL for ${func.id}:\n${result.code}`);
+      // console.log(`[WebGpuExecutor] Generated WGSL for ${func.id}:\n${result.code}`);
 
       try {
         const pipeline = await GpuCache.getComputePipeline(this.device, result.code);
@@ -105,20 +106,25 @@ export class WebGpuExecutor {
     // 2. Prepare Inputs Buffer
     let bindGroup: GPUBindGroup | undefined;
     const nonBuiltinInputs = func.inputs.filter(i => !i.builtin && i.type !== 'texture2d' && i.type !== 'texture_2d');
-    const sortedInputs = [...nonBuiltinInputs].sort((a, b) => {
-      const aIsArr = a.type.includes('[]') || (a.type.startsWith('array<') && !a.type.includes(','));
-      const bIsArr = b.type.includes('[]') || (b.type.startsWith('array<') && !b.type.includes(','));
-      if (aIsArr && !bIsArr) return 1;
-      if (!aIsArr && bIsArr) return -1;
-      return 0;
-    });
+
+    // Inject dispatch size for bounds checking
+    console.log(`[Executor] Injecting dispatch size: ${JSON.stringify(workgroups)}`);
+    nonBuiltinInputs.push({ id: 'u_dispatch_size', type: 'vec3<u32>' } as any);
+    args['u_dispatch_size'] = [workgroups[0], workgroups[1], workgroups[2]];
+
+    const layout = new ShaderLayout(this.allStructs);
+    // Use calculateBlockLayout with sort=true to match WgslGenerator's (emulated) behavior
+    // Use std430 for inputs (storage buffer)
+    const inputLayout = layout.calculateBlockLayout(nonBuiltinInputs, true, 'std430');
 
     const entries: GPUBindGroupEntry[] = [];
     const stagingBuffers: { id: string, staging: GPUBuffer, isTexture?: boolean }[] = [];
     let inputBuffer: GPUBuffer | undefined;
 
-    if (sortedInputs.length > 0) {
-      const bufferData = this.packArguments(sortedInputs, args);
+    if (inputLayout.fields.length > 0) {
+      console.log(`[Executor] Packing inputs with layout: ${JSON.stringify(inputLayout.fields)}`);
+      // Use packBuffer from shader-layout
+      const bufferData = packBuffer(inputLayout, args, layout, 'std430');
       const usage = (globalThis as any).GPUBufferUsage.STORAGE;
 
       inputBuffer = this.device.createBuffer({
@@ -135,6 +141,7 @@ export class WebGpuExecutor {
 
     // 3. Create BindGroup using compiled metadata
     metadata.resourceBindings.forEach((binding, resId) => {
+      console.log(`[Executor] Processing binding for ${resId} at ${binding}`);
       const state = this.resources.get(resId);
       if (!state) return;
 
@@ -146,9 +153,9 @@ export class WebGpuExecutor {
           entries.push({ binding, resource: tex.createView() });
         }
       } else {
-        const compCount = this.getComponentCount(res.dataType || 'float');
+        const compCount = layout.getComponentCount(res.dataType || 'float');
         const finalSize = Math.max(state.width * compCount * 4, 16);
-        console.log(`[WebGpuExecutor] Creating buffer ${resId}. Width: ${state.width}, Comp: ${compCount}, Size: ${finalSize}`);
+        // console.log(`[WebGpuExecutor] Creating buffer ${resId}. Width: ${state.width}, Comp: ${compCount}, Size: ${finalSize}`);
 
         if ((state as any).gpuBuffer && (state as any).gpuBuffer.size < finalSize) {
           (state as any).gpuBuffer.destroy();
@@ -273,7 +280,8 @@ export class WebGpuExecutor {
           state.data = reshaped;
         } else {
           const data = new Float32Array(mapped);
-          const compCount = this.getComponentCount(state.def.dataType || 'float');
+          const layout = new ShaderLayout(this.allStructs);
+          const compCount = layout.getComponentCount(state.def.dataType || 'float');
           if (compCount > 1) {
             const reshaped = [];
             for (let i = 0; i < data.length && reshaped.length < state.width; i += compCount) {
@@ -435,7 +443,8 @@ export class WebGpuExecutor {
         }
       } else {
         if (!(state as any).gpuBuffer) {
-          const compCount = this.getComponentCount(state.def.dataType || 'float');
+          const layout = new ShaderLayout(this.allStructs);
+          const compCount = layout.getComponentCount(state.def.dataType || 'float');
           (state as any).gpuBuffer = this.device.createBuffer({
             size: Math.max(state.width * compCount * 4, 16),
             usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_SRC | (globalThis as any).GPUBufferUsage.COPY_DST
@@ -530,129 +539,5 @@ export class WebGpuExecutor {
     }
   }
 
-  private getComponentCount(type: string): number {
-    if (type.includes('float4') || type === 'quat') return 4;
-    if (type.includes('float3')) return 3;
-    if (type.includes('float2')) return 2;
-    if (type.includes('mat4')) return 16;
-    if (type.includes('mat3')) return 9;
-    return 1;
-  }
 
-  private packArguments(inputs: { id: string, type: string, builtin?: string }[], args: Record<string, RuntimeValue>): ArrayBuffer {
-    let offset = 0;
-    const packedData: { offset: number, value: RuntimeValue, type: string }[] = [];
-    for (const input of inputs) {
-      if (input.builtin) continue;
-      const align = this.getAlignment(input.type);
-      offset = Math.ceil(offset / align) * align;
-      const val = args[input.id];
-      packedData.push({ offset, value: val, type: input.type });
-      offset += this.getPackedSize(input.type, val);
-    }
-    const buffer = new ArrayBuffer(Math.max(16, Math.ceil(offset / 16) * 16));
-    const view = new DataView(buffer);
-    for (const item of packedData) this.writeToBuffer(view, item.offset, item.value, item.type);
-    return buffer;
-  }
-
-  private getAlignment(type: string): number {
-    const t = type.toLowerCase();
-    if (t === 'float' || t === 'int' || t === 'bool' || t === 'f32' || t === 'i32' || t === 'u32') return 4;
-    if (t === 'float2' || t === 'vec2<f32>') return 8;
-    if (t === 'float3' || t === 'vec3<f32>' || t === 'float4' || t === 'vec4<f32>' || t === 'quat') return 16;
-    if (t === 'float3x3' || t === 'mat3x3<f32>' || t === 'float4x4' || t === 'mat4x4<f32>') return 16;
-
-    if (t.includes('[') || t.startsWith('array<')) {
-      const inner = t.replace('[]', '').replace('array<', '').split(',')[0].replace('>', '').trim();
-      return this.getAlignment(inner);
-    }
-
-    const struct = this.allStructs.find(s => s.id.toLowerCase() === type.toLowerCase());
-    if (struct) {
-      let maxAlign = 4;
-      for (const m of struct.members) maxAlign = Math.max(maxAlign, this.getAlignment(m.type));
-      return maxAlign;
-    }
-    return 16;
-  }
-
-  private getPackedSize(type: string, val?: RuntimeValue): number {
-    const t = type.toLowerCase();
-    if (t === 'float' || t === 'int' || t === 'bool' || t === 'f32' || t === 'i32' || t === 'u32') return 4;
-    if (t === 'float2' || t === 'vec2<f32>') return 8;
-    if (t === 'float3' || t === 'vec3<f32>') return 12;
-    if (t === 'float4' || t === 'vec4<f32>' || t === 'quat') return 16;
-    if (t === 'float3x3' || t === 'mat3x3<f32>') return 48; // 3 x 16-stride columns
-    if (t === 'float4x4' || t === 'mat4x4<f32>') return 64; // 4 x 16-stride columns
-
-    if (t.includes('[') || t.startsWith('array<')) {
-      if (Array.isArray(val)) {
-        const inner = t.replace('[]', '').replace('array<', '').split(',')[0].replace('>', '').trim();
-        const elemSize = this.getPackedSize(inner);
-        const elemAlign = this.getAlignment(inner);
-        const stride = Math.ceil(elemSize / elemAlign) * elemAlign;
-        return val.length * stride;
-      }
-      return 0;
-    }
-
-    const struct = this.allStructs.find(s => s.id.toLowerCase() === t);
-    if (struct) {
-      let structOffset = 0;
-      let maxAlign = 4;
-      for (const m of struct.members) {
-        const mAlign = this.getAlignment(m.type);
-        maxAlign = Math.max(maxAlign, mAlign);
-        structOffset = Math.ceil(structOffset / mAlign) * mAlign;
-        structOffset += this.getPackedSize(m.type);
-      }
-      return Math.ceil(structOffset / maxAlign) * maxAlign;
-    }
-    return 16;
-  }
-
-  private writeToBuffer(view: DataView, offset: number, val: RuntimeValue, type: string) {
-    const t = type.toLowerCase();
-    if (typeof val === 'number') {
-      if (t === 'int' || t === 'i32') view.setInt32(offset, val, true);
-      else if (t === 'u32' || t === 'uint') view.setUint32(offset, val, true);
-      else view.setFloat32(offset, val, true);
-    } else if (typeof val === 'boolean') {
-      view.setUint32(offset, val ? 1 : 0, true);
-    } else if (Array.isArray(val)) {
-      if (t.startsWith('mat') || (t.startsWith('float') && t.includes('x'))) {
-        const dim = (t.includes('3x3') || t.includes('3')) ? 3 : 4;
-        for (let c = 0; c < dim; c++) {
-          for (let r = 0; r < dim; r++) {
-            view.setFloat32(offset + (c * 16) + (r * 4), val[c * dim + r] as number, true);
-          }
-        }
-      } else if (t.includes('[') || t.startsWith('array<')) {
-        const inner = type.replace('[]', '').replace('array<', '').split(',')[0].replace('>', '').trim();
-        const elemSize = this.getPackedSize(inner);
-        const elemAlign = this.getAlignment(inner);
-        const stride = Math.ceil(elemSize / elemAlign) * elemAlign;
-        for (let i = 0; i < val.length; i++) {
-          this.writeToBuffer(view, offset + (i * stride), val[i] as RuntimeValue, inner);
-        }
-      } else {
-        // float2/3/4
-        for (let i = 0; i < val.length; i++) {
-          view.setFloat32(offset + (i * 4), val[i] as number, true);
-        }
-      }
-    } else if (typeof val === 'object' && val !== null) {
-      const struct = this.allStructs.find(s => s.id.toLowerCase() === t);
-      if (struct) {
-        let memberOffset = 0;
-        for (const m of struct.members) {
-          const mAlign = this.getAlignment(m.type);
-          memberOffset = Math.ceil(memberOffset / mAlign) * mAlign;
-          this.writeToBuffer(view, offset + memberOffset, (val as any)[m.name], m.type);
-          memberOffset += this.getPackedSize(m.type);
-        }
-      }
-    }
-  }
 }

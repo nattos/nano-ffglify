@@ -210,6 +210,8 @@ export interface FunctionDef {
   // Local Mutable Variables (POD only)
   localVars: VariableDef[];
 
+  metadata?: Record<string, any>;
+
   nodes: Node[];
 }
 

@@ -1,6 +1,7 @@
 
 import { FunctionDef, Node, Edge, DataType, ResourceDef, IRDocument, StructDef } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
+import { ShaderLayout } from './shader-layout';
 
 /**
  * WGSL Generator
@@ -119,6 +120,20 @@ export class WgslGenerator {
         }
       });
     }
+
+    // Filter bindings to only used resources
+    if (options.resourceBindings) {
+      const filtered = new Map<string, number>();
+      options.resourceBindings.forEach((binding, id) => {
+        if (usedResources.has(id)) filtered.set(id, binding);
+      });
+      options.resourceBindings = filtered;
+    }
+    console.log(`[WgslGenerator] Used: ${Array.from(usedResources).join(', ')}`);
+    if (options.resourceBindings) {
+      console.log(`[WgslGenerator] Bindings: ${Array.from(options.resourceBindings.entries()).map(([k, v]) => `${k}:${v}`).join(', ')}`);
+    }
+
     options.storageResources = storageResources;
     options.sampledResources = sampledResources;
 
@@ -152,21 +167,22 @@ export class WgslGenerator {
     const inputSource = (entryFunc.type === 'shader') ? entryFunc.inputs : fullIr.inputs;
     const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin && i.type !== 'texture2d' && i.type !== 'texture_2d' && !options.varMap?.has(i.id));
 
-    if (options.stage === 'compute' && options.inputBinding !== undefined && nonBuiltinInputs.length > 0) {
+    if (options.stage === 'compute' && options.inputBinding !== undefined) {
       const docInputs = [...nonBuiltinInputs];
-      docInputs.sort((a, b) => {
-        const aIsArr = a.type.includes('[]') || (a.type.startsWith('array<') && !a.type.includes(','));
-        const bIsArr = b.type.includes('[]') || (b.type.startsWith('array<') && !b.type.includes(','));
-        if (aIsArr && !bIsArr) return 1;
-        if (!aIsArr && bIsArr) return -1;
-        return 0;
-      });
+      // Inject dispatch size for bounds checking - now unconditional for compute
+      docInputs.push({ id: 'u_dispatch_size', type: 'vec3<u32>' });
+
+      // Use ShaderLayout to determine order (sort=true for efficient packing)
+      // This guarantees the struct layout matches the buffer packing.
+      // Use std430 for storage buffers (Inputs)
+      const layout = new ShaderLayout(ir?.structs || []);
+      const inputLayout = layout.calculateBlockLayout(docInputs, true, 'std430');
 
       finalLines.push('struct Inputs {');
-      for (const input of docInputs) {
-        let type = this.resolveType(input.type);
+      for (const field of inputLayout.fields) {
+        let type = this.resolveType(field.type);
         if (type === 'bool') type = 'u32';
-        finalLines.push(`  ${input.id} : ${type},`);
+        finalLines.push(`  ${field.name} : ${type},`);
       }
       finalLines.push('}');
       finalLines.push(`@group(0) @binding(${options.inputBinding}) var<storage, read> b_inputs : Inputs;`);
@@ -322,7 +338,10 @@ export class WgslGenerator {
     finalLines.push(...lines);
     finalLines.push(...functionLines);
 
-    const hasInputs = options.stage === 'compute' && options.inputBinding !== undefined && nonBuiltinInputs.length > 0;
+    const hasInputs = options.inputBinding !== undefined && (
+      (options.stage === 'compute') || // Always have u_dispatch_size in compute
+      nonBuiltinInputs.length > 0
+    );
     const finalWorkgroupSize = options.workgroupSize || (options.stage === 'compute' ? [16, 16, 1] as [number, number, number] : [1, 1, 1] as [number, number, number]);
     return {
       code: finalLines.join('\n'),
@@ -331,6 +350,7 @@ export class WgslGenerator {
         inputBinding: hasInputs ? options.inputBinding : undefined,
         workgroupSize: finalWorkgroupSize
       }
+
     };
   }
 
@@ -361,6 +381,12 @@ export class WgslGenerator {
         }
       });
     }
+    // Extract metadata from entry point function
+    const entryFunc = ir.functions.find(f => f.id === entryPointId);
+    if (entryFunc && entryFunc.metadata && entryFunc.metadata['workgroup_size']) {
+      options.workgroupSize = entryFunc.metadata['workgroup_size'] as [number, number, number];
+    }
+
     return this.compileFunctions(ir.functions, entryPointId, options, ir);
   }
 
@@ -552,6 +578,9 @@ export class WgslGenerator {
           if (input.builtin === 'local_invocation_index') lines.push(`  let l_${input.id} = lidx;`);
           if (input.builtin === 'num_workgroups') lines.push(`  let l_${input.id} = nw;`);
         }
+
+        // Automatic Bounds Check - u_dispatch_size is always present for compute now
+        lines.push(`  if (any(gid >= b_inputs.u_dispatch_size)) { return; }`);
       }
     } else {
       const args = func.inputs.map(arg => `${arg.id}: ${this.resolveType(arg.type)}`).join(', ');
@@ -723,13 +752,6 @@ export class WgslGenerator {
       const bufVar = this.getBufferVar(bufferId);
       const def = options.resourceDefs?.get(bufferId);
       lines.push(`${indent}if (u32(${idx}) < arrayLength(&${bufVar}.data)) {`);
-      lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
-      lines.push(`${indent}}`);
-      lines.push(`${indent}if (u32(${idx}) < 4) {`);
-      lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
-      lines.push(`${indent}}`);
-      lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
-      lines.push(`${indent}}`);
       lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
       lines.push(`${indent}}`);
     } else {
