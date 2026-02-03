@@ -78,7 +78,7 @@ export class WgslGenerator {
     const functionLines: string[] = []; // Actual function code
 
     // 2. Structs
-    this.generateStructs(fullIr, lines);
+    this.generateStructs(fullIr, lines, options);
 
     const emitted = new Set<string>();
     const toEmit = [entryPointId];
@@ -345,7 +345,7 @@ export class WgslGenerator {
     });
   }
 
-  private generateStructs(ir: IRDocument, lines: string[]) {
+  private generateStructs(ir: IRDocument, lines: string[], options: WgslOptions) {
     for (const s of ir.structs) {
       lines.push(`struct ${s.id} {`);
       let locationIdx = 0;
@@ -354,8 +354,9 @@ export class WgslGenerator {
         let decorators = '';
         if (m.builtin) {
           decorators += `@builtin(${m.builtin}) `;
-        } else {
+        } else if (options.stage !== 'compute') {
           // Fragment/Vertex IO requires @location for all non-builtin members
+          // But only if we are in Vertex/Fragment stage. Compute doesn't support @location struct members.
           decorators += `@location(${m.location !== undefined ? m.location : locationIdx++}) `;
         }
         lines.push(`  ${decorators}${m.name} : ${type},`);
@@ -545,9 +546,28 @@ export class WgslGenerator {
         lines.push(`  l_${varId} = ${castExpr};`);
       }
     } else if (node.op === 'array_set' || node.op === 'vec_set_element') {
+      const targetId = (node['array'] || node['vec']) as string;
+      let elemType = 'any';
+      if (targetId) {
+        // Resolve var_get to actual variable ID
+        let varId = targetId;
+        const sourceNode = func.nodes.find(n => n.id === targetId);
+        if (sourceNode && sourceNode.op === 'var_get') {
+          varId = sourceNode['var'] as string;
+        }
+
+        const v = func.localVars.find(l => l.id === varId);
+        const i = func.inputs.find(inp => inp.id === varId);
+        const t = (v?.type || i?.type || '').toLowerCase();
+        if (t.includes('i32') || t.includes('int')) elemType = 'i32';
+        else if (t.includes('u32') || t.includes('uint')) elemType = 'u32';
+        else if (t.includes('bool')) elemType = 'bool';
+        else if (t.includes('f32') || t.includes('float')) elemType = 'f32';
+      }
+
       const arr = this.resolveArg(node, 'array' in node ? 'array' : 'vec', func, options, ir, 'any', edges);
       const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
-      const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
+      const val = this.resolveArg(node, 'value', func, options, ir, elemType, edges);
       lines.push(`${indent}${arr}[u32(${idx})] = ${val};`);
     } else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'] as string;
@@ -741,13 +761,22 @@ export class WgslGenerator {
         const items = values.map((_, i) => this.resolveArg(node, `values[${i}]`, func, options, ir, 'any', edges));
         if (items.length === 0) return 'array<f32, 0>()';
         // Try to infer type from first resolved item or default to f32
-        const type = options.varTypes?.get(values[0]) || 'f32';
+        const type = node['type'] || options.varTypes?.get(values[0]) || 'f32';
         return `array<${this.resolveType(type)}, ${items.length}>(${items.join(', ')})`;
       }
       const len = node['length'] || 0;
-      const fillExpr = this.resolveArg(node, 'fill', func, options, ir, 'any', edges);
+
+      let type = 'f32';
+      const rawFill = node['fill'];
+      if (node['type']) type = node['type'];
+      else if (typeof rawFill === 'number' && Number.isInteger(rawFill)) type = 'i32';
+      else if (rawFill === true || rawFill === false) type = 'bool';
+
+      // Re-resolve fill with correct type to avoid 0.0 for ints
+      const fillExpr = this.resolveArg(node, 'fill', func, options, ir, type === 'i32' ? 'int' : (type === 'bool' ? 'bool' : 'float'), edges);
       const vals = new Array(len).fill(null).map(() => fillExpr);
-      return `array<f32, ${len}>(${vals.join(', ')})`;
+
+      return `array<${this.resolveType(type)}, ${len}>(${vals.join(', ')})`;
     }
     if (node.op === 'array_length') {
       const arr = this.resolveArg(node, 'array', func, options, ir, 'any', edges);
@@ -1086,13 +1115,13 @@ export class WgslGenerator {
   }
 
   private formatZero(type: string | DataType): string {
-    if (type === 'float' || type === 'f32') return '0.0';
-    if (type === 'int' || type === 'i32') return '0';
-    if (type === 'bool') return 'false';
-    if (type === 'float2' || type === 'vec2<f32>') return 'vec2<f32>(0.0)';
-    if (type === 'float3' || type === 'vec3<f32>') return 'vec3<f32>(0.0)';
-    if (type === 'float4' || type === 'vec4<f32>') return 'vec4<f32>(0.0)';
-    return '0.0';
+    const t = this.resolveType(type);
+    if (t === 'f32') return '0.0';
+    if (t === 'i32') return '0';
+    if (t === 'u32') return '0u';
+    if (t === 'bool') return 'false';
+    if (t.startsWith('vec') || t.startsWith('mat')) return `${t}(0.0)`;
+    return `${t}()`;
   }
 
   public static findUsedResources(func: FunctionDef, ir: IRDocument | ResourceDef[]): Set<string> {

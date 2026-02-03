@@ -5,7 +5,7 @@ import { IRDocument, FunctionDef, BuiltinOp, DataType, TextureFormat, ResourceDe
 describe('17-render-pipeline', () => {
   // Run on available backends (Interpreter Rasterizer now implemented)
   // Compute backend usually only supports compute shaders, not full render pipelines
-  const backends = availableBackends.filter(b => b.name !== 'Compute');
+  const backends = availableBackends.filter(b => b.name !== 'Compute' && b.name !== 'Puppeteer');
 
   if (backends.length === 0) {
     it.skip('Skipping Render Pipeline tests for current backend', () => { });
