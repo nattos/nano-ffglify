@@ -374,8 +374,8 @@ export class WebGpuExecutor {
     const vsResult = generator.compileFunctions(this.allFunctions, vertexId, { ...options, stage: 'vertex', excludeIds: [fragmentId] }, { structs: this.allStructs });
     const fsResult = generator.compileFunctions(this.allFunctions, fragmentId, { ...options, stage: 'fragment', excludeIds: [vertexId] }, { structs: this.allStructs });
 
-    const vsModule = this.device.createShaderModule({ code: vsResult.code });
-    const fsModule = this.device.createShaderModule({ code: fsResult.code });
+    const vsModule = await GpuCache.getShaderModule(this.device, vsResult.code);
+    const fsModule = await GpuCache.getShaderModule(this.device, fsResult.code);
 
     const targetFormat: GPUTextureFormat = 'rgba8unorm';
     const pipeline = await this.device.createRenderPipelineAsync({
