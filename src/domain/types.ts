@@ -36,7 +36,7 @@ export interface ChatMsg {
 }
 
 export interface AppSettings {
-  activeTab: 'state' | 'logs' | 'script' | 'results';
+  activeTab: 'state' | 'logs' | 'script' | 'results' | 'ir';
   chatOpen: boolean;
   useMockLLM: boolean;
 }

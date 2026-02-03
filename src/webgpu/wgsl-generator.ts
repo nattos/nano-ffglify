@@ -135,7 +135,7 @@ export class WgslGenerator {
     finalLines.push('');
 
     // Globals Buffer
-    if (options.globalBufferBinding !== undefined) {
+    if (options.globalBufferBinding !== undefined && options.varMap && options.varMap.size > 0) {
       finalLines.push('struct GlobalsBuffer { data: array<f32> }');
       finalLines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : GlobalsBuffer;`);
       finalLines.push('');
@@ -536,7 +536,11 @@ export class WgslGenerator {
           }
         }
       } else if (func.localVars.some(v => v.id === varId)) {
-        lines.push(`  l_${varId} = ${valExpr};`);
+        const localVar = func.localVars.find(v => v.id === varId)!;
+        const targetType = localVar.type || 'float';
+        const valType = options.nodeTypes?.get(node['val']) || 'float';
+        const castExpr = this.wrapCast(valExpr, valType, targetType);
+        lines.push(`  l_${varId} = ${castExpr};`);
       }
     } else if (node.op === 'array_set' || node.op === 'vec_set_element') {
       const arr = this.resolveArg(node, 'array' in node ? 'array' : 'vec', func, options, ir, 'any', edges);
@@ -826,12 +830,24 @@ export class WgslGenerator {
     }
     if (node.op === 'builtin_get') {
       const name = node['name'];
-      if (name === 'global_invocation_id') return 'gid';
-      if (name === 'local_invocation_id') return 'lid';
-      if (name === 'workgroup_id') return 'wid';
-      if (name === 'local_invocation_index') return 'lidx';
-      if (name === 'num_workgroups') return 'nw';
-      return 'gid';
+      const outType = options.nodeTypes?.get(node.id) || 'float3';
+      let expr = 'gid';
+      if (name === 'global_invocation_id') expr = 'gid';
+      else if (name === 'local_invocation_id') expr = 'lid';
+      else if (name === 'workgroup_id') expr = 'wid';
+      else if (name === 'local_invocation_index') expr = 'lidx';
+      else if (name === 'num_workgroups') expr = 'nw';
+      else if (name === 'frag_coord') expr = 'f_coord';
+      else if (name === 'front_facing') expr = 'f_facing';
+
+      // Built-ins in WGSL are often u32 or vecN<u32>.
+      // Our IR often expects floats for generic math.
+      if (outType.startsWith('float') || outType === 'float') {
+        const count = this.getComponentCount(outType);
+        if (count === 1) return `f32(${expr})`;
+        return `vec${count}<f32>(${expr})`;
+      }
+      return expr;
     }
     if (this.isMathOp(node.op)) return this.compileMath(node, func, options, ir, edges);
     return '0.0';
@@ -841,19 +857,30 @@ export class WgslGenerator {
 
   private compileMath(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, edges: Edge[]): string {
     const op = node.op;
-    const isFloatOp = !op.includes('_gt') && !op.includes('_lt') && !op.includes('_ge') && !op.includes('_le') && !op.includes('_eq') && !op.includes('_neq') && !op.startsWith('bits_');
+    const outType = options.nodeTypes?.get(node.id) || 'float';
+    const isFloatResult = outType.startsWith('float') || outType === 'float' || outType.includes('x');
+    const isBoolResult = outType === 'boolean' || outType === 'bool';
 
     const a = (k = 'a') => {
-      const expr = this.resolveArg(node, k, func, options, ir, 'float', edges);
-      return (isFloatOp && !expr.includes('vec') && !expr.includes('mat')) ? `f32(${expr})` : expr;
+      const expr = this.resolveArg(node, k, func, options, ir, 'any', edges);
+      const argType = options.nodeTypes?.get(node[k]) || 'float';
+      if (isFloatResult && argType === 'int') return `f32(${expr})`;
+      if (!isFloatResult && !isBoolResult && argType === 'float') return `i32(${expr})`;
+      return expr;
     };
     const b = (k = 'b') => {
-      const expr = this.resolveArg(node, k, func, options, ir, 'float', edges);
-      return (isFloatOp && !expr.includes('vec') && !expr.includes('mat')) ? `f32(${expr})` : expr;
+      const expr = this.resolveArg(node, k, func, options, ir, 'any', edges);
+      const argType = options.nodeTypes?.get(node[k]) || 'float';
+      if (isFloatResult && argType === 'int') return `f32(${expr})`;
+      if (!isFloatResult && !isBoolResult && argType === 'float') return `i32(${expr})`;
+      return expr;
     };
     const val = (k = 'val') => {
-      const expr = this.resolveArg(node, k, func, options, ir, 'float', edges);
-      return (isFloatOp && !expr.includes('vec') && !expr.includes('mat')) ? `f32(${expr})` : expr;
+      const expr = this.resolveArg(node, k, func, options, ir, 'any', edges);
+      const argType = options.nodeTypes?.get(node[k]) || 'float';
+      if (isFloatResult && argType === 'int') return `f32(${expr})`;
+      if (!isFloatResult && !isBoolResult && argType === 'float') return `i32(${expr})`;
+      return expr;
     };
 
     // Core Arithmetic
@@ -1013,5 +1040,25 @@ export class WgslGenerator {
       }
     });
     return resources;
+  }
+
+  private wrapCast(expr: string, fromType: DataType | string, toType: DataType | string): string {
+    if (fromType === toType) return expr;
+    if (fromType === 'any' || toType === 'any') return expr;
+
+    const fromCount = this.getComponentCount(fromType);
+    const toCount = this.getComponentCount(toType);
+
+    if (toType === 'float' || toType === 'f32') return `f32(${expr})`;
+    if (toType === 'int' || toType === 'i32') return `i32(${expr})`;
+    if (toType === 'uint' || toType === 'u32') return `u32(${expr})`;
+    if (toType === 'bool' || toType === 'boolean') return `bool(${expr})`;
+
+    if (toType.startsWith('float') && toCount > 1) {
+      if (fromCount === 1) return `vec${toCount}<f32>(${expr})`;
+      return `vec${toCount}<f32>(${expr})`;
+    }
+
+    return expr;
   }
 }
