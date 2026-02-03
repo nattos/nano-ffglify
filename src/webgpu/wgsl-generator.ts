@@ -1070,6 +1070,9 @@ export class WgslGenerator {
     if (type === 'float3x3') return 'mat3x3<f32>';
     if (type === 'float4x4') return 'mat4x4<f32>';
     if (type === 'string') throw new Error('Shaders do not support string type');
+    if (type === 'texture2d' || type === 'texture_2d') return 'texture_2d<f32>';
+    if (type === 'sampler') return 'sampler';
+    if (type === 'sampler_comparison') return 'sampler_comparison';
 
     // Handle array types: float[3] or array<float, 3> or float[]
     if (type.includes('[') || type.startsWith('array<')) {

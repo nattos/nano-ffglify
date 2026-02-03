@@ -15,7 +15,7 @@ import { ComputeTestBackend } from './compute-test-backend';
   throw new Error(message);
 };
 
-(window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any, backendName: string = 'Compute') => {
+(window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any, resourcesObj: any, backendName: string = 'Compute') => {
   console.log(`[Bridge] runGpuTest called with backend: ${backendName}`, { entryPoint, inputsObj });
 
   // Convert plain object inputs back to Map
@@ -27,7 +27,21 @@ import { ComputeTestBackend } from './compute-test-backend';
   }
 
   const backend = backendName === 'Interpreter' ? InterpreterBackend : ComputeTestBackend;
-  const ctx = await backend.execute(ir, entryPoint, inputsMap);
+  const ctx = await backend.createContext(ir, inputsMap);
+
+  // Hydrate resources
+  if (resourcesObj) {
+    for (const [key, state] of Object.entries(resourcesObj)) {
+      const res = ctx.getResource(key);
+      if (res) {
+        if ((state as any).width) res.width = (state as any).width;
+        if ((state as any).height) res.height = (state as any).height;
+        if ((state as any).data) res.data = (state as any).data;
+      }
+    }
+  }
+
+  await backend.run(ctx, entryPoint);
 
   // Serialize context back to plain object
   // We only need the results (vars from the top frame) and resources for now

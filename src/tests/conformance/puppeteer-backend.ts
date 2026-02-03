@@ -52,13 +52,26 @@ export const PuppeteerBackend: TestBackend = {
       inputsObj[key] = val;
     });
 
+    // Serialize resources
+    const resourcesObj: Record<string, any> = {};
+    ctx.resources.forEach((state, key) => {
+      resourcesObj[key] = {
+        width: state.width,
+        height: state.height,
+        data: state.data,
+        // We might need to serialize definition too if it changed, but IR typically holds definition.
+        // For now, dimensions and data are crucial.
+      };
+    });
+
     // Run the test in the browser
     const backendName = process.env.PUPPETEER_SUB_BACKEND || 'Compute';
     const results = await page.evaluate(
-      (ir, ep, inputs, bName) => (window as any).runGpuTest(ir, ep, inputs, bName),
+      (ir, ep, inputs, resources, bName) => (window as any).runGpuTest(ir, ep, inputs, resources, bName),
       ctx.ir,
       entryPoint,
       inputsObj,
+      resourcesObj,
       backendName
     ) as any;
 
@@ -88,15 +101,7 @@ export const PuppeteerBackend: TestBackend = {
   },
 
   // Extension for Phase 1 testing
-  echo: async (data: any) => {
-    const page = await getPage();
-    return await page.evaluate((d) => (window as any).echo(d), data);
-  },
-
-  throwError: async (message: string) => {
-    const page = await getPage();
-    return await page.evaluate((m) => (window as any).throwError(m), message);
-  }
+  // (Removed echo/throwError as they are not standard backend methods)
 };
 
 // Cleanup on exit

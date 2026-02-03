@@ -226,7 +226,34 @@ export const ComputeTestBackend: TestBackend = {
         });
 
         const nodeTypes = inferFunctionTypes(func, ir);
-        const compilation = new WgslGenerator().compile(ir, entryPoint, {
+
+        // Handle cmd_dispatch redirection:
+        // If the entry function contains a 'cmd_dispatch', we should compile the dispatched function instead.
+        // This simulates a host dispatching a kernel.
+        let targetEntryPoint = entryPoint;
+        let dispatchSize = [1, 1, 1];
+
+        const dispNode = func.nodes.find(n => n.op === 'cmd_dispatch');
+        if (dispNode) {
+          if (typeof dispNode['func'] === 'string') {
+            targetEntryPoint = dispNode['func'];
+            const targetFunc = ir.functions.find(f => f.id === targetEntryPoint);
+            if (!targetFunc) throw new Error(`Dispatched function '${targetEntryPoint}' not found`);
+            // We reuse the original function for type inference context if needed,
+            // but strictly we should infer types for the target.
+            // WgslGenerator.compileFunctions handles dependency resolution.
+          }
+          const dims = dispNode['dispatch'];
+          if (Array.isArray(dims)) {
+            dispatchSize = [
+              (dims[0] as number) || 1,
+              (dims[1] as number) || 1,
+              (dims[2] as number) || 1
+            ];
+          }
+        }
+
+        const compilation = new WgslGenerator().compile(ir, targetEntryPoint, {
           globalBufferBinding: 0,
           varMap: varMap,
           varTypes: varTypes,
@@ -272,16 +299,9 @@ export const ComputeTestBackend: TestBackend = {
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, bindGroup);
 
-        let dx = 1, dy = 1, dz = 1;
-        const dispNode = func.nodes.find(n => n.op === 'cmd_dispatch');
-        if (dispNode) {
-          const dims = dispNode['dispatch'];
-          if (Array.isArray(dims)) {
-            dx = (dims[0] as number) || 1;
-            dy = (dims[1] as number) || 1;
-            dz = (dims[2] as number) || 1;
-          }
-        }
+        let dx = dispatchSize[0], dy = dispatchSize[1], dz = dispatchSize[2];
+        // If we didn't redirect (no cmd_dispatch), check if the function itself has dispatch metadata (unlikely for strict compute backend acting as host)
+        // But if we are running a pure compute shader entry point directly, we default to 1,1,1 unless specific metadata exists.
 
         pass.dispatchWorkgroups(dx, dy, dz);
         pass.end();
