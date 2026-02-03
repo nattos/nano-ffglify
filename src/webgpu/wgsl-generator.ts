@@ -899,7 +899,7 @@ export class WgslGenerator {
     if (op === 'math_e') return '2.71828183';
 
     // Core Arithmetic with Broadcasting
-    if (op === 'math_add' || op === 'math_sub' || op === 'math_div' || op === 'math_mod') {
+    if (op === 'math_add' || op === 'math_sub' || op === 'math_div' || op === 'math_mod' || op === 'math_atan2') {
       const typeA = getType('a');
       const typeB = getType('b');
       // Use the output type (which is usually the vector type) as target for broadcasting
@@ -913,6 +913,7 @@ export class WgslGenerator {
       if (op === 'math_sub') return `(${aExpr} - ${bExpr})`;
       if (op === 'math_div') return `(${aExpr} / ${bExpr})`;
       if (op === 'math_mod') return `(${aExpr} % ${bExpr})`;
+      if (op === 'math_atan2') return `atan2(${aExpr}, ${bExpr})`;
     }
 
     if (op === 'math_mul' || op === 'mat_mul') return `(${arg('a')} * ${arg('b')})`; // WGSL supports scalar*vector natively
