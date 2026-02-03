@@ -105,7 +105,7 @@ export class WebGpuExecutor {
 
     // 2. Prepare Inputs Buffer
     let bindGroup: GPUBindGroup | undefined;
-    const nonBuiltinInputs = func.inputs.filter(i => !i.builtin && i.type !== 'texture2d' && i.type !== 'texture_2d');
+    const nonBuiltinInputs = func.inputs.filter(i => !i.builtin && i.type !== 'texture2d');
 
     // Inject dispatch size for bounds checking
     nonBuiltinInputs.push({ id: 'u_dispatch_size', type: 'vec3<u32>' } as any);

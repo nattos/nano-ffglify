@@ -161,7 +161,7 @@ export class WgslGenerator {
     // 2.5. Inputs Buffer (Uniforms / Non-Stage IO)
     // For shaders, we use the function's own inputs. For direct execution of a graph, we might use global inputs.
     const inputSource = (entryFunc.type === 'shader') ? entryFunc.inputs : fullIr.inputs;
-    const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin && i.type !== 'texture2d' && i.type !== 'texture_2d' && !options.varMap?.has(i.id));
+    const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin && i.type !== 'texture2d' && !options.varMap?.has(i.id));
 
     if (options.stage === 'compute' && options.inputBinding !== undefined) {
       const docInputs = [...nonBuiltinInputs];
@@ -355,7 +355,7 @@ export class WgslGenerator {
       options.resourceDefs = new Map<string, any>(ir.resources.map(r => [r.id, r]));
       // Also include texture-inputs as resources so resource_get_size works for them
       ir.inputs.forEach(input => {
-        if (input.type === 'texture2d' || input.type === 'texture_2d') {
+        if (input.type === 'texture2d') {
           if (!options.resourceDefs!.has(input.id)) {
             options.resourceDefs!.set(input.id, { ...input, type: 'texture2d' } as any);
           }
@@ -372,7 +372,7 @@ export class WgslGenerator {
       });
       // Detect texture-inputs and treat them as resources (consistent with WebGpuExecutor)
       ir.inputs.forEach(input => {
-        if ((input.type === 'texture2d' || input.type === 'texture_2d') && !options.resourceBindings!.has(input.id)) {
+        if ((input.type === 'texture2d') && !options.resourceBindings!.has(input.id)) {
           options.resourceBindings!.set(input.id, bindingIdx++);
         }
       });
@@ -1449,7 +1449,7 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
     if (type === 'float3x3') return 'mat3x3<f32>';
     if (type === 'float4x4') return 'mat4x4<f32>';
     if (type === 'string') throw new Error('Shaders do not support string type');
-    if (type === 'texture2d' || type === 'texture_2d') return 'texture_2d<f32>';
+    if (type === 'texture2d') return 'texture_2d<f32>';
     if (type === 'sampler') return 'sampler';
     if (type === 'sampler_comparison') return 'sampler_comparison';
 
