@@ -234,7 +234,6 @@ export class WgslGenerator {
 
     const hasInputs = options.stage === 'compute' && options.inputBinding !== undefined && nonBuiltinInputs.length > 0;
     const finalWorkgroupSize = options.workgroupSize || (options.stage === 'compute' ? [16, 16, 1] as [number, number, number] : [1, 1, 1] as [number, number, number]);
-
     return {
       code: finalLines.join('\n'),
       metadata: {
@@ -861,102 +860,155 @@ export class WgslGenerator {
     const isFloatResult = outType.startsWith('float') || outType === 'float' || outType.includes('x');
     const isBoolResult = outType === 'boolean' || outType === 'bool';
 
-    const a = (k = 'a') => {
-      const expr = this.resolveArg(node, k, func, options, ir, 'any', edges);
-      const argType = options.nodeTypes?.get(node[k]) || 'float';
-      if (isFloatResult && argType === 'int') return `f32(${expr})`;
-      if (!isFloatResult && !isBoolResult && argType === 'float') return `i32(${expr})`;
-      return expr;
+    // Helper to resolve argument type
+    const getType = (k: string) => {
+      const val = node[k];
+      if (typeof val === 'string') return options.nodeTypes?.get(val) || 'float';
+      if (Array.isArray(val)) return `float${val.length}`;
+      return 'float';
     };
-    const b = (k = 'b') => {
+
+    // Helper to resolve argument generic expression
+    const arg = (k: string) => {
       const expr = this.resolveArg(node, k, func, options, ir, 'any', edges);
-      const argType = options.nodeTypes?.get(node[k]) || 'float';
-      if (isFloatResult && argType === 'int') return `f32(${expr})`;
-      if (!isFloatResult && !isBoolResult && argType === 'float') return `i32(${expr})`;
-      return expr;
-    };
-    const val = (k = 'val') => {
-      const expr = this.resolveArg(node, k, func, options, ir, 'any', edges);
-      const argType = options.nodeTypes?.get(node[k]) || 'float';
+      const argType = getType(k);
       if (isFloatResult && argType === 'int') return `f32(${expr})`;
       if (!isFloatResult && !isBoolResult && argType === 'float') return `i32(${expr})`;
       return expr;
     };
 
-    // Core Arithmetic
-    if (op === 'math_add') return `(${a()} + ${b()})`;
-    if (op === 'math_sub') return `(${a()} - ${b()})`;
-    if (op === 'math_mul' || op === 'mat_mul') return `(${a()} * ${b()})`;
-    if (op === 'math_div') return `(${a()} / ${b()})`;
-    if (op === 'math_mod') return `(${a()} % ${b()})`;
-    if (op === 'math_neg') return `(-${val()})`;
+    if (op === 'math_mix' || op === 'vec_mix') {
+      return `mix(${arg('a')}, ${arg('b')}, ${arg('t')})`;
+    }
+
+    // Helper to broadcast scalar to vector if needed
+    const broadcast = (k: string, targetType: string) => {
+      const expr = arg(k);
+      const argType = getType(k);
+      const argCount = this.getComponentCount(argType);
+      const targetCount = this.getComponentCount(targetType);
+
+      if (argCount === 1 && targetCount > 1) {
+        return `vec${targetCount}<f32>(${expr})`;
+      }
+      return expr;
+    };
+
+    // Constants
+    if (op === 'math_pi') return '3.14159265';
+    if (op === 'math_e') return '2.71828183';
+
+    // Core Arithmetic with Broadcasting
+    if (op === 'math_add' || op === 'math_sub' || op === 'math_div' || op === 'math_mod') {
+      const typeA = getType('a');
+      const typeB = getType('b');
+      // Use the output type (which is usually the vector type) as target for broadcasting
+      // If output is scalar, both inputs should be scalar anyway
+      const targetType = (this.getComponentCount(typeA) > 1) ? typeA : ((this.getComponentCount(typeB) > 1) ? typeB : 'float');
+
+      const aExpr = broadcast('a', targetType);
+      const bExpr = broadcast('b', targetType);
+
+      if (op === 'math_add') return `(${aExpr} + ${bExpr})`;
+      if (op === 'math_sub') return `(${aExpr} - ${bExpr})`;
+      if (op === 'math_div') return `(${aExpr} / ${bExpr})`;
+      if (op === 'math_mod') return `(${aExpr} % ${bExpr})`;
+    }
+
+    if (op === 'math_mul' || op === 'mat_mul') return `(${arg('a')} * ${arg('b')})`; // WGSL supports scalar*vector natively
+    if (op === 'math_neg') return `(-${arg('val')})`;
 
     // Standard Math
-    if (op === 'math_abs') return `abs(${val()})`;
-    if (op === 'math_sin') return `sin(${val()})`;
-    if (op === 'math_cos') return `cos(${val()})`;
-    if (op === 'math_tan') return `tan(${val()})`;
-    if (op === 'math_asin') return `asin(${val()})`;
-    if (op === 'math_acos') return `acos(${val()})`;
-    if (op === 'math_atan') return `atan(${val()})`;
-    if (op === 'math_asinh') return `asinh(${val()})`;
-    if (op === 'math_acosh') return `acosh(${val()})`;
-    if (op === 'math_atanh') return `atanh(${val()})`;
-    if (op === 'math_sinh') return `sinh(${val()})`;
-    if (op === 'math_cosh') return `cosh(${val()})`;
-    if (op === 'math_tanh') return `tanh(${val()})`;
+    if (op === 'math_abs') return `abs(${arg('val')})`;
+    if (op === 'math_sin') return `sin(${arg('val')})`;
+    if (op === 'math_cos') return `cos(${arg('val')})`;
+    if (op === 'math_tan') return `tan(${arg('val')})`;
+    if (op === 'math_asin') return `asin(${arg('val')})`;
+    if (op === 'math_acos') return `acos(${arg('val')})`;
+    if (op === 'math_atan') return `atan(${arg('val')})`;
+    if (op === 'math_asinh') return `asinh(${arg('val')})`;
+    if (op === 'math_acosh') return `acosh(${arg('val')})`;
+    if (op === 'math_atanh') return `atanh(${arg('val')})`;
+    if (op === 'math_sinh') return `sinh(${arg('val')})`;
+    if (op === 'math_cosh') return `cosh(${arg('val')})`;
+    if (op === 'math_tanh') return `tanh(${arg('val')})`;
 
-    if (op === 'math_sqrt') return `sqrt(${val()})`;
-    if (op === 'math_exp') return `exp(${val()})`;
-    if (op === 'math_log') return `log(${val()})`;
-    if (op === 'math_pow') return `pow(${a()}, ${b()})`;
+    if (op === 'math_sqrt') return `sqrt(${arg('val')})`;
+    if (op === 'math_exp') return `exp(${arg('val')})`;
+    if (op === 'math_log') return `log(${arg('val')})`;
+    if (op === 'math_pow') return `pow(${arg('a')}, ${arg('b')})`;
 
-    if (op === 'math_trunc') return `trunc(${val()})`;
-    if (op === 'math_round') return `round(${val()})`;
-    if (op === 'math_floor') return `floor(${val()})`;
-    if (op === 'math_ceil') return `ceil(${val()})`;
-    if (op === 'math_fract') return `fract(${val()})`;
-    if (op === 'math_sign') return `sign(${val()})`;
+    if (op === 'math_trunc') return `trunc(${arg('val')})`;
+    if (op === 'math_round') return `round(${arg('val')})`;
+    if (op === 'math_floor') return `floor(${arg('val')})`;
+    if (op === 'math_ceil') return `ceil(${arg('val')})`;
+    if (op === 'math_fract') return `fract(${arg('val')})`;
+    if (op === 'math_sign') return `sign(${arg('val')})`;
 
-    if (op === 'math_min') return `min(${a()}, ${b()})`;
-    if (op === 'math_max') return `max(${a()}, ${b()})`;
-    if (op === 'math_mad') return `((${a()} * ${b()}) + ${this.resolveArg(node, 'c', func, options, ir, 'float', edges)})`;
-    if (op === 'math_clamp') return `clamp(${val()}, ${this.resolveArg(node, 'min', func, options, ir, 'float', edges)}, ${this.resolveArg(node, 'max', func, options, ir, 'float', edges)})`;
-    if (op === 'math_mix') return `mix(${a()}, ${b()}, ${this.resolveArg(node, 't', func, options, ir, 'float', edges)})`;
-    if (op === 'math_step') return `step(${this.resolveArg(node, 'edge', func, options, ir, 'float', edges)}, ${val()})`;
-    if (op === 'math_smoothstep') return `smoothstep(${this.resolveArg(node, 'edge0', func, options, ir, 'float', edges)}, ${this.resolveArg(node, 'edge1', func, options, ir, 'float', edges)}, ${val()})`;
+    if (op === 'math_min') return `min(${arg('a')}, ${arg('b')})`;
+    if (op === 'math_max') return `max(${arg('a')}, ${arg('b')})`;
+
+    // MAD with broadcasting
+    if (op === 'math_mad') {
+      // fma(a, b, c) -> a * b + c
+      // WGSL fma supports (vec, vec, vec) or (scalar, scalar, scalar)
+      // Mixed broadcasting needs handling
+      const typeA = getType('a');
+      const typeB = getType('b');
+      const typeC = getType('c');
+      const count = Math.max(this.getComponentCount(typeA), this.getComponentCount(typeB), this.getComponentCount(typeC));
+      const targetType = count > 1 ? `vec${count}<f32>` : 'float';
+
+      return `fma(${broadcast('a', targetType)}, ${broadcast('b', targetType)}, ${broadcast('c', targetType)})`;
+    }
+
+    if (op === 'math_clamp') {
+      const typeVal = getType('val');
+      const typeMin = getType('min');
+      const typeMax = getType('max');
+      // clamp(e1, e2, e3). e2 and e3 must handle broadcasting if e1 is vector
+      return `clamp(${arg('val')}, ${broadcast('min', typeVal)}, ${broadcast('max', typeVal)})`;
+    }
+
+    if (op === 'math_mix' || op === 'vec_mix') {
+      // mix(e1, e2, e3). e3 (t) can be scalar or matching vector
+      return `mix(${arg('a')}, ${arg('b')}, ${arg('t')})`;
+    }
+
+    if (op === 'math_step') return `step(${arg('edge')}, ${arg('val')})`;
+    if (op === 'math_smoothstep') return `smoothstep(${arg('edge0')}, ${arg('edge1')}, ${arg('val')})`;
 
     // Advanced Math / Bits
-    if (op === 'math_frexp_mantissa' || op === 'math_mantissa') return `frexp(${val()}).fract`;
-    if (op === 'math_frexp_exponent' || op === 'math_exponent') return `f32(frexp(${val()}).exp)`;
+    if (op === 'math_frexp_mantissa' || op === 'math_mantissa') return `frexp(${arg('val')}).fract`;
+    if (op === 'math_frexp_exponent' || op === 'math_exponent') return `f32(frexp(${arg('val')}).exp)`;
     if (op === 'math_ldexp') return `ldexp(f32(${this.resolveArg(node, 'fract', func, options, ir, 'float', edges)}), i32(${this.resolveArg(node, 'exp', func, options, ir, 'int', edges)}))`;
     if (op === 'math_flush_subnormal') {
-      const v = val();
+      const v = arg('val');
       return `select(${v}, 0.0, abs(${v}) < 1.17549435e-38)`;
     }
 
     // Comparison & Logic
-    if (op === 'math_is_nan') return `isnan(${val()})`;
-    if (op === 'math_is_inf') return `isinf(${val()})`;
-    if (op === 'math_is_finite') return `isfinite(${val()})`;
+    if (op === 'math_is_nan') return `isnan(${arg('val')})`;
+    if (op === 'math_is_inf') return `isinf(${arg('val')})`;
+    if (op === 'math_is_finite') return `isfinite(${arg('val')})`;
 
-    if (op === 'math_gt') return `(${a()} > ${b()})`;
-    if (op === 'math_lt') return `(${a()} < ${b()})`;
-    if (op === 'math_ge') return `(${a()} >= ${b()})`;
-    if (op === 'math_le') return `(${a()} <= ${b()})`;
-    if (op === 'math_eq') return `(${a()} == ${b()})`;
-    if (op === 'math_neq') return `(${a()} != ${b()})`;
+    if (op === 'math_gt') return `(${arg('a')} > ${arg('b')})`;
+    if (op === 'math_lt') return `(${arg('a')} < ${arg('b')})`;
+    if (op === 'math_ge') return `(${arg('a')} >= ${arg('b')})`;
+    if (op === 'math_le') return `(${arg('a')} <= ${arg('b')})`;
+    if (op === 'math_eq') return `(${arg('a')} == ${arg('b')})`;
+    if (op === 'math_neq') return `(${arg('a')} != ${arg('b')})`;
 
     // Vectors
-    if (op === 'vec_dot') return `dot(${a()}, ${b()})`;
-    if (op === 'vec_cross') return `cross(${a()}, ${b()})`;
-    if (op === 'vec_length') return `length(${a()})`;
-    if (op === 'vec_normalize') return `normalize(${a()})`;
-    if (op === 'vec_distance') return `distance(${a()}, ${b()})`;
-    if (op === 'vec_reflect') return `reflect(${a()}, ${b()})`;
-    if (op === 'vec_refract') return `refract(${a()}, ${b()}, ${this.resolveArg(node, 'eta', func, options, ir, 'float', edges)})`;
+    if (op === 'vec_dot') return `dot(${arg('a')}, ${arg('b')})`;
+    if (op === 'vec_cross') return `cross(${arg('a')}, ${arg('b')})`;
+    if (op === 'vec_length') return `length(${arg('a')})`;
+    if (op === 'vec_normalize') return `normalize(${arg('a')})`;
+    if (op === 'vec_distance') return `distance(${arg('a')}, ${arg('b')})`;
+    if (op === 'vec_reflect') return `reflect(${arg('a')}, ${arg('b')})`;
+    if (op === 'vec_refract') return `refract(${arg('a')}, ${arg('b')}, ${this.resolveArg(node, 'eta', func, options, ir, 'float', edges)})`;
 
-    return '0.0';
+    console.warn(`[WgslGen] compileMath UNHANDLED: ${op}`);
     return '0.0';
   }
 

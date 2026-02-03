@@ -96,7 +96,12 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { a: 'float', b: 'float', c: 'float' }, output: 'float' },
     { inputs: { a: 'float2', b: 'float2', c: 'float2' }, output: 'float2' },
     { inputs: { a: 'float3', b: 'float3', c: 'float3' }, output: 'float3' },
+    { inputs: { a: 'float3', b: 'float3', c: 'float3' }, output: 'float3' },
     { inputs: { a: 'float4', b: 'float4', c: 'float4' }, output: 'float4' },
+    // Broadcasting for MAD (vec * scalar + scalar is common)
+    { inputs: { a: 'float2', b: 'float', c: 'float' }, output: 'float2' },
+    { inputs: { a: 'float3', b: 'float', c: 'float' }, output: 'float3' },
+    { inputs: { a: 'float4', b: 'float', c: 'float' }, output: 'float4' },
   ],
 
   'math_clamp': [
