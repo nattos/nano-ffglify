@@ -1,7 +1,7 @@
 
 import { FunctionDef, Node, Edge, DataType, ResourceDef, IRDocument, StructDef } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
-import { ShaderLayout } from './shader-layout';
+import { ShaderLayout, BufferBlockLayout, StructLayoutInfo } from './shader-layout';
 // @ts-ignore
 import intrinsicsWgsl from './intrinsics.wgsl?raw';
 
@@ -31,6 +31,8 @@ export interface WgslOptions {
 export interface CompilationMetadata {
   resourceBindings: Map<string, number>;
   inputBinding?: number;
+  inputLayout?: BufferBlockLayout;
+  structLayouts?: Record<string, StructLayoutInfo>;
   workgroupSize: [number, number, number];
 }
 
@@ -166,6 +168,9 @@ export class WgslGenerator {
     const inputSource = (entryFunc.type === 'shader') ? entryFunc.inputs : fullIr.inputs;
     const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin && i.type !== 'texture2d' && !options.varMap?.has(i.id));
 
+    let inputLayout: BufferBlockLayout | undefined;
+    const layout = new ShaderLayout(ir?.structs || []);
+
     if (options.stage === 'compute' && options.inputBinding !== undefined) {
       const docInputs = [...nonBuiltinInputs];
       // Inject dispatch size for bounds checking - now unconditional for compute
@@ -174,8 +179,7 @@ export class WgslGenerator {
       // Use ShaderLayout to determine order (sort=true for efficient packing)
       // This guarantees the struct layout matches the buffer packing.
       // Use std430 for storage buffers (Inputs)
-      const layout = new ShaderLayout(ir?.structs || []);
-      const inputLayout = layout.calculateBlockLayout(docInputs, true, 'std430');
+      inputLayout = layout.calculateBlockLayout(docInputs, true, 'std430');
 
       finalLines.push('struct Inputs {');
       for (const field of inputLayout.fields) {
@@ -267,10 +271,13 @@ export class WgslGenerator {
       metadata: {
         resourceBindings: options.resourceBindings || new Map(),
         inputBinding: hasInputs ? options.inputBinding : undefined,
+        inputLayout: hasInputs && inputLayout ? inputLayout : undefined,
+        structLayouts: hasInputs && layout ? Object.fromEntries(
+          (ir?.structs || []).map(s => [s.id, layout.getStructLayout(s.id, 'std430')])
+        ) : undefined,
         workgroupSize: finalWorkgroupSize
       }
-
-    };
+    }
   }
 
   compile(ir: IRDocument, entryPointId: string, options: WgslOptions = {}): CompilationResult {

@@ -51,7 +51,17 @@ export interface ResourceState {
   data?: any; // The raw data depending on type
   width: number;
   height: number;
-  // TODO: Properly document fields like `gpuBuffer`.
+  /**
+   * The underlying WebGPU buffer handle, if allocated.
+   * This is managed by the runtime (e.g. intrinsics.js or WebGpuExecutor).
+   */
+  gpuBuffer?: GPUBuffer;
+
+  /**
+   * The underlying WebGPU texture handle, if allocated.
+   * This is managed by the runtime.
+   */
+  gpuTexture?: GPUTexture;
 }
 
 /**

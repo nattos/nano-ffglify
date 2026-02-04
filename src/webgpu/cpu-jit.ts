@@ -218,80 +218,34 @@ require('./intrinsics.js');
     });
 
     lines.push(`
-      return {
-        async executeShader(funcId, dim, args, resources) {
-           const pipeline = pipelines.get(funcId);
-           if (!pipeline) throw new Error("Pipeline not found: " + funcId);
-           const meta = pipelineMeta.get(funcId);
-
-           // 1. Inputs
-           let inputBind = null;
-           // TODO: Implement Input Buffer packing
-           // For now assuming no inputs or handled via _ensureBuffer
-
-           // 2. Resources
-           const entries = [];
-           // Flatten resource bindings
-           for (const [resId, binding] of Object.entries(meta.resourceBindings)) {
-               const state = resources.get(resId);
-               if (!state) continue;
-
-               // Ensure GPU resource exists (Helper in intrinsics)
-               _ensureGpuResource(device, state);
-
-               if (state.def.type === 'texture2d') {
-                   entries.push({ binding, resource: state.gpuTexture.createView() });
-               } else {
-                   entries.push({ binding, resource: { buffer: state.gpuBuffer } });
-               }
-           }
-
-           // If inputs, bind them (TODO)
-
-           const bindGroup = device.createBindGroup({
-               layout: pipeline.getBindGroupLayout(0),
-               entries
-           });
-
-           const encoder = device.createCommandEncoder();
-           const pass = encoder.beginComputePass();
-           pass.setPipeline(pipeline);
-           pass.setBindGroup(0, bindGroup);
-           pass.dispatchWorkgroups(dim[0], dim[1], dim[2]);
-           pass.end();
-           device.queue.submit([encoder.finish()]);
-        },
-
-        async executeDraw(targetId, vertexId, fragmentId, count, pipelineDef, resources) {
-            const key = \`\${vertexId}|\${fragmentId}\`;
-            const pipeline = renderPipelines.get(key);
-            // ... implementation similar to webgpu-executor ...
-        }
-      };
+      return _createExecutor(device, pipelines, pipelineMeta, renderPipelines);
     `);
 
     return lines.join('\n');
   }
 
   private emitFunction(f: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[]) {
-    lines.push(`async function ${funcName(f.id)}(ctx, args) {`);
+    lines.push(`async function ${funcName(f.id)} (ctx, args) {
+      `);
 
     // Unpack args into local vars
     for (const input of f.inputs) {
-      lines.push(`  let ${sanitizeId(input.id, 'input')} = args['${input.id}'];`);
+      lines.push(`  let ${sanitizeId(input.id, 'input')
+        } = args['${input.id}']; `);
     }
 
     // Local Variables
     for (const v of f.localVars) {
       const init = v.initialValue !== undefined ? JSON.stringify(v.initialValue) : '0';
-      lines.push(`  let ${sanitizeId(v.id, 'var')} = ${init};`);
+      lines.push(`  let ${sanitizeId(v.id, 'var')
+        } = ${init}; `);
     }
 
     const edges = reconstructEdges(f);
 
     const resultNodes = f.nodes.filter(n => this.hasResult(n.op));
     for (const n of resultNodes) {
-      lines.push(`  let ${nodeResId(n.id)};`);
+      lines.push(`  let ${nodeResId(n.id)}; `);
     }
 
     const emittedPure = new Set<string>();
@@ -308,7 +262,7 @@ require('./intrinsics.js');
         emitPure(edge.from);
       });
 
-      lines.push(`  ${nodeResId(node.id)} = ${this.compileExpression(node, f, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure, edges)};`);
+      lines.push(`  ${nodeResId(node.id)} = ${this.compileExpression(node, f, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure, edges)}; `);
     };
 
     // Compile node logic
