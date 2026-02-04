@@ -46,7 +46,7 @@ export const WebGpuBackend: TestBackend = {
       if (func.type === 'cpu') {
         ctx.pushFrame(entryPoint);
         hostExec = new WebGpuHostExecutor(ctx, gpuExec);
-        await hostExec.executeFunction(func, ctx.ir.functions);
+        ctx.result = await hostExec.executeFunction(func, ctx.ir.functions);
       } else {
         // Direct shader execution
         const inputObj: Record<string, RuntimeValue> = {};

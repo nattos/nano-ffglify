@@ -291,7 +291,7 @@ export class CpuJitCompiler {
       const varId = node['var'];
       if (func.localVars.some(v => v.id === varId)) lines.push(`${indent}${sanitizeId(varId, 'var')} = ${val};`);
       else if (func.inputs.some(i => i.id === varId)) lines.push(`${indent}${sanitizeId(varId, 'input')} = ${val};`);
-      else lines.push(`${indent}variables.set('${varId}', ${val});`);
+      else throw new Error(`JIT Error: Cannot set undefined variable '${varId}'`);
     }
     else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'];

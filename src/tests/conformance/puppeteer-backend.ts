@@ -96,7 +96,12 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
 
   // Populate context with results
   ctx.pushFrame(entryPoint);
-  if (results.vars) {
+
+  if (results !== undefined && results !== null && results.result !== undefined) {
+    ctx.result = results.result;
+  }
+
+  if (results && typeof results === 'object' && results.vars) {
     for (const [key, val] of Object.entries(results.vars)) {
       let v = val;
       // Parse special float values

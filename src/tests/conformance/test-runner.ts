@@ -80,10 +80,16 @@ export const runGraphTest = (
       }
 
       const globalVars = [
-        { id: varToCheck, type: inferredType },
         { id: 'u_dummy', type: 'float' }
       ];
-      const ir = buildSimpleIR(name, nodes, [], [], [] /* No local vars */, [], globalVars);
+      const localVars = [
+        { id: varToCheck, type: inferredType }
+      ];
+
+      // Inject func_return to return the result
+      const testNodes = [...nodes, { id: 'test_return', op: 'func_return', val: varToCheck }];
+
+      const ir = buildSimpleIR(name, testNodes, [], [], localVars, [], globalVars);
 
       const inputsMap = new Map<string, any>();
       inputsMap.set('u_dummy', 0.0);

@@ -61,7 +61,8 @@ import { WebGpuBackend } from './webgpu-backend';
   // Serialize context back to plain object
   const results: any = {
     vars: {},
-    resources: {}
+    resources: {},
+    result: ctx.result
   };
 
   try {
