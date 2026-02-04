@@ -160,6 +160,12 @@ export const IRSchema = defineSchema<IRDocument & { id: string }>({
         }
       }
     },
+    globals: {
+      type: 'array',
+      description: 'Global data values',
+      required: false,
+      items: { type: 'object', description: 'Global value', properties: {} } as any
+    },
     structs: {
       type: 'array',
       description: 'Shared struct definitions',
