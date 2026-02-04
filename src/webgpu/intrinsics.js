@@ -243,45 +243,77 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
 
       for (const resBind of info.resourceBindings) {
         const state = resources.get(resBind.id);
-        if (!state || !state.gpuBuffer || state.def.type !== 'buffer') continue;
+        if (!state) continue;
 
-        const size = state.gpuBuffer.size;
-        const staging = device.createBuffer({
-          size: size,
-          usage: 1 | 8 // MAP_READ | COPY_DST
-        });
-        readbackEncoder.copyBufferToBuffer(state.gpuBuffer, 0, staging, 0, size);
-        stagingBuffers.push({ state, staging });
-        needsReadback = true;
+        if (state.def.type === 'buffer' && state.gpuBuffer) {
+          const size = state.gpuBuffer.size;
+          const staging = device.createBuffer({
+            size: size,
+            usage: 1 | 8 // MAP_READ | COPY_DST
+          });
+          readbackEncoder.copyBufferToBuffer(state.gpuBuffer, 0, staging, 0, size);
+          stagingBuffers.push({ state, staging, type: 'buffer' });
+          needsReadback = true;
+        } else if (state.def.type === 'texture2d' && state.gpuTexture) {
+          // Texture Readback
+          const bytesPerPixel = 4; // Assuming rgba8unorm/bgra8unorm for now
+          // Align to 256 bytes per row
+          const bytesPerRow = Math.ceil((state.width * bytesPerPixel) / 256) * 256;
+          const staging = device.createBuffer({
+            size: bytesPerRow * state.height,
+            usage: 1 | 8 // MAP_READ | COPY_DST
+          });
+          readbackEncoder.copyTextureToBuffer(
+            { texture: state.gpuTexture },
+            { buffer: staging, bytesPerRow },
+            [state.width, state.height, 1]
+          );
+          stagingBuffers.push({ state, staging, type: 'texture', bytesPerRow });
+          needsReadback = true;
+        }
       }
 
       device.queue.submit([encoder.finish()]);
 
       if (needsReadback) {
         device.queue.submit([readbackEncoder.finish()]);
-        await Promise.all(stagingBuffers.map(async ({ state, staging }) => {
+        await Promise.all(stagingBuffers.map(async ({ state, staging, type, bytesPerRow }) => {
           await staging.mapAsync(1);
           const range = staging.getMappedRange();
 
-          const info = resourceInfos.get(state.def.id);
-          const taType = info?.typedArray || 'Float32Array';
-          let rawData;
-          if (taType === 'Uint32Array') rawData = new Uint32Array(range);
-          else if (taType === 'Int32Array') rawData = new Int32Array(range);
-          else if (taType === 'Uint8Array') rawData = new Uint8Array(range);
-          else rawData = new Float32Array(range);
+          if (type === 'buffer') {
+            const info = resourceInfos.get(state.def.id);
+            const taType = info?.typedArray || 'Float32Array';
+            let rawData;
+            if (taType === 'Uint32Array') rawData = new Uint32Array(range);
+            else if (taType === 'Int32Array') rawData = new Int32Array(range);
+            else if (taType === 'Uint8Array') rawData = new Uint8Array(range);
+            else rawData = new Float32Array(range);
 
-          const componentCount = info?.componentCount || 1;
-          const flatData = Array.from(rawData).slice(0, state.width * componentCount);
+            const componentCount = info?.componentCount || 1;
+            const flatData = Array.from(rawData).slice(0, state.width * componentCount);
 
-          if (componentCount > 1) {
-            const structured = [];
-            for (let i = 0; i < state.width; i++) {
-              structured.push(flatData.slice(i * componentCount, (i + 1) * componentCount));
+            if (componentCount > 1) {
+              const structured = [];
+              for (let i = 0; i < state.width; i++) {
+                structured.push(flatData.slice(i * componentCount, (i + 1) * componentCount));
+              }
+              state.data = structured;
+            } else {
+              state.data = flatData;
             }
-            state.data = structured;
           } else {
-            state.data = flatData;
+            // Texture Readback
+            const data = new Uint8Array(range);
+            const reshaped = [];
+            for (let y = 0; y < state.height; y++) {
+              const rowStart = y * bytesPerRow;
+              for (let x = 0; x < state.width; x++) {
+                const start = rowStart + (x * 4);
+                reshaped.push(Array.from(data.slice(start, start + 4)).map(v => v / 255.0)); // Normalize to 0-1
+              }
+            }
+            state.data = reshaped;
           }
 
           staging.unmap();
