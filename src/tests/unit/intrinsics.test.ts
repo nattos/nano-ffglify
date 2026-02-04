@@ -31,13 +31,13 @@ function getIntrinsics() {
   // Evaluate the code in a function context and return the functions we need
   const fn = new Function(...Object.keys(context), `
     ${intrinsicsCode}
-    return { _ensureGpuResource, _ensureGpuResource2, _buffer_store, _buffer_load, _createExecutor };
+    return { _ensureGpuResource, _buffer_store, _buffer_load, _createExecutor };
   `);
 
   return fn(...Object.values(context));
 }
 
-const { _ensureGpuResource, _ensureGpuResource2, _buffer_store, _buffer_load, _createExecutor } = getIntrinsics();
+const { _ensureGpuResource, _buffer_store, _buffer_load, _createExecutor } = getIntrinsics();
 
 describe('WebGPU Intrinsics', () => {
   let mockDevice: any;
@@ -79,158 +79,6 @@ describe('WebGPU Intrinsics', () => {
   });
 
   describe('_ensureGpuResource', () => {
-    it('should create a texture resource', () => {
-      const state = {
-        def: { type: 'texture2d', format: 'rgba8unorm' },
-        width: 10,
-        height: 10,
-        gpuTexture: null as any,
-      };
-
-      _ensureGpuResource(mockDevice, state);
-
-      expect(mockDevice.createTexture).toHaveBeenCalledWith({
-        size: [10, 10, 1],
-        format: 'rgba8unorm',
-        usage: 0x1F,
-      });
-      expect(state.gpuTexture).toBeDefined();
-    });
-
-    it('should upload texture data (flat array)', () => {
-      const state = {
-        def: { type: 'texture2d', format: 'rgba8unorm' },
-        width: 2,
-        height: 1,
-        data: [1, 0, 0, 1, 0, 1, 0, 1], // 2 pixels, r,g,b,a
-        gpuTexture: null as any,
-      };
-
-      _ensureGpuResource(mockDevice, state);
-
-      expect(mockQueue.writeTexture).toHaveBeenCalled();
-      const [, , , size] = mockQueue.writeTexture.mock.calls[0];
-      expect(size).toEqual({ width: 2, height: 1 });
-    });
-
-    it('should upload texture data (nested arrays)', () => {
-      const state = {
-        def: { type: 'texture2d', format: 'rgba8unorm' },
-        width: 2,
-        height: 1,
-        data: [[1, 0, 0, 1], [0, 1, 0, 1]],
-        gpuTexture: null as any,
-      };
-
-      _ensureGpuResource(mockDevice, state);
-
-      expect(mockQueue.writeTexture).toHaveBeenCalled();
-      const [, data] = mockQueue.writeTexture.mock.calls[0];
-      expect(data[0]).toBe(255); // 1 * 255
-      expect(data[4]).toBe(0);   // 0 * 255 (second pixel red)
-      expect(data[5]).toBe(255); // 1 * 255 (second pixel green)
-    });
-
-    it('should create a buffer resource', () => {
-      const state = {
-        def: { type: 'buffer' },
-        width: 16, // 16 elements
-        gpuBuffer: null as any,
-      };
-
-      _ensureGpuResource(mockDevice, state);
-
-      expect(mockDevice.createBuffer).toHaveBeenCalledWith({
-        size: 64, // 16 * 4
-        usage: 128 | 8 | 4,
-      });
-      expect(state.gpuBuffer).toBeDefined();
-    });
-
-    it('should upload buffer data', () => {
-      const state = {
-        def: { type: 'buffer', dataType: 'float' },
-        width: 4,
-        data: [1.0, 2.0, 3.0, 4.0],
-        gpuBuffer: null as any,
-      };
-
-      _ensureGpuResource(mockDevice, state);
-
-      expect(mockQueue.writeBuffer).toHaveBeenCalled();
-      const [, offset, data] = mockQueue.writeBuffer.mock.calls[0];
-      expect(offset).toBe(0);
-      expect(data).toBeInstanceOf(Float32Array);
-      expect(data[0]).toBe(1.0);
-    });
-
-    it('should reuse existing resources if same size', () => {
-      const existingTexture = { width: 10, height: 10, destroy: vi.fn() };
-      const state = {
-        def: { type: 'texture2d' },
-        width: 10,
-        height: 10,
-        gpuTexture: existingTexture as any,
-      };
-
-      _ensureGpuResource(mockDevice, state);
-
-      expect(mockDevice.createTexture).not.toHaveBeenCalled();
-      expect(existingTexture.destroy).not.toHaveBeenCalled();
-    });
-
-    it('should recreate resources if size changes', () => {
-      const existingTexture = { width: 10, height: 10, destroy: vi.fn() };
-      const state = {
-        def: { type: 'texture2d' },
-        width: 20,
-        height: 20,
-        gpuTexture: existingTexture as any,
-      };
-
-      _ensureGpuResource(mockDevice, state);
-
-      expect(existingTexture.destroy).toHaveBeenCalled();
-      expect(mockDevice.createTexture).toHaveBeenCalledWith({
-        size: [20, 20, 1],
-        format: 'rgba8unorm',
-        usage: 0x1F,
-      });
-    });
-
-    it('should flatten nested buffer data (e.g. array of vectors)', () => {
-      const state = {
-        def: { type: 'buffer', dataType: 'float' },
-        width: 4,
-        data: [[1.0, 2.0], [3.0, 4.0]], // Nested vectors
-        gpuBuffer: null as any,
-      };
-
-      _ensureGpuResource(mockDevice, state);
-
-      expect(mockQueue.writeBuffer).toHaveBeenCalled();
-      const [, , data] = mockQueue.writeBuffer.mock.calls[0];
-      expect(data).toBeInstanceOf(Float32Array);
-      expect(Array.from(data)).toEqual([1.0, 2.0, 3.0, 4.0]);
-    });
-
-    it('should flatten deeply nested buffer data', () => {
-      const state = {
-        def: { type: 'buffer', dataType: 'float' },
-        width: 4,
-        data: [[[1.0]], [[2.0]], [[3.0]], [[4.0]]],
-        gpuBuffer: null as any,
-      };
-
-      _ensureGpuResource(mockDevice, state);
-
-      expect(mockQueue.writeBuffer).toHaveBeenCalled();
-      const [, , data] = mockQueue.writeBuffer.mock.calls[0];
-      expect(Array.from(data)).toEqual([1.0, 2.0, 3.0, 4.0]);
-    });
-  });
-
-  describe('_ensureGpuResource2', () => {
     it('should create and upload texture data using precomputed info', () => {
       const def = { type: 'texture2d', format: 'rgba8unorm' };
       const info = precomputeResourceLayout(def);
@@ -242,7 +90,7 @@ describe('WebGPU Intrinsics', () => {
         gpuTexture: null as any,
       };
 
-      _ensureGpuResource2(mockDevice, state, info);
+      _ensureGpuResource(mockDevice, state, info);
 
       expect(mockDevice.createTexture).toHaveBeenCalled();
       expect(mockQueue.writeTexture).toHaveBeenCalled();
@@ -261,7 +109,7 @@ describe('WebGPU Intrinsics', () => {
         gpuBuffer: null as any,
       };
 
-      _ensureGpuResource2(mockDevice, state, info);
+      _ensureGpuResource(mockDevice, state, info);
 
       expect(mockDevice.createBuffer).toHaveBeenCalled();
       expect(mockQueue.writeBuffer).toHaveBeenCalled();

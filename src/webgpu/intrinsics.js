@@ -83,129 +83,6 @@ const _getVar = (ctx, id) => {
   throw new Error("Variable '" + id + "' is not defined");
 };
 
-const _ensureGpuResource = (device, state) => {
-  if (state.def.type === 'texture2d') {
-    if (!state.gpuTexture || state.gpuTexture.width !== state.width || state.gpuTexture.height !== state.height) {
-      if (state.gpuTexture) state.gpuTexture.destroy();
-      state.gpuTexture = device.createTexture({
-        size: [state.width, state.height, 1],
-        format: 'rgba8unorm', // TODO: support other formats
-        usage: 0x1F // RENDER_ATTACHMENT | TEXTURE_BINDING | STORAGE_BINDING | COPY_SRC | COPY_DST
-      });
-    }
-
-    // Upload data if present
-    if (state.data) {
-      const w = state.width;
-      const h = state.height;
-      const format = state.def.format || 'rgba8unorm';
-
-      let data = null;
-      let bytesPerRow = 0;
-
-      if (format === 'rgba8' || format === 'rgba8unorm') {
-        // Expects 4 components per pixel, 0..1 float in state.data -> 0..255 byte
-        const raw = new Uint8Array(w * h * 4);
-        const src = state.data;
-        // Flatten
-        let ptr = 0;
-        // src can be flat or mixed? Test uses array of arrays for lines?
-        // Test: tex.data = [[r,g,b,a], ...] (Flat list of pixels? No, usually tex.data is flat array or array of pixels)
-        // Test uses: [[1,0,0,1], [0,1,0,1]..] which is Array<Array<number>>. Each inner array is a pixel.
-
-        if (Array.isArray(src)) {
-          src.forEach(p => {
-            if (Array.isArray(p)) {
-              raw[ptr++] = p[0] * 255;
-              raw[ptr++] = p[1] * 255;
-              raw[ptr++] = p[2] * 255;
-              raw[ptr++] = p[3] * 255;
-            } else {
-              raw[ptr++] = p * 255; // scalar? unlikely for rgba8
-            }
-          });
-        }
-        data = raw;
-        bytesPerRow = w * 4;
-      } else if (format === 'r32f') {
-        const raw = new Float32Array(w * h);
-        const src = state.data;
-        let ptr = 0;
-        if (Array.isArray(src)) {
-          src.forEach(p => {
-            if (Array.isArray(p)) raw[ptr++] = p[0];
-            else raw[ptr++] = p;
-          });
-        }
-        data = raw;
-        bytesPerRow = w * 4;
-      }
-      // TODO: other formats
-
-      if (data) {
-        device.queue.writeTexture(
-          { texture: state.gpuTexture },
-          data,
-          { bytesPerRow },
-          { width: w, height: h }
-        );
-      }
-    }
-  } else {
-    // Buffer
-    // Calculate size in bytes. Assumes 4 bytes per element (float/int/uint).
-    const byteSize = state.width * 4;
-    const alignedSize = Math.max(Math.ceil(byteSize / 4) * 4, 16); // Min 16 for safety
-
-    if (!state.gpuBuffer || state.gpuBuffer.size < alignedSize) {
-      if (state.gpuBuffer) state.gpuBuffer.destroy();
-      state.gpuBuffer = device.createBuffer({
-        size: alignedSize,
-        usage: 128 | 8 | 4 // STORAGE | COPY_DST | COPY_SRC
-      });
-    }
-
-    // Upload data if present
-    if (state.data) {
-      // Flatten data to Float32/Int32/Uint32 array
-      const dataType = state.def.dataType || 'float'; // format?
-      // Note: buffer def uses 'dataType', texture uses 'format'.
-
-      let typedArray;
-      const flatData = [];
-
-      // Helper to push value
-      const push = (v) => {
-        if (Array.isArray(v)) v.forEach(push);
-        else flatData.push(v);
-      };
-      state.data.forEach(push);
-
-      // Choose TypedArray
-      // For simple JIT, we mostly use Float32.
-      // If int/uint expected...
-      // TODO: Handle mixed types if necessary.
-      // For now, if dataType suggests int/uint, utilize mapping?
-      // Actually, let's look at def.
-      if (dataType.includes('int') && !dataType.includes('float')) {
-        if (dataType.includes('uint') || dataType === 'bool') typedArray = new Uint32Array(flatData);
-        else typedArray = new Int32Array(flatData);
-      } else {
-        typedArray = new Float32Array(flatData);
-      }
-
-      // Ensure buffer is large enough (we already sized it to state.width * 4, but verify flatData length?)
-      // flatData.length * 4 should be <= alignedSize
-
-      // Write
-      // We might need to handle padding if flatData < buffer size?
-      // writeBuffer writes available data.
-
-      device.queue.writeBuffer(state.gpuBuffer, 0, typedArray);
-    }
-  }
-};
-
 const _buffer_store = (resources, id, idx, val) => {
   const res = resources.get(id);
   if (res && res.data) {
@@ -338,11 +215,7 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
         if (!state) continue;
 
         const resInfo = resourceInfos.get(resBind.id);
-        if (resInfo) {
-          _ensureGpuResource2(device, state, resInfo);
-        } else {
-          _ensureGpuResource(device, state);
-        }
+        _ensureGpuResource(device, state, resInfo);
         if (state.def.type === 'texture2d') {
           entries.push({ binding: resBind.binding, resource: state.gpuTexture.createView() });
         } else {
@@ -423,7 +296,7 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
   };
 };
 
-const _ensureGpuResource2 = (device, state, info) => {
+const _ensureGpuResource = (device, state, info) => {
   if (info.type === 'texture2d') {
     if (!state.gpuTexture || state.gpuTexture.width !== state.width || state.gpuTexture.height !== state.height) {
       if (state.gpuTexture) state.gpuTexture.destroy();
