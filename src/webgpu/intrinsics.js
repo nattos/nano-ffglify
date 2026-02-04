@@ -500,3 +500,232 @@ const _createExecutor = (device, pipelines, pipelineMeta, renderPipelines) => {
     }
   };
 };
+
+const _createExecutor2 = (device, pipelines, precomputedInfos, renderPipelines) => {
+  const writeOp = (view, op, val, baseOffset = 0) => {
+    if (val === undefined || val === null) return;
+    let currentVal = val;
+    for (const p of op.path) {
+      currentVal = currentVal[p];
+      if (currentVal === undefined || currentVal === null) {
+        return;
+      }
+    }
+
+    const offset = baseOffset + op.offset;
+    switch (op.op) {
+      case 'f32': view.setFloat32(offset, currentVal, true); break;
+      case 'i32': view.setInt32(offset, currentVal, true); break;
+      case 'u32': view.setUint32(offset, currentVal, true); break;
+      case 'vec': {
+        const { size, elementType } = op;
+        for (let i = 0; i < size; i++) {
+          if (elementType === 'i32') view.setInt32(offset + i * 4, currentVal[i], true);
+          else if (elementType === 'u32') view.setUint32(offset + i * 4, currentVal[i], true);
+          else view.setFloat32(offset + i * 4, currentVal[i], true);
+        }
+        break;
+      }
+      case 'mat': {
+        const { dim } = op;
+        const colStride = dim === 3 ? 16 : dim * 4;
+        for (let c = 0; c < dim; c++) {
+          const colOffset = offset + c * colStride;
+          for (let r = 0; r < dim; r++) {
+            view.setFloat32(colOffset + r * 4, currentVal[c * dim + r], true);
+          }
+        }
+        break;
+      }
+      case 'struct': {
+        for (const m of op.members) {
+          writeOp(view, m, currentVal, offset);
+        }
+        break;
+      }
+      case 'array': {
+        const { stride, length, elementOp } = op;
+        const count = length === 'runtime' ? currentVal.length : length;
+        for (let i = 0; i < count; i++) {
+          writeOp(view, elementOp, currentVal[i], offset + i * stride);
+        }
+        break;
+      }
+    }
+  };
+
+  return {
+    async executeShader(funcId, dim, args, resources) {
+      const info = precomputedInfos.get(funcId);
+      if (!info) throw new Error("Precomputed info not found: " + funcId);
+      const pipeline = pipelines.get(funcId);
+
+      const entries = [];
+
+      // 1. Inputs
+      if (info.inputLayout) {
+        const layout = info.inputLayout;
+        let requiredSize = layout.totalSize;
+        const inputs = { ...args, u_dispatch_size: dim };
+
+        if (layout.hasRuntimeArray && layout.runtimeArray) {
+          const arr = inputs[layout.runtimeArray.name];
+          if (Array.isArray(arr)) {
+            requiredSize = layout.runtimeArray.offset + arr.length * layout.runtimeArray.stride;
+          }
+        }
+
+        requiredSize = Math.max(Math.ceil(requiredSize / 4) * 4, 16);
+        const bufferSize = requiredSize;
+        const buffer = new ArrayBuffer(bufferSize);
+        const view = new DataView(buffer);
+
+        for (const op of layout.ops) {
+          writeOp(view, op, inputs);
+        }
+
+        if (layout.runtimeArray) {
+          const arr = inputs[layout.runtimeArray.name];
+          if (Array.isArray(arr)) {
+            const { offset, stride, elementOp } = layout.runtimeArray;
+            for (let i = 0; i < arr.length; i++) {
+              writeOp(view, elementOp, arr[i], offset + i * stride);
+            }
+          }
+        }
+
+        const inputBuf = device.createBuffer({
+          size: bufferSize,
+          usage: 128 | 8 // STORAGE | COPY_DST
+        });
+        device.queue.writeBuffer(inputBuf, 0, buffer);
+        entries.push({ binding: info.inputBinding, resource: { buffer: inputBuf } });
+      }
+
+      // 2. Resources
+      for (const resBind of info.resourceBindings) {
+        const state = resources.get(resBind.id);
+        if (!state) continue;
+        _ensureGpuResource(device, state);
+        if (state.def.type === 'texture2d') {
+          entries.push({ binding: resBind.binding, resource: state.gpuTexture.createView() });
+        } else {
+          entries.push({ binding: resBind.binding, resource: { buffer: state.gpuBuffer } });
+        }
+      }
+
+      const bindGroup = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries
+      });
+
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.dispatchWorkgroups(dim[0], dim[1], dim[2]);
+      pass.end();
+
+      // Readback logic (same as v1 for now)
+      const readbackEncoder = device.createCommandEncoder();
+      const stagingBuffers = [];
+      let needsReadback = false;
+
+      for (const resBind of info.resourceBindings) {
+        const state = resources.get(resBind.id);
+        if (!state || !state.gpuBuffer || state.def.type !== 'buffer') continue;
+
+        const size = state.gpuBuffer.size;
+        const staging = device.createBuffer({
+          size: size,
+          usage: 1 | 8 // MAP_READ | COPY_DST
+        });
+        readbackEncoder.copyBufferToBuffer(state.gpuBuffer, 0, staging, 0, size);
+        stagingBuffers.push({ state, staging });
+        needsReadback = true;
+      }
+
+      device.queue.submit([encoder.finish()]);
+
+      if (needsReadback) {
+        device.queue.submit([readbackEncoder.finish()]);
+        await Promise.all(stagingBuffers.map(async ({ state, staging }) => {
+          await staging.mapAsync(1);
+          const range = staging.getMappedRange();
+          const data = new Float32Array(range);
+          state.data = Array.from(data).slice(0, state.width); // Simplified readback
+          staging.unmap();
+          staging.destroy();
+        }));
+      }
+    }
+  };
+};
+
+const _ensureGpuResource2 = (device, state, info) => {
+  if (info.type === 'texture2d') {
+    if (!state.gpuTexture || state.gpuTexture.width !== state.width || state.gpuTexture.height !== state.height) {
+      if (state.gpuTexture) state.gpuTexture.destroy();
+      state.gpuTexture = device.createTexture({
+        size: [state.width, state.height, 1],
+        format: info.format || 'rgba8unorm',
+        usage: 0x1F // RENDER_ATTACHMENT | TEXTURE_BINDING | STORAGE_BINDING | COPY_SRC | COPY_DST
+      });
+    }
+
+    if (state.data) {
+      const { typedArray, componentCount } = info;
+      const flatSize = state.width * state.height * componentCount;
+      const raw = typedArray === 'Float32Array' ? new Float32Array(flatSize) : new Uint8Array(flatSize);
+
+      let ptr = 0;
+      const src = state.data;
+
+      const push = (v) => {
+        if (Array.isArray(v)) {
+          for (let i = 0; i < v.length; i++) push(v[i]);
+        } else {
+          raw[ptr++] = info.typedArray === 'Uint8Array' ? v * 255 : v;
+        }
+      };
+
+      for (let i = 0; i < src.length; i++) push(src[i]);
+
+      device.queue.writeTexture(
+        { texture: state.gpuTexture },
+        raw,
+        { bytesPerRow: state.width * (typedArray === 'Float32Array' ? 4 : 1) * componentCount },
+        { width: state.width, height: state.height }
+      );
+    }
+  } else {
+    // Buffer
+    const byteSize = state.width * 4;
+    const alignedSize = Math.max(Math.ceil(byteSize / 4) * 4, 16);
+
+    if (!state.gpuBuffer || state.gpuBuffer.size < alignedSize) {
+      if (state.gpuBuffer) state.gpuBuffer.destroy();
+      state.gpuBuffer = device.createBuffer({
+        size: alignedSize,
+        usage: 128 | 8 | 4 // STORAGE | COPY_DST | COPY_SRC
+      });
+    }
+
+    if (state.data) {
+      const raw = info.typedArray === 'Float32Array' ? new Float32Array(state.width) :
+        info.typedArray === 'Uint32Array' ? new Uint32Array(state.width) : new Int32Array(state.width);
+
+      let ptr = 0;
+      const push = (v) => {
+        if (Array.isArray(v)) {
+          for (let i = 0; i < v.length; i++) push(v[i]);
+        } else {
+          if (ptr < raw.length) raw[ptr++] = v;
+        }
+      };
+
+      for (let i = 0; i < state.data.length; i++) push(state.data[i]);
+      device.queue.writeBuffer(state.gpuBuffer, 0, raw);
+    }
+  }
+};

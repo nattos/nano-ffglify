@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { precomputeShaderInfo, precomputeResourceLayout } from '../../webgpu/precompute';
+import { CompilationMetadata } from '../../webgpu/wgsl-generator';
 
 // Load intrinsics.js and evaluate it to get access to the functions
 const intrinsicsPath = path.resolve(__dirname, '../../webgpu/intrinsics.js');
@@ -29,13 +31,13 @@ function getIntrinsics() {
   // Evaluate the code in a function context and return the functions we need
   const fn = new Function(...Object.keys(context), `
     ${intrinsicsCode}
-    return { _ensureGpuResource, _buffer_store, _buffer_load, _createExecutor };
+    return { _ensureGpuResource, _ensureGpuResource2, _buffer_store, _buffer_load, _createExecutor, _createExecutor2 };
   `);
 
   return fn(...Object.values(context));
 }
 
-const { _ensureGpuResource, _buffer_store, _buffer_load, _createExecutor } = getIntrinsics();
+const { _ensureGpuResource, _ensureGpuResource2, _buffer_store, _buffer_load, _createExecutor, _createExecutor2 } = getIntrinsics();
 
 describe('WebGPU Intrinsics', () => {
   let mockDevice: any;
@@ -228,6 +230,46 @@ describe('WebGPU Intrinsics', () => {
     });
   });
 
+  describe('_ensureGpuResource2', () => {
+    it('should create and upload texture data using precomputed info', () => {
+      const def = { type: 'texture2d', format: 'rgba8unorm' };
+      const info = precomputeResourceLayout(def);
+      const state = {
+        def,
+        width: 2,
+        height: 1,
+        data: [[1, 0, 0, 1], [0, 1, 0, 1]],
+        gpuTexture: null as any,
+      };
+
+      _ensureGpuResource2(mockDevice, state, info);
+
+      expect(mockDevice.createTexture).toHaveBeenCalled();
+      expect(mockQueue.writeTexture).toHaveBeenCalled();
+      const [, data] = mockQueue.writeTexture.mock.calls[0];
+      expect(data[0]).toBe(255);
+      expect(data[5]).toBe(255);
+    });
+
+    it('should create and upload buffer data using precomputed info', () => {
+      const def = { type: 'buffer', dataType: 'float' };
+      const info = precomputeResourceLayout(def);
+      const state = {
+        def,
+        width: 4,
+        data: [[1.0, 2.0], [3.0, 4.0]],
+        gpuBuffer: null as any,
+      };
+
+      _ensureGpuResource2(mockDevice, state, info);
+
+      expect(mockDevice.createBuffer).toHaveBeenCalled();
+      expect(mockQueue.writeBuffer).toHaveBeenCalled();
+      const [, , data] = mockQueue.writeBuffer.mock.calls[0];
+      expect(Array.from(data)).toEqual([1.0, 2.0, 3.0, 4.0]);
+    });
+  });
+
   describe('_buffer_store', () => {
     it('should store value and invalidate GPU buffer', () => {
       const gpuBuffer = { destroy: vi.fn() };
@@ -372,6 +414,132 @@ describe('WebGPU Intrinsics', () => {
       // Check array f32[2] (offset 32)
       expect(view.getFloat32(32, true)).toBe(10);
       expect(view.getFloat32(36, true)).toBe(20);
+    });
+  });
+
+  describe('_createExecutor2', () => {
+    it('should execute compute shader with precomputed info', async () => {
+      const meta: CompilationMetadata = {
+        inputBinding: 0,
+        inputLayout: {
+          totalSize: 16,
+          fields: [
+            { name: 'u_val', offset: 0, type: 'f32', size: 4, align: 4 }
+          ],
+          hasRuntimeArray: false,
+          alignment: 16
+        },
+        resourceBindings: new Map(),
+        workgroupSize: [1, 1, 1],
+        structLayouts: {}
+      };
+
+      const precomputed = new Map([['func1', precomputeShaderInfo(meta, [])]]);
+      const pipelines = new Map([['func1', {
+        getBindGroupLayout: vi.fn().mockReturnValue({})
+      }]]);
+
+      const executor = _createExecutor2(mockDevice, pipelines, precomputed, new Map());
+      const resources = new Map();
+
+      await executor.executeShader('func1', [1, 1, 1], { u_val: 1.23 }, resources);
+
+      expect(mockQueue.writeBuffer).toHaveBeenCalled();
+      const [, , bufferSource] = mockQueue.writeBuffer.mock.calls[0];
+      const view = new DataView(bufferSource instanceof ArrayBuffer ? bufferSource : bufferSource.buffer);
+      expect(view.getFloat32(0, true)).toBeCloseTo(1.23);
+    });
+
+    it('should correctly handle nested structs in precomputed executor', async () => {
+      const meta: CompilationMetadata = {
+        inputBinding: 0,
+        inputLayout: {
+          totalSize: 32,
+          fields: [
+            { name: 'u_struct', offset: 0, type: 'MyStruct', size: 32, align: 16 }
+          ],
+          hasRuntimeArray: false,
+          alignment: 16
+        },
+        resourceBindings: new Map(),
+        workgroupSize: [1, 1, 1],
+        structLayouts: {
+          'mystruct': {
+            size: 32,
+            alignment: 16,
+            members: [
+              { name: 'v', offset: 0, type: 'vec3<f32>', size: 12, align: 16 },
+              { name: 's', offset: 16, type: 'f32', size: 4, align: 4 }
+            ]
+          }
+        }
+      };
+
+      const precomputed = new Map([['func1', precomputeShaderInfo(meta, [
+        { id: 'MyStruct', members: [{ name: 'v', type: 'vec3<f32>' }, { name: 's', type: 'f32' }] }
+      ])]]);
+
+      const pipelines = new Map([['func1', {
+        getBindGroupLayout: vi.fn().mockReturnValue({})
+      }]]);
+
+      const executor = _createExecutor2(mockDevice, pipelines, precomputed, new Map());
+
+      const inputs = {
+        u_struct: {
+          v: [1, 2, 3],
+          s: 4.5
+        }
+      };
+
+      await executor.executeShader('func1', [1, 1, 1], inputs, new Map());
+
+      expect(mockQueue.writeBuffer).toHaveBeenCalled();
+      const [, , bufferSource] = mockQueue.writeBuffer.mock.calls[0];
+      const view = new DataView(bufferSource instanceof ArrayBuffer ? bufferSource : bufferSource.buffer);
+
+      expect(view.getFloat32(0, true)).toBe(1);
+      expect(view.getFloat32(4, true)).toBe(2);
+      expect(view.getFloat32(8, true)).toBe(3);
+      expect(view.getFloat32(12, true)).toBeCloseTo(4.5);
+    });
+
+    it('should correctly handle runtime arrays in precomputed executor', async () => {
+      const meta: CompilationMetadata = {
+        inputBinding: 0,
+        inputLayout: {
+          totalSize: 0,
+          fields: [
+            { name: 'u_arr', offset: 0, type: 'f32[]', size: 0, align: 4 }
+          ],
+          hasRuntimeArray: true,
+          alignment: 4
+        },
+        resourceBindings: new Map(),
+        workgroupSize: [1, 1, 1],
+        structLayouts: {}
+      };
+
+      const precomputed = new Map([['func1', precomputeShaderInfo(meta, [])]]);
+      const pipelines = new Map([['func1', {
+        getBindGroupLayout: vi.fn().mockReturnValue({})
+      }]]);
+
+      const executor = _createExecutor2(mockDevice, pipelines, precomputed, new Map());
+
+      const inputs = {
+        u_arr: [1.1, 2.2, 3.3]
+      };
+
+      await executor.executeShader('func1', [1, 1, 1], inputs, new Map());
+
+      expect(mockQueue.writeBuffer).toHaveBeenCalled();
+      const [, , bufferSource] = mockQueue.writeBuffer.mock.calls[0];
+      const view = new DataView(bufferSource instanceof ArrayBuffer ? bufferSource : bufferSource.buffer);
+
+      expect(view.getFloat32(0, true)).toBeCloseTo(1.1);
+      expect(view.getFloat32(4, true)).toBeCloseTo(2.2);
+      expect(view.getFloat32(8, true)).toBeCloseTo(3.3);
     });
   });
 });
