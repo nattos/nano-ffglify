@@ -79,10 +79,11 @@ export class WebGpuExecutor {
       });
 
       const result = generator.compileFunctions(functions, func.id, options, { structs });
+      const resolvedCode = WgslGenerator.resolveImports(result);
       // console.log(`[WebGpuExecutor] Generated WGSL for ${func.id}:\n${result.code}`);
 
       try {
-        const pipeline = await GpuCache.getComputePipeline(this.device, result.code);
+        const pipeline = await GpuCache.getComputePipeline(this.device, resolvedCode);
         this.activePipelines.set(func.id, { pipeline, metadata: result.metadata });
       } catch (e: any) {
         console.warn(`[WebGpuExecutor] Failed to pre-compile compute pipeline for ${func.id}: ${e.message}`);
@@ -397,9 +398,11 @@ export class WebGpuExecutor {
 
     const vsResult = generator.compileFunctions(this.allFunctions, vertexId, { ...options, stage: 'vertex', excludeIds: [fragmentId] }, { structs: this.allStructs });
     const fsResult = generator.compileFunctions(this.allFunctions, fragmentId, { ...options, stage: 'fragment', excludeIds: [vertexId] }, { structs: this.allStructs });
+    const vsResolvedCode = WgslGenerator.resolveImports(vsResult);
+    const fsResolvedCode = WgslGenerator.resolveImports(fsResult);
 
-    const vsModule = await GpuCache.getShaderModule(this.device, vsResult.code);
-    const fsModule = await GpuCache.getShaderModule(this.device, fsResult.code);
+    const vsModule = await GpuCache.getShaderModule(this.device, vsResolvedCode);
+    const fsModule = await GpuCache.getShaderModule(this.device, fsResolvedCode);
 
     const targetFormat: GPUTextureFormat = 'rgba8unorm';
     const pipeline = await this.device.createRenderPipelineAsync({
