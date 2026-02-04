@@ -8,13 +8,8 @@ export function precomputeShaderInfo(meta: CompilationMetadata, structDefs: Stru
   const info: PrecomputedShaderInfo = {
     inputBinding: meta.inputBinding,
     resourceBindings: Array.from(meta.resourceBindings.entries()).map(([id, binding]) => {
-      // We need to know if it's a texture or buffer.
-      // Meta doesn't explicitly store this, but we can look at the id?
-      // Actually, CompilationMetadata has resourceBindings.
-      // In WebGpuExecutor, it uses this.resources to check type.
-      // For precompute, we might need more context or just assume.
-      // Let's assume the caller provides resource types or we derive from usage.
-      return { id, binding, type: 'buffer' }; // Default to buffer, caller can override
+      const type = meta.resourceTypes.get(id) || 'buffer';
+      return { id, binding, type };
     })
   };
 

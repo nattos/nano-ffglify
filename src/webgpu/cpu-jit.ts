@@ -190,6 +190,13 @@ require('./intrinsics.js');
       const info = precomputeResourceLayout(res);
       lines.push(`  resourceInfos.set('${res.id}', ${JSON.stringify(info)});`);
     });
+    // Also precompute for texture inputs
+    ir.inputs.forEach(inp => {
+      if (inp.type === 'texture2d') {
+        const info = precomputeResourceLayout({ ...inp, type: 'texture2d' });
+        lines.push(`  resourceInfos.set('${inp.id}', ${JSON.stringify(info)});`);
+      }
+    });
     lines.push('');
 
     // Emit shader compilation

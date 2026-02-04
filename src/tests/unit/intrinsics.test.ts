@@ -203,6 +203,7 @@ describe('WebGPU Intrinsics', () => {
           alignment: 16
         },
         resourceBindings: new Map(),
+        resourceTypes: new Map(),
         workgroupSize: [1, 1, 1],
         structLayouts: {}
       };
@@ -235,6 +236,7 @@ describe('WebGPU Intrinsics', () => {
           alignment: 16
         },
         resourceBindings: new Map(),
+        resourceTypes: new Map(),
         workgroupSize: [1, 1, 1],
         structLayouts: {
           'mystruct': {
@@ -289,6 +291,7 @@ describe('WebGPU Intrinsics', () => {
           alignment: 4
         },
         resourceBindings: new Map(),
+        resourceTypes: new Map(),
         workgroupSize: [1, 1, 1],
         structLayouts: {}
       };
@@ -320,6 +323,7 @@ describe('WebGPU Intrinsics', () => {
       const meta: CompilationMetadata = {
         inputBinding: 0,
         resourceBindings: new Map([['buf1', 1]]),
+        resourceTypes: new Map([['buf1', 'buffer']]),
         workgroupSize: [1, 1, 1],
         structLayouts: {}
       };
@@ -385,6 +389,7 @@ describe('WebGPU Intrinsics', () => {
       const meta: CompilationMetadata = {
         inputBinding: 0,
         resourceBindings: new Map([['t_input', 1]]),
+        resourceTypes: new Map([['t_input', 'texture2d']]),
         workgroupSize: [1, 1, 1],
         structLayouts: {}
       };

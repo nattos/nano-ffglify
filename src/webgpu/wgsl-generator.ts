@@ -30,6 +30,7 @@ export interface WgslOptions {
 
 export interface CompilationMetadata {
   resourceBindings: Map<string, number>;
+  resourceTypes: Map<string, 'buffer' | 'texture2d'>;
   inputBinding?: number;
   inputLayout?: BufferBlockLayout;
   structLayouts?: Record<string, StructLayoutInfo>;
@@ -193,18 +194,21 @@ export class WgslGenerator {
     }
 
     // Resource Bindings
+    const resourceTypes = new Map<string, 'buffer' | 'texture2d'>();
     if (options.resourceBindings) {
       options.resourceBindings.forEach((bindingIdx, resId) => {
         // We now emit ALL bindings and use placeholders to ensure they are in the layout
 
         const def = options.resourceDefs?.get(resId);
         if (def?.type === 'buffer' || !def) {
+          resourceTypes.set(resId, 'buffer');
           const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
           const structName = `Buffer_${resId}`;
           finalLines.push(`struct ${structName} { data: array<${type}> }`);
           const bufVar = this.getBufferVar(resId);
           finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> ${bufVar} : ${structName};`);
         } else if (def.type === 'texture2d') {
+          resourceTypes.set(resId, 'texture2d');
           // Identify if USED as storage IN THIS MODULE (pre-calculated based on reachable functions)
           const isStorage = options.storageResources?.has(resId);
           const isSampled = options.sampledResources?.has(resId);
@@ -270,6 +274,7 @@ export class WgslGenerator {
       },
       metadata: {
         resourceBindings: options.resourceBindings || new Map(),
+        resourceTypes,
         inputBinding: hasInputs ? options.inputBinding : undefined,
         inputLayout: hasInputs && inputLayout ? inputLayout : undefined,
         structLayouts: hasInputs && layout ? Object.fromEntries(
@@ -1450,7 +1455,7 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
 
   public static findUsedResources(func: FunctionDef, ir: IRDocument | ResourceDef[]): Set<string> {
     const resources = new Set<string>();
-    const allResources = Array.isArray(ir) ? ir : (ir.resources || []);
+    const allResources = Array.isArray(ir) ? ir : [...(ir.resources || []), ...ir.inputs];
     const resourceIds = new Set(allResources.map(r => r.id));
     func.nodes.forEach(node => {
       if (node.op === 'buffer_load' || node.op === 'buffer_store') {

@@ -166,31 +166,56 @@ export class AppController {
 
       // 3. Create Evaluation Context
       const inputs = new Map<string, any>();
-      // Use defaults for scalar inputs, but we specifically need t_input
+      // Use defaults for scalar inputs
       ir.inputs.forEach(inp => {
         if (inp.default !== undefined) {
           inputs.set(inp.id, inp.default);
+        }
+        // If it's a texture input, the "value" is its resource name
+        if (inp.type === 'texture2d') {
+          inputs.set(inp.id, inp.id);
         }
       });
       inputs.set('u_kernel_size', 16); // Fallback for blur demo if not set
 
       const ctx = new EvaluationContext(ir, inputs);
 
-      // 4. Populate t_input resource with image data
-      const tInput = ctx.getResource('t_input');
-      if (tInput) {
-        tInput.width = inputAsset.width;
-        tInput.height = inputAsset.height;
-        tInput.data = inputAsset.data;
+      // 4. Populate texture inputs with image data
+      ir.inputs.forEach(inp => {
+        if (inp.type === 'texture2d') {
+          const state = ctx.getResource(inp.id);
+          if (state) {
+            state.width = inputAsset.width;
+            state.height = inputAsset.height;
+            state.data = inputAsset.data;
+          }
+        }
+      });
+
+      // Special case: if t_input is a resource (legacy), populate it too
+      const tInputRes = ir.resources.find(r => r.id === 't_input');
+      if (tInputRes) {
+        const state = ctx.getResource('t_input');
+        state.width = inputAsset.width;
+        state.height = inputAsset.height;
+        state.data = inputAsset.data;
       }
 
       // 5. Initialize other resources (ensure they exist and have initial sizes)
-      // For textures that reference t_input, resize them
+      // For textures that reference another texture's size, resolve them
       ir.resources.forEach(res => {
         const state = ctx.getResource(res.id);
-        if (res.size.mode === 'reference' && res.size.ref === 't_input') {
-          state.width = inputAsset.width;
-          state.height = inputAsset.height;
+        if (res.size.mode === 'reference') {
+          const refId = res.size.ref;
+          if (refId) {
+            // Try to find the reference in inputs or resources
+            const refInp = ir.inputs.find(i => i.id === refId);
+            const refRes = ir.resources.find(r => r.id === refId);
+            if (refInp || (refRes && refRes.id === 't_input')) {
+              state.width = inputAsset.width;
+              state.height = inputAsset.height;
+            }
+          }
         }
       });
 
