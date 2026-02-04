@@ -566,5 +566,70 @@ describe('WebGPU Intrinsics', () => {
       expect(view.getFloat32(4, true)).toBeCloseTo(2.2);
       expect(view.getFloat32(8, true)).toBeCloseTo(3.3);
     });
+
+    it('should restore structured data (vectors) during readback', async () => {
+      // Mock a buffer with float4 data
+      const meta: CompilationMetadata = {
+        inputBinding: 0,
+        resourceBindings: new Map([['buf1', 1]]),
+        workgroupSize: [1, 1, 1],
+        structLayouts: {}
+      };
+
+      const precomputed = new Map([['func1', precomputeShaderInfo(meta, [])]]);
+      const pipelines = new Map([['func1', {
+        getBindGroupLayout: vi.fn().mockReturnValue({})
+      }]]);
+
+      const resDef = { id: 'buf1', type: 'buffer', dataType: 'float4' };
+      const resInfo = precomputeResourceLayout(resDef);
+      const resourceInfos = new Map([['buf1', resInfo]]);
+
+      const executor = _createExecutor2(mockDevice, pipelines, precomputed, new Map(), resourceInfos);
+
+      const resState = {
+        id: 'buf1',
+        def: resDef,
+        width: 1, // 1 float4
+        data: [[0, 0, 0, 0]],
+        gpuBuffer: { size: 16, destroy: vi.fn(), mapAsync: vi.fn().mockResolvedValue(undefined), getMappedRange: vi.fn(), unmap: vi.fn() } as any
+      };
+
+      // Mock the buffer content: [0.1, 0.2, 0.3, 0.4]
+      const bufferData = new Float32Array([0.1, 0.2, 0.3, 0.4]);
+
+      // Override createBuffer to return a staging buffer with our data
+      mockDevice.createBuffer.mockImplementation((desc: any) => {
+        if (desc.usage & 1) { // MAP_READ
+          return {
+            size: desc.size,
+            destroy: vi.fn(),
+            mapAsync: vi.fn().mockResolvedValue(undefined),
+            getMappedRange: vi.fn().mockReturnValue(bufferData.buffer),
+            unmap: vi.fn()
+          };
+        }
+        return {
+          size: desc.size,
+          destroy: vi.fn(),
+          usage: desc.usage,
+          mapAsync: vi.fn().mockResolvedValue(undefined),
+          getMappedRange: vi.fn().mockReturnValue(new ArrayBuffer(desc.size)),
+          unmap: vi.fn()
+        };
+      });
+
+      const resources = new Map([['buf1', resState]]);
+
+      await executor.executeShader('func1', [1, 1, 1], {}, resources);
+
+      // Current implementation returns flat array [0.1, 0.2, 0.3, 0.4] if width=4 or [0.1] if width=1
+      // Expected: [[0.1, 0.2, 0.3, 0.4]]
+      expect(resState.data[0]).toHaveLength(4);
+      expect(resState.data[0][0]).toBeCloseTo(0.1);
+      expect(resState.data[0][1]).toBeCloseTo(0.2);
+      expect(resState.data[0][2]).toBeCloseTo(0.3);
+      expect(resState.data[0][3]).toBeCloseTo(0.4);
+    });
   });
 });

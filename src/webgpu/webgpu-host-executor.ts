@@ -31,6 +31,10 @@ export class WebGpuHostExecutor {
     const webGpuHost = new WebGpuHost({
       executor: gpuExecutor,
       resources: this.ctx.resources,
+      logHandler: (msg, payload) => this.ctx.log.push({ type: 'log', target: msg, payload }),
+      onResizeCallback: (id, size, format) => {
+        this.ctx.log.push({ type: 'resize', target: id, payload: { size, format } });
+      }
     });
 
     // Run the task function with the initialized executor

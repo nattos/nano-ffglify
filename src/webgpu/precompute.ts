@@ -154,6 +154,7 @@ export function precomputeResourceLayout(def: any): PrecomputedResourceInfo {
     const dataType = (def.dataType || 'float').toLowerCase();
     let typedArray: 'Float32Array' | 'Int32Array' | 'Uint32Array' = 'Float32Array';
     let isInteger = false;
+    let componentCount = 1;
 
     if (dataType.includes('int') && !dataType.includes('float')) {
       isInteger = true;
@@ -161,9 +162,17 @@ export function precomputeResourceLayout(def: any): PrecomputedResourceInfo {
       else typedArray = 'Int32Array';
     }
 
+    if (dataType.includes('2')) componentCount = 2;
+    else if (dataType.includes('3')) componentCount = 3;
+    else if (dataType.includes('4')) componentCount = 4;
+    else if (dataType.includes('mat')) {
+      if (dataType.includes('3x3')) componentCount = 9;
+      else if (dataType.includes('4x4')) componentCount = 16;
+    }
+
     return {
       type: 'buffer',
-      componentCount: 1, // Buffers are usually base-type arrays
+      componentCount,
       typedArray,
       isInteger
     };

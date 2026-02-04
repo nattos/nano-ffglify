@@ -658,8 +658,28 @@ const _createExecutor2 = (device, pipelines, precomputedInfos, renderPipelines, 
         await Promise.all(stagingBuffers.map(async ({ state, staging }) => {
           await staging.mapAsync(1);
           const range = staging.getMappedRange();
-          const data = new Float32Array(range);
-          state.data = Array.from(data).slice(0, state.width); // Simplified readback
+
+          const info = resourceInfos.get(state.def.id);
+          const taType = info?.typedArray || 'Float32Array';
+          let rawData;
+          if (taType === 'Uint32Array') rawData = new Uint32Array(range);
+          else if (taType === 'Int32Array') rawData = new Int32Array(range);
+          else if (taType === 'Uint8Array') rawData = new Uint8Array(range);
+          else rawData = new Float32Array(range);
+
+          const componentCount = info?.componentCount || 1;
+          const flatData = Array.from(rawData).slice(0, state.width * componentCount);
+
+          if (componentCount > 1) {
+            const structured = [];
+            for (let i = 0; i < state.width; i++) {
+              structured.push(flatData.slice(i * componentCount, (i + 1) * componentCount));
+            }
+            state.data = structured;
+          } else {
+            state.data = flatData;
+          }
+
           staging.unmap();
           staging.destroy();
         }));
@@ -711,7 +731,8 @@ const _ensureGpuResource2 = (device, state, info) => {
     }
   } else {
     // Buffer
-    const byteSize = state.width * 4;
+    const { componentCount } = info;
+    const byteSize = state.width * componentCount * 4;
     const alignedSize = Math.max(Math.ceil(byteSize / 4) * 4, 16);
 
     if (!state.gpuBuffer || state.gpuBuffer.size < alignedSize) {
@@ -723,8 +744,9 @@ const _ensureGpuResource2 = (device, state, info) => {
     }
 
     if (state.data) {
-      const raw = info.typedArray === 'Float32Array' ? new Float32Array(state.width) :
-        info.typedArray === 'Uint32Array' ? new Uint32Array(state.width) : new Int32Array(state.width);
+      const flatSize = state.width * componentCount;
+      const raw = info.typedArray === 'Float32Array' ? new Float32Array(flatSize) :
+        info.typedArray === 'Uint32Array' ? new Uint32Array(flatSize) : new Int32Array(flatSize);
 
       let ptr = 0;
       const push = (v) => {
