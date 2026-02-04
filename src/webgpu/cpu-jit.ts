@@ -171,7 +171,8 @@ require('./intrinsics.js');
             renderPipelines.set(key, {
               vsCode: WgslGenerator.resolveImports(vsRes),
               fsCode: WgslGenerator.resolveImports(fsRes),
-              metadata: vsRes.metadata // Assume shared resource model
+              metadata: vsRes.metadata,
+              vertexId: n['vertex']
             });
           }
         }
@@ -225,7 +226,7 @@ require('./intrinsics.js');
       lines.push(`     renderPipelines.set('${key}', pipeline);`);
 
       const precomputed = precomputeShaderInfo(data.metadata, ir.structs);
-      lines.push(`    precomputedInfos.set('${key}', ${JSON.stringify(precomputed)});`);
+      lines.push(`    precomputedInfos.set('${data.vertexId}', ${JSON.stringify(precomputed)});`);
       lines.push(`  }`);
     });
 

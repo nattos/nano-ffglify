@@ -223,15 +223,16 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
         }
       }
 
-      const bindGroup = device.createBindGroup({
-        layout: pipeline.getBindGroupLayout(0),
-        entries
-      });
-
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginComputePass();
       pass.setPipeline(pipeline);
-      pass.setBindGroup(0, bindGroup);
+      if (entries.length > 0) {
+        const bindGroup = device.createBindGroup({
+          layout: pipeline.getBindGroupLayout(0),
+          entries
+        });
+        pass.setBindGroup(0, bindGroup);
+      }
       pass.dispatchWorkgroups(dim[0], dim[1], dim[2]);
       pass.end();
 
@@ -291,12 +292,93 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
 
     async executeDraw(targetId, vertexId, fragmentId, count, pipelineDef, resources) {
       const key = `${vertexId}|${fragmentId}`;
-      // ... implementation similar to webgpu-executor ...
+      const pipeline = renderPipelines.get(key);
+      if (!pipeline) throw new Error("Render pipeline not found: " + key);
+
+      // Use vertex shader info for bindings
+      const info = precomputedInfos.get(vertexId);
+      if (!info) throw new Error("Precomputed info not found for vertex shader: " + vertexId);
+
+      const targetState = resources.get(targetId);
+      if (!targetState) throw new Error("Target resource not found: " + targetId);
+      const targetResInfo = resourceInfos.get(targetId);
+      _ensureGpuResource(device, targetState, targetResInfo);
+
+      const entries = [];
+      for (const resBind of info.resourceBindings) {
+        if (resBind.id === targetId) continue;
+        const state = resources.get(resBind.id);
+        if (!state) continue;
+
+        const resInfo = resourceInfos.get(resBind.id);
+        _ensureGpuResource(device, state, resInfo);
+        if (state.def.type === 'texture2d') {
+          entries.push({ binding: resBind.binding, resource: state.gpuTexture.createView() });
+        } else {
+          entries.push({ binding: resBind.binding, resource: { buffer: state.gpuBuffer } });
+        }
+      }
+
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: targetState.gpuTexture.createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 0 }
+        }]
+      });
+
+      pass.setPipeline(pipeline);
+      pass.setViewport(0, 0, targetState.width, targetState.height, 0, 1);
+      pass.setScissorRect(0, 0, targetState.width, targetState.height);
+      if (entries.length > 0) {
+        const bindGroup = device.createBindGroup({
+          layout: pipeline.getBindGroupLayout(0),
+          entries
+        });
+        pass.setBindGroup(0, bindGroup);
+      }
+      pass.draw(count);
+      pass.end();
+
+      // Readback Target (optimized row-padding)
+      const bytesPerPixel = 4;
+      const bytesPerRow = Math.ceil((targetState.width * bytesPerPixel) / 256) * 256;
+      const staging = device.createBuffer({
+        size: bytesPerRow * targetState.height,
+        usage: 1 | 8 // MAP_READ | COPY_DST
+      });
+
+      encoder.copyTextureToBuffer(
+        { texture: targetState.gpuTexture },
+        { buffer: staging, bytesPerRow },
+        [targetState.width, targetState.height, 1]
+      );
+
+      device.queue.submit([encoder.finish()]);
+
+      await staging.mapAsync(1);
+      const data = new Uint8Array(staging.getMappedRange());
+
+      const reshaped = [];
+      for (let y = 0; y < targetState.height; y++) {
+        const rowStart = y * bytesPerRow;
+        for (let x = 0; x < targetState.width; x++) {
+          const start = rowStart + (x * 4);
+          reshaped.push(Array.from(data.slice(start, start + 4)).map(v => v / 255.0));
+        }
+      }
+      targetState.data = reshaped;
+
+      staging.unmap();
+      staging.destroy();
     }
   };
 };
 
 const _ensureGpuResource = (device, state, info) => {
+  if (!info) return;
   if (info.type === 'texture2d') {
     if (!state.gpuTexture || state.gpuTexture.width !== state.width || state.gpuTexture.height !== state.height) {
       if (state.gpuTexture) state.gpuTexture.destroy();

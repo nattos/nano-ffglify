@@ -379,5 +379,77 @@ describe('WebGPU Intrinsics', () => {
       expect(resState.data[0][2]).toBeCloseTo(0.3);
       expect(resState.data[0][3]).toBeCloseTo(0.4);
     });
+
+    it('should execute draw call with precomputed info', async () => {
+      // Mock render pipeline and precomputed info
+      const meta: CompilationMetadata = {
+        inputBinding: 0,
+        resourceBindings: new Map([['t_input', 1]]),
+        workgroupSize: [1, 1, 1],
+        structLayouts: {}
+      };
+      // Vertex shader info is used for bindings
+      const precomputed = new Map([['vs1', precomputeShaderInfo(meta, [])]]);
+
+      const mockRenderPipeline = {
+        getBindGroupLayout: vi.fn().mockReturnValue({})
+      };
+      const renderPipelines = new Map([['vs1|fs1', mockRenderPipeline]]);
+
+      const resDef = { id: 't_input', type: 'texture2d', format: 'rgba8' };
+      const resInfo = precomputeResourceLayout(resDef);
+      const targetState = {
+        id: 't_target',
+        def: { id: 't_target', type: 'texture2d', format: 'rgba8' },
+        width: 4,
+        height: 4,
+        data: [],
+        gpuTexture: {
+          width: 4, height: 4, destroy: vi.fn(), createView: vi.fn().mockReturnValue({})
+        } as any
+      };
+      const targetResInfo = precomputeResourceLayout(targetState.def);
+
+      const resourceInfos = new Map([
+        ['t_input', resInfo],
+        ['t_target', targetResInfo]
+      ]);
+
+      const executor = _createExecutor(mockDevice, new Map(), precomputed, renderPipelines, resourceInfos);
+
+      const inputState = {
+        id: 't_input',
+        def: resDef,
+        width: 4,
+        height: 4,
+        data: [],
+        gpuTexture: {
+          width: 4, height: 4, destroy: vi.fn(), createView: vi.fn().mockReturnValue({})
+        } as any
+      };
+
+      const resources = new Map([['t_target', targetState], ['t_input', inputState]]);
+
+      // Mock command encoder for render pass
+      const mockPass = {
+        setPipeline: vi.fn(),
+        setBindGroup: vi.fn(),
+        setViewport: vi.fn(),
+        setScissorRect: vi.fn(),
+        draw: vi.fn(),
+        end: vi.fn(),
+      };
+      mockDevice.createCommandEncoder.mockReturnValue({
+        beginRenderPass: vi.fn().mockReturnValue(mockPass),
+        copyTextureToBuffer: vi.fn(),
+        finish: vi.fn().mockReturnValue({}),
+      });
+
+      await executor.executeDraw('t_target', 'vs1', 'fs1', 3, {}, resources);
+
+      expect(mockDevice.createCommandEncoder).toHaveBeenCalled();
+      expect(mockPass.setPipeline).toHaveBeenCalledWith(mockRenderPipeline);
+      expect(mockPass.draw).toHaveBeenCalledWith(3);
+    });
   });
 });
