@@ -64,6 +64,40 @@ export interface ResourceState {
   gpuTexture?: GPUTexture;
 }
 
+export interface PrecomputedShaderInfo {
+  inputBinding?: number;
+  inputLayout?: PrecomputedInputLayout;
+  resourceBindings: { id: string, binding: number, type: 'texture2d' | 'buffer' }[];
+}
+
+export interface PrecomputedResourceInfo {
+  type: 'texture2d' | 'buffer';
+  componentCount: number;
+  typedArray: 'Float32Array' | 'Int32Array' | 'Uint32Array' | 'Uint8Array';
+  format?: string;
+  isInteger?: boolean;
+}
+
+export interface PrecomputedInputLayout {
+  totalSize: number;
+  hasRuntimeArray: boolean;
+  runtimeArray?: {
+    name: string;
+    offset: number;
+    stride: number;
+    elementType: string;
+    elementOp: PrecomputedWriteOp;
+  };
+  ops: PrecomputedWriteOp[];
+}
+
+export type PrecomputedWriteOp =
+  | { op: 'f32' | 'i32' | 'u32'; offset: number; path: string[] }
+  | { op: 'vec'; offset: number; path: string[]; size: number; elementType: 'f32' | 'i32' | 'u32' }
+  | { op: 'mat'; offset: number; path: string[]; dim: number }
+  | { op: 'struct'; offset: number; path: string[]; members: PrecomputedWriteOp[] }
+  | { op: 'array'; offset: number; path: string[]; length: number; stride: number; elementOp: PrecomputedWriteOp; elementType: string };
+
 /**
  * Interface for the host environment provided to JIT-compiled CPU code.
  *
