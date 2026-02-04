@@ -240,7 +240,7 @@ export class AppController {
 
       await encodeAndDownloadImage(tOutput.data as number[][], tOutput.width, tOutput.height, 'result.png');
       console.info("[AppController] Run One completed successfully!");
-      alert("Run One completed! Downloaded result.png");
+      // alert("Run One completed! Downloaded result.png");
 
     } catch (e: any) {
       console.error(e);

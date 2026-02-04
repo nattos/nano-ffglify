@@ -98,6 +98,10 @@ describe('Conformance: Error Handling & Negative Tests', () => {
       { id: 'bad_const', op: 'const_get', name: 'NON_EXISTENT_CONSTANT' },
     ], [], 'Invalid constant name');
 
+    runStaticBadIR('Unknown Opcode', [
+      { id: 'bad_op', op: 'cast_to_float', value: 'x' }
+    ], [], 'Unknown op');
+
     runStaticBadIR('Multiple Static Errors (Accumulation)', [
       // Error 1: Missing Argument in math_add
       { id: 'op1', op: 'math_add', a: 10 }, // missing b

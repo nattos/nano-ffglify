@@ -85,6 +85,11 @@ const resolveNodeType = (
   const sigs = OpSignatures[node.op as keyof typeof OpSignatures];
   if (!sigs) {
     // console.log(`[Validator] No signatures found for op ${node.op}`);
+    errors.push({
+      nodeId,
+      message: `Unknown op '${node.op}'`,
+      severity: 'error'
+    });
     cache.set(nodeId, 'any');
     return 'any';
   }
@@ -173,7 +178,11 @@ const resolveNodeType = (
 
   for (const sig of sigs) {
     let match = true;
+    const hasWildcard = '*' in sig.inputs;
+
     for (const [argName, argType] of Object.entries(sig.inputs)) {
+      if (argName === '*') continue;
+
       let providedType = inputTypes[argName] as string;
 
       // Normalize Types
@@ -200,13 +209,10 @@ const resolveNodeType = (
 
     if (match) {
       // Arity Check
-      const extraKeys = Object.keys(inputTypes).filter(k => !(k in sig.inputs));
+      const extraKeys = Object.keys(inputTypes).filter(k => !(k in sig.inputs) && !hasWildcard);
       if (extraKeys.length > 0) {
-        errors.push({
-          nodeId,
-          message: `Unknown argument(s) '${extraKeys.join(', ')}' for op '${node.op}'`,
-          severity: 'error'
-        });
+        // Not a match, try next signature
+        continue;
       }
       matchedSig = sig;
       break;
@@ -281,7 +287,20 @@ const resolveNodeType = (
   }
 
   const refSig = sigs[0];
+
+  // Check for Unknown Arguments (Fallback)
+  const hasWildcard = '*' in refSig.inputs;
+  const extraKeys = Object.keys(inputTypes).filter(k => !(k in refSig.inputs) && !hasWildcard);
+  if (extraKeys.length > 0) {
+    errors.push({
+      nodeId,
+      message: `Unknown argument(s) '${extraKeys.join(', ')}' for op '${node.op}'`,
+      severity: 'error'
+    });
+  }
+
   for (const reqArg of Object.keys(refSig.inputs)) {
+    if (reqArg === '*') continue;
     if (!inputTypes[reqArg]) {
       errors.push({ nodeId, message: `Missing required argument '${reqArg}' for op '${node.op}'`, severity: 'error' });
     }

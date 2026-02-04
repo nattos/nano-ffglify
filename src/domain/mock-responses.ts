@@ -82,25 +82,76 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
             {
               id: 'fn_blur',
               type: 'shader',
-              inputs: [{ id: 'u_kernel_size', type: 'int' }],
+              inputs: [
+                { id: 'u_kernel_size', type: 'int' }
+              ],
               outputs: [],
-              localVars: [{ id: 'v_color', type: 'float4', initialValue: [0, 0, 0, 0] }],
+              localVars: [
+                { id: 'v_sum', type: 'float4', initialValue: [0, 0, 0, 0] }
+              ],
               nodes: [
                 { id: 'th_id', op: 'builtin_get', name: 'global_invocation_id' },
                 { id: 'x', op: 'vec_get_element', vec: 'th_id', index: 0 },
                 { id: 'y', op: 'vec_get_element', vec: 'th_id', index: 1 },
                 { id: 'coords', op: 'float2', x: 'x', y: 'y' },
 
-                { id: 'loop', op: 'flow_loop', start: 0, end: 'u_kernel_size', exec_body: 'set', exec_completed: 'store' },
+                // Get Texture Size
+                { id: 'size_f', op: 'resource_get_size', resource: 't_output' },
+                { id: 'width_f', op: 'vec_get_element', vec: 'size_f', index: 0 },
+                { id: 'height_f', op: 'vec_get_element', vec: 'size_f', index: 1 },
 
-                { id: 'idx', op: 'loop_index', loop: 'loop' },
-                { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 'idx' },
-                { id: 'tex_val', op: 'texture_sample', tex: 't_input', uv: [0.5, 0.5] },
-                { id: 'prev', op: 'var_get', var: 'v_color' },
-                { id: 'new_val', op: 'math_mad', a: 'tex_val', b: 'w_val', c: 'prev' },
-                { id: 'set', op: 'var_set', var: 'v_color', val: 'new_val' },
+                // Calculate UV for Base Image (Top-Left 0,0)
+                { id: 'f_x', op: 'static_cast_float', val: 'x' },
+                { id: 'f_y', op: 'static_cast_float', val: 'y' },
+                { id: 'mid_x', op: 'math_add', a: 'f_x', b: 0.5 },
+                { id: 'mid_y', op: 'math_add', a: 'f_y', b: 0.5 },
+                { id: 'u', op: 'math_div', a: 'mid_x', b: 'width_f' },
+                { id: 'v', op: 'math_div', a: 'mid_y', b: 'height_f' },
+                { id: 'uv', op: 'float2', x: 'u', y: 'v' },
 
-                { id: 'final_color', op: 'var_get', var: 'v_color' },
+                // --- Kernel Loop: Sum Weighted Samples ---
+                {
+                  id: 'loop',
+                  op: 'flow_loop',
+                  start: 0,
+                  end: 'u_kernel_size',
+                  exec_body: 'accumulate',
+                  exec_completed: 'store'
+                },
+
+                // Loop Body
+                { id: 'idx_loop', op: 'loop_index', loop: 'loop' },
+
+                // 1. Calculate Offset: (idx - size/2)
+                { id: 'size_half', op: 'math_div', a: 'u_kernel_size', b: 2 },
+                { id: 'idx_offset_i', op: 'math_sub', a: 'idx_loop', b: 'size_half' },
+                { id: 'idx_offset_f', op: 'static_cast_float', val: 'idx_offset_i' },
+
+                // 2. Convert to UV Offset: offset / width
+                { id: 'u_offset', op: 'math_div', a: 'idx_offset_f', b: 'width_f' },
+                { id: 'v_offset', op: 'float2', x: 'u_offset', y: 0.0 }, // Horizontal Blur
+
+                // 3. Sample UV
+                { id: 'sample_uv', op: 'math_add', a: 'uv', b: 'v_offset' },
+
+                // 4. Load Weight
+                { id: 'idx_clamped', op: 'math_clamp', val: 'idx_loop', min: 0, max: 15 },
+                { id: 'weight_val', op: 'buffer_load', buffer: 'b_weights', index: 'idx_clamped' },
+
+                // 5. Sample & Weight
+                { id: 'sample_col', op: 'texture_sample', tex: 't_input', uv: 'sample_uv' },
+                { id: 'weighted_col', op: 'math_mul', a: 'sample_col', b: 'weight_val' },
+
+                // 6. Accumulate
+                { id: 'curr_sum', op: 'var_get', var: 'v_sum' },
+                { id: 'new_sum', op: 'math_add', a: 'curr_sum', b: 'weighted_col' },
+
+                { id: 'accumulate', op: 'var_set', var: 'v_sum', val: 'new_sum' },
+
+                // --- Post-Loop ---
+
+                // Store Result directly
+                { id: 'final_color', op: 'var_get', var: 'v_sum' },
                 { id: 'store', op: 'texture_store', tex: 't_output', coords: 'coords', value: 'final_color' }
               ]
             }

@@ -70,7 +70,7 @@ const LOGIC_OPS: BuiltinOp[] = [
 const UNARY_OPS: BuiltinOp[] = [
   'math_sin', 'math_cos', 'math_tan', 'math_asin', 'math_acos', 'math_atan',
   'math_sinh', 'math_cosh', 'math_tanh', 'math_sign', 'math_exp', 'math_log', 'math_sqrt',
-  'math_abs', 'math_ceil', 'math_floor',
+  'math_abs', 'math_ceil', 'math_floor', 'math_round',
   'math_fract', 'math_trunc',
   'math_flush_subnormal', 'math_mantissa', 'math_exponent'
 ];
@@ -201,7 +201,14 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   ],
 
   // Matrix
+  // Output Ops
+  'literal': [{ inputs: { val: 'any' }, output: 'any' }], // Can return any type
+
+  // Matrix
   'mat_identity': [{ inputs: { size: 'int' }, output: 'float4x4' }],
+  'float4x4': [{ inputs: { '*': 'any' }, output: 'float4x4' }],
+  'float3x3': [{ inputs: { '*': 'any' }, output: 'float3x3' }],
+  'mat_inverse': [{ inputs: { val: 'any' }, output: 'any' }],
   'mat_mul': [
     { inputs: { a: 'float4x4', b: 'float4x4' }, output: 'float4x4' },
     { inputs: { a: 'float3x3', b: 'float3x3' }, output: 'float3x3' },
@@ -210,6 +217,58 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { a: 'float4', b: 'float4x4' }, output: 'float4' },
     { inputs: { a: 'float3', b: 'float3x3' }, output: 'float3' },
   ],
+
+  // --- Missing Math ---
+  'math_step': [
+    { inputs: { edge: 'float', x: 'float' }, output: 'float' },
+    { inputs: { edge: 'float2', x: 'float2' }, output: 'float2' },
+    { inputs: { edge: 'float3', x: 'float3' }, output: 'float3' },
+    { inputs: { edge: 'float4', x: 'float4' }, output: 'float4' },
+    { inputs: { edge: 'float', x: 'float2' }, output: 'float2' },
+    { inputs: { edge: 'float', x: 'float3' }, output: 'float3' },
+    { inputs: { edge: 'float', x: 'float4' }, output: 'float4' }
+  ],
+  'math_smoothstep': [
+    { inputs: { edge0: 'float', edge1: 'float', x: 'float' }, output: 'float' },
+    { inputs: { edge0: 'float2', edge1: 'float2', x: 'float2' }, output: 'float2' },
+    { inputs: { edge0: 'float3', edge1: 'float3', x: 'float3' }, output: 'float3' },
+    { inputs: { edge0: 'float4', edge1: 'float4', x: 'float4' }, output: 'float4' },
+    { inputs: { edge0: 'float', edge1: 'float', x: 'float2' }, output: 'float2' },
+    { inputs: { edge0: 'float', edge1: 'float', x: 'float3' }, output: 'float3' },
+    { inputs: { edge0: 'float', edge1: 'float', x: 'float4' }, output: 'float4' }
+  ],
+  'math_mix': [
+    { inputs: { a: 'float', b: 'float', t: 'float' }, output: 'float' },
+    { inputs: { a: 'float2', b: 'float2', t: 'float2' }, output: 'float2' },
+    { inputs: { a: 'float3', b: 'float3', t: 'float3' }, output: 'float3' },
+    { inputs: { a: 'float4', b: 'float4', t: 'float4' }, output: 'float4' },
+    { inputs: { a: 'float2', b: 'float2', t: 'float' }, output: 'float2' },
+    { inputs: { a: 'float3', b: 'float3', t: 'float' }, output: 'float3' },
+    { inputs: { a: 'float4', b: 'float4', t: 'float' }, output: 'float4' },
+    // Boolean mix (select)
+    { inputs: { a: 'float', b: 'float', t: 'boolean' }, output: 'float' },
+    { inputs: { a: 'float2', b: 'float2', t: 'boolean' }, output: 'float2' },
+    { inputs: { a: 'float3', b: 'float3', t: 'boolean' }, output: 'float3' },
+    { inputs: { a: 'float4', b: 'float4', t: 'boolean' }, output: 'float4' }
+  ],
+  'color_mix': [
+    { inputs: { a: 'float4', b: 'float4', t: 'float' }, output: 'float4' },
+    { inputs: { a: 'float4', b: 'float4' }, output: 'float4' }
+  ],
+  'math_pi': [{ inputs: {}, output: 'float' }],
+  'math_e': [{ inputs: {}, output: 'float' }],
+  'math_ldexp': [{ inputs: { val: 'any', exp: 'any' }, output: 'any' }], // Dynamic types
+
+  // --- Quaternions ---
+  'quat': [
+    { inputs: { axis: 'float3', angle: 'float' }, output: 'float4' },
+    { inputs: { x: 'float', y: 'float', z: 'float', w: 'float' }, output: 'float4' }
+  ],
+  'quat_identity': [{ inputs: {}, output: 'float4' }],
+  'quat_mul': [{ inputs: { a: 'float4', b: 'float4' }, output: 'float4' }],
+  'quat_slerp': [{ inputs: { a: 'float4', b: 'float4', t: 'float' }, output: 'float4' }],
+  'quat_rotate': [{ inputs: { v: 'float3', q: 'float4' }, output: 'float3' }],
+  'quat_to_float4x4': [{ inputs: { q: 'float4' }, output: 'float4x4' }],
 
   // System
   'struct_extract': [{ inputs: { struct: 'struct', field: 'string' }, output: 'any' }],
@@ -224,5 +283,45 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { name: 'string' }, output: 'int' },    // local_invocation_index, vertex_index, instance_index
     { inputs: { name: 'string' }, output: 'float4' }, // frag_coord
     { inputs: { name: 'string' }, output: 'boolean' } // front_facing
-  ]
+  ],
+
+  // Structs & Arrays
+  'struct_construct': [{ inputs: { '*': 'any' }, output: 'any' }],
+
+  'array_construct': [{ inputs: { '*': 'any' }, output: 'any' }],
+  'array_set': [{ inputs: { array: 'any', index: 'int', value: 'any' }, output: 'any' }],
+  'array_extract': [{ inputs: { array: 'any', index: 'int' }, output: 'any' }],
+  'array_length': [{ inputs: { array: 'any' }, output: 'int' }],
+
+  // Control Flow
+  'call_func': [
+    { inputs: { func: 'string' }, output: 'any' },
+    { inputs: { func: 'string', '*': 'any' }, output: 'any' }
+  ],
+  'const_data': [{ inputs: { '*': 'any' }, output: 'any' }], // Raw data node
+
+  'func_return': [
+    { inputs: { value: 'any' }, output: 'any' },
+    { inputs: { val: 'any' }, output: 'any' },
+    { inputs: {}, output: 'any' }
+  ],
+  'flow_branch': [{ inputs: { cond: 'boolean' }, output: 'any' }],
+  'flow_loop': [{ inputs: { start: 'int', end: 'int' }, output: 'any' }],
+
+  // Resources
+  'resource_get_size': [{ inputs: { resource: 'string' }, output: 'float2' }],
+  'resource_get_format': [{ inputs: { resource: 'string' }, output: 'int' }], // Fixed: id -> resource
+  'texture_sample': [{ inputs: { tex: 'string', uv: 'float2' }, output: 'float4' }],
+  'texture_load': [{ inputs: { tex: 'string', coords: 'float2' }, output: 'float4' }],
+  'texture_store': [{ inputs: { tex: 'string', coords: 'float2', value: 'float4' }, output: 'any' }],
+
+  // Commands
+  'cmd_dispatch': [
+    { inputs: { func: 'string', '*': 'any' }, output: 'any' }
+  ],
+  'cmd_resize_resource': [
+    { inputs: { resource: 'string', size: 'any' }, output: 'any' },
+    { inputs: { resource: 'string', size: 'any', clear: 'any' }, output: 'any' } // Added optional clear
+  ],
+  'cmd_draw': [{ inputs: { target: 'string', vertex: 'string', fragment: 'string', count: 'int' }, output: 'any' }]
 };

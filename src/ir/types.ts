@@ -379,6 +379,7 @@ export type BuiltinOp =
   | 'var_get'    // { var: string } -> any
   | 'var_set'    // { var: string, val: any } -> val
   | 'const_get'  // { name: string } -> any
+  | 'const_data' // { val: any } -> any
   | 'builtin_get' // { name: BuiltinName } -> any
   | 'loop_index' // { loop: string } -> int
 
