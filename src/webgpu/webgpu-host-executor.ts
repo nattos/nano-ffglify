@@ -1,5 +1,4 @@
 import { EvaluationContext, RuntimeValue } from '../interpreter/context';
-import { WebGpuExecutor } from './webgpu-executor';
 import { FunctionDef, IRDocument } from '../ir/types';
 import { CompiledJitResult, CpuJitCompiler } from './cpu-jit';
 import { WebGpuHost } from './webgpu-host';
@@ -8,14 +7,14 @@ import { WebGpuHost } from './webgpu-host';
  * Orchestrates JIT-compiled CPU functions with the WebGpuExecutor.
  */
 export class WebGpuHostExecutor {
-  webGpuExec: WebGpuExecutor;
+  device: GPUDevice;
   ctx: EvaluationContext;
   jit: CpuJitCompiler;
   compiledCache: Map<string, CompiledJitResult> = new Map(); // Stores JitResult
 
-  constructor(ctx: EvaluationContext, webGpuExec: WebGpuExecutor) {
+  constructor(ctx: EvaluationContext, device: GPUDevice) {
     this.ctx = ctx;
-    this.webGpuExec = webGpuExec;
+    this.device = device;
     this.jit = new CpuJitCompiler();
   }
 
@@ -28,7 +27,7 @@ export class WebGpuHostExecutor {
 
     // Initialize the GPU executor structure for this specific graph
     // compiled.init returns Promise<IGpuExecutor>
-    const gpuExecutor = await compiled.init(this.webGpuExec.device);
+    const gpuExecutor = await compiled.init(this.device);
     const webGpuHost = new WebGpuHost({
       executor: gpuExecutor,
       resources: this.ctx.resources,
@@ -36,9 +35,5 @@ export class WebGpuHostExecutor {
 
     // Run the task function with the initialized executor
     return await compiled.task({ resources: this.ctx.resources, inputs: this.ctx.inputs, globals: webGpuHost });
-  }
-
-  destroy() {
-    this.webGpuExec.destroy();
   }
 }

@@ -23,7 +23,6 @@ import { WgslGenerator } from '../webgpu/wgsl-generator';
 import { getSharedDevice } from '../webgpu/gpu-device';
 import { fetchAndDecodeImage, encodeAndDownloadImage } from '../utils/image-utils';
 import { EvaluationContext } from '../interpreter/context';
-import { WebGpuExecutor } from '../webgpu/webgpu-executor';
 import { WebGpuHostExecutor } from '../webgpu/webgpu-host-executor';
 import { TextureFormat } from '../ir/types';
 
@@ -195,10 +194,7 @@ export class AppController {
       });
 
       // 6. Setup Executors
-      const gpuExec = new WebGpuExecutor(device, ctx.resources, ctx.inputs);
-      await gpuExec.initialize(ir.functions, ir.resources, ir.structs);
-
-      const hostExec = new WebGpuHostExecutor(ctx, gpuExec);
+      const hostExec = new WebGpuHostExecutor(ctx, device);
 
       // 7. Execute JIT starting at entry point
       const entryFunc = ir.functions.find(f => f.id === ir.entryPoint);
@@ -208,7 +204,7 @@ export class AppController {
       await hostExec.executeFunction(entryFunc, ir.functions);
 
       // [TEMP] Explicit readback for debug
-      await gpuExec.readbackResource('t_output');
+      // await gpuExec.readbackResource('t_output');
 
       // 8. Extract t_output and Download
       const tOutput = ctx.getResource('t_output');

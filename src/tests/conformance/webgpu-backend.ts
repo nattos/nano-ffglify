@@ -3,7 +3,6 @@ import { getSharedDevice, gpuSemaphore } from './gpu-singleton';
 
 import type { TestBackend } from './types';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
-import { WebGpuExecutor } from '../../webgpu/webgpu-executor';
 import { IRDocument } from '../../ir/types';
 import { WebGpuHostExecutor } from '../../webgpu/webgpu-host-executor';
 
@@ -36,25 +35,18 @@ export const WebGpuBackend: TestBackend = {
       const device = (ctx as any).device as GPUDevice;
       if (!device) throw new Error('Context missing GPUDevice');
 
-      const gpuExec = new WebGpuExecutor(device, ctx.resources, ctx.inputs);
-      await gpuExec.initialize(ctx.ir.functions, ctx.ir.resources, ctx.ir.structs);
-
       const func = ctx.ir.functions.find(f => f.id === entryPoint);
       if (!func) throw new Error(`Entry point '${entryPoint}' not found`);
 
       // 3. Execute
       if (func.type === 'cpu') {
         ctx.pushFrame(entryPoint);
-        hostExec = new WebGpuHostExecutor(ctx, gpuExec);
+        hostExec = new WebGpuHostExecutor(ctx, device);
         ctx.result = await hostExec.executeFunction(func, ctx.ir.functions);
       } else {
-        // Direct shader execution
-        const inputObj: Record<string, RuntimeValue> = {};
-        ctx.inputs.forEach((v, k) => inputObj[k] = v);
-        await gpuExec.executeShader(func, [1, 1, 1], inputObj);
+        throw new Error(`Entry point '${entryPoint}' must be 'cpu'`);
       }
     } finally {
-      hostExec?.destroy();
       gpuSemaphore.release();
     }
   },
