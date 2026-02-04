@@ -5,6 +5,7 @@ import { IRDocument, FunctionDef, Node, Edge } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
 import { WgslGenerator } from './wgsl-generator';
 import { CompiledTaskFunction, CompiledInitFunction } from './jit-types';
+import { precomputeShaderInfo, precomputeResourceLayout } from './precompute';
 
 export interface CompiledJitResult {
   init: CompiledInitFunction;
@@ -180,8 +181,17 @@ require('./intrinsics.js');
     lines.push(`
       const pipelines = new Map(); // id -> GPUComputePipeline
       const renderPipelines = new Map(); // key -> GPURenderPipeline
-      const pipelineMeta = new Map(); // id -> metadata
+      const precomputedInfos = new Map(); // id -> precomputedInfo
+      const resourceInfos = new Map(); // id -> PrecomputedResourceInfo
     `);
+
+    // Emit Resource Precomputations
+    lines.push(`  // Precompute Resource Layouts`);
+    ir.resources.forEach(res => {
+      const info = precomputeResourceLayout(res);
+      lines.push(`  resourceInfos.set('${res.id}', ${JSON.stringify(info)});`);
+    });
+    lines.push('');
 
     // Emit shader compilation
     lines.push(`  // Pre-compile Shaders`);
@@ -194,8 +204,9 @@ require('./intrinsics.js');
       lines.push(`       compute: { module, entryPoint: 'main' }`);
       lines.push(`    });`);
       lines.push(`    pipelines.set('${id}', pipeline);`);
-      const metaSafe = { ...data.metadata, resourceBindings: Object.fromEntries(data.metadata.resourceBindings) };
-      lines.push(`    pipelineMeta.set('${id}', ${JSON.stringify(metaSafe)});`);
+
+      const precomputed = precomputeShaderInfo(data.metadata, ir.structs);
+      lines.push(`    precomputedInfos.set('${id}', ${JSON.stringify(precomputed)});`);
       lines.push(`  }`);
     });
 
@@ -212,13 +223,14 @@ require('./intrinsics.js');
       lines.push(`        fragment: { module: fsModule, entryPoint: 'main', targets: [{ format: 'rgba8unorm' }] }`); // Format hardcoded for now
       lines.push(`     });`);
       lines.push(`     renderPipelines.set('${key}', pipeline);`);
-      const metaSafe = { ...data.metadata, resourceBindings: Object.fromEntries(data.metadata.resourceBindings) };
-      lines.push(`     pipelineMeta.set('${key}', ${JSON.stringify(metaSafe)});`);
+
+      const precomputed = precomputeShaderInfo(data.metadata, ir.structs);
+      lines.push(`    precomputedInfos.set('${key}', ${JSON.stringify(precomputed)});`);
       lines.push(`  }`);
     });
 
     lines.push(`
-      return _createExecutor(device, pipelines, pipelineMeta, renderPipelines);
+      return _createExecutor2(device, pipelines, precomputedInfos, renderPipelines, resourceInfos);
     `);
 
     return lines.join('\n');

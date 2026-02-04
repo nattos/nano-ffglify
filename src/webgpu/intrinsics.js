@@ -501,7 +501,7 @@ const _createExecutor = (device, pipelines, pipelineMeta, renderPipelines) => {
   };
 };
 
-const _createExecutor2 = (device, pipelines, precomputedInfos, renderPipelines) => {
+const _createExecutor2 = (device, pipelines, precomputedInfos, renderPipelines, resourceInfos = new Map()) => {
   const writeOp = (view, op, val, baseOffset = 0) => {
     if (val === undefined || val === null) return;
     let currentVal = val;
@@ -606,7 +606,13 @@ const _createExecutor2 = (device, pipelines, precomputedInfos, renderPipelines) 
       for (const resBind of info.resourceBindings) {
         const state = resources.get(resBind.id);
         if (!state) continue;
-        _ensureGpuResource(device, state);
+
+        const resInfo = resourceInfos.get(resBind.id);
+        if (resInfo) {
+          _ensureGpuResource2(device, state, resInfo);
+        } else {
+          _ensureGpuResource(device, state);
+        }
         if (state.def.type === 'texture2d') {
           entries.push({ binding: resBind.binding, resource: state.gpuTexture.createView() });
         } else {
@@ -658,6 +664,11 @@ const _createExecutor2 = (device, pipelines, precomputedInfos, renderPipelines) 
           staging.destroy();
         }));
       }
+    },
+
+    async executeDraw(targetId, vertexId, fragmentId, count, pipelineDef, resources) {
+      const key = `${vertexId}|${fragmentId}`;
+      // ... implementation similar to webgpu-executor ...
     }
   };
 };

@@ -270,6 +270,31 @@ describe('WebGPU Intrinsics', () => {
     });
   });
 
+  describe('precomputeResourceLayout', () => {
+    it('should map IR formats to WebGPU formats correctly', () => {
+      const cases = [
+        { ir: 'rgba8', gpu: 'rgba8unorm', tc: 4, ta: 'Uint8Array' },
+        { ir: 'rgba32f', gpu: 'rgba32float', tc: 4, ta: 'Float32Array' },
+        { ir: 'rgba16f', gpu: 'rgba16float', tc: 4, ta: 'Float32Array' },
+        { ir: 'r32f', gpu: 'r32float', tc: 1, ta: 'Float32Array' },
+        { ir: 'r16f', gpu: 'r16float', tc: 1, ta: 'Float32Array' },
+        { ir: 'r8', gpu: 'r8unorm', tc: 1, ta: 'Uint8Array' },
+      ];
+
+      for (const c of cases) {
+        const info = precomputeResourceLayout({ type: 'texture2d', format: c.ir });
+        expect(info.format).toBe(c.gpu);
+        expect(info.componentCount).toBe(c.tc);
+        expect(info.typedArray).toBe(c.ta);
+      }
+    });
+
+    it('should use rgba8unorm as default for textures', () => {
+      const info = precomputeResourceLayout({ type: 'texture2d' });
+      expect(info.format).toBe('rgba8unorm');
+    });
+  });
+
   describe('_buffer_store', () => {
     it('should store value and invalidate GPU buffer', () => {
       const gpuBuffer = { destroy: vi.fn() };

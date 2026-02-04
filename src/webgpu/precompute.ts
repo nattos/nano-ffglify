@@ -116,16 +116,31 @@ function generateOp(offset: number, type: string, path: string[], helpers: Shade
 
 export function precomputeResourceLayout(def: any): PrecomputedResourceInfo {
   if (def.type === 'texture2d') {
-    const format = def.format || 'rgba8unorm';
+    const irFormat = def.format || 'rgba8';
+    let format = 'rgba8unorm';
     let typedArray: 'Float32Array' | 'Uint8Array' = 'Uint8Array';
     let componentCount = 4;
 
-    if (format === 'r32f') {
+    if (irFormat === 'r32f') {
+      format = 'r32float';
       typedArray = 'Float32Array';
       componentCount = 1;
-    } else if (format === 'rgba32f') {
+    } else if (irFormat === 'rgba32f') {
+      format = 'rgba32float';
       typedArray = 'Float32Array';
       componentCount = 4;
+    } else if (irFormat === 'rgba16f') {
+      format = 'rgba16float';
+      typedArray = 'Float32Array'; // Still uses Float32Array on JS side for upload
+      componentCount = 4;
+    } else if (irFormat === 'r16f') {
+      format = 'r16float';
+      typedArray = 'Float32Array';
+      componentCount = 1;
+    } else if (irFormat === 'r8') {
+      format = 'r8unorm';
+      typedArray = 'Uint8Array';
+      componentCount = 1;
     }
 
     return {
