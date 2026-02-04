@@ -134,6 +134,7 @@ export class AppController {
 
     try {
       const js = cpuJit.compileToSource(ir, ir.entryPoint);
+      const jsInit = cpuJit.compileInitToSource(ir);
       const wgsl: Record<string, string> = {};
 
       ir.functions.forEach(f => {
@@ -143,7 +144,7 @@ export class AppController {
       });
 
       runInAction(() => {
-        appState.local.compilationResult = { js, wgsl };
+        appState.local.compilationResult = { js, jsInit, wgsl };
         this.setActiveTab('results');
       });
     } catch (e: any) {

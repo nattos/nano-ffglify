@@ -63,6 +63,7 @@ export interface LocalState {
   validationErrors: LogicValidationError[];
   compilationResult?: {
     js: string;
+    jsInit: string;
     wgsl: Record<string, string>;
   };
 }

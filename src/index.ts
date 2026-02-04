@@ -399,6 +399,7 @@ export class App extends MobxLitElement {
               <div class="compilation-results">
                 <h4>JavaScript (CPU Host)</h4>
                 <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.js}</pre>
+                <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.jsInit}</pre>
 
                 <h4>WGSL (GPU Shaders)</h4>
                 ${Object.entries(local.compilationResult.wgsl).map(([id, code]) => html`

@@ -39,8 +39,6 @@ export class CpuJitCompiler {
     }
   }
 
-  // ... (omitted)
-
   private hasResult(op: string): boolean {
     if (op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('mat_') || op.startsWith('quat_')) return true;
     const valueOps = [
