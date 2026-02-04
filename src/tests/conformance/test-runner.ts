@@ -90,7 +90,7 @@ export const runGraphTest = (
 
       const ctx = await backend.execute(ir, 'main', inputsMap);
       try {
-        const result = ctx.getVar(varToCheck);
+        const result = ctx.result !== undefined ? ctx.result : ctx.getVar(varToCheck);
 
         if (Array.isArray(expectedVal)) {
           if (expectedVal.length > 0 && typeof expectedVal[0] === 'number') {

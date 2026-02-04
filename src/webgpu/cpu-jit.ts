@@ -134,10 +134,6 @@ export class CpuJitCompiler {
 
     // Compile node logic
     lines.push(`  // Pure Nodes (lazy emission)`);
-    // We'll emit them as needed by the execution chain.
-    // CRITICAL: We MUST ensure result variables are defined before any chain starts
-    // because data dependencies can be circular or mixed.
-    // (Already done in Local Variables section above via resultNodes filter)
 
     // Execution Chain
     const entryNodes = f.nodes.filter(n => {

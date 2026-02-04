@@ -399,6 +399,21 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       verification.errors.forEach(msg => {
         errors.push({ nodeId: node.id, message: msg, severity: 'error' });
       });
+
+    } // End if (!verification.valid)
+
+    // 1.5. Strict Validation for var_get / var_set
+    if (node.op === 'var_get' || node.op === 'var_set') {
+      const varId = node['var'];
+      const isLocal = func.localVars.some(v => v.id === varId);
+      const isGlobal = doc.inputs.some(i => i.id === varId);
+      if (!isLocal && !isGlobal) {
+        errors.push({
+          nodeId: node.id,
+          message: `Variable '${varId}' is not defined in local scope or as a global input`,
+          severity: 'error'
+        });
+      }
     }
 
     resolveNodeType(node.id, func, doc, cache, resourceIds, errors, edges);
