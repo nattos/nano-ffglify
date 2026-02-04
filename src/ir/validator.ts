@@ -407,10 +407,13 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       const varId = node['var'];
       const isLocal = func.localVars.some(v => v.id === varId);
       const isGlobal = doc.inputs.some(i => i.id === varId);
-      if (!isLocal && !isGlobal) {
+      // Also check function arguments (inputs)
+      const isArg = func.inputs.some(i => i.id === varId);
+
+      if (!isLocal && !isGlobal && !isArg) {
         errors.push({
           nodeId: node.id,
-          message: `Variable '${varId}' is not defined in local scope or as a global input`,
+          message: `Variable '${varId}' is not defined in local scope, function arguments, or as a global input`,
           severity: 'error'
         });
       }

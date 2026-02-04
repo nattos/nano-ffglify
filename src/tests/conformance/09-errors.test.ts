@@ -151,7 +151,7 @@ describe('Conformance: Error Handling & Negative Tests', () => {
     runGraphErrorTest('Recursion Limit', [
       { id: 'recurse', op: 'call_func', func: 'main' },
       { id: 'sink', op: 'var_set', var: 'x', val: 'recurse' }
-    ], /Recursion/);
+    ], /Recursion/, [], [], [{ id: 'x', type: 'float' }]);
   });
 
   // ----------------------------------------------------------------

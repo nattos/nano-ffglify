@@ -164,6 +164,45 @@ const _ensureGpuResource = (device, state) => {
         usage: 128 | 8 | 4 // STORAGE | COPY_DST | COPY_SRC
       });
     }
+
+    // Upload data if present
+    if (state.data) {
+      // Flatten data to Float32/Int32/Uint32 array
+      const dataType = state.def.dataType || 'float'; // format?
+      // Note: buffer def uses 'dataType', texture uses 'format'.
+
+      let typedArray;
+      const flatData = [];
+
+      // Helper to push value
+      const push = (v) => {
+        if (Array.isArray(v)) v.forEach(push);
+        else flatData.push(v);
+      };
+      state.data.forEach(push);
+
+      // Choose TypedArray
+      // For simple JIT, we mostly use Float32.
+      // If int/uint expected...
+      // TODO: Handle mixed types if necessary.
+      // For now, if dataType suggests int/uint, utilize mapping?
+      // Actually, let's look at def.
+      if (dataType.includes('int') && !dataType.includes('float')) {
+        if (dataType.includes('uint') || dataType === 'bool') typedArray = new Uint32Array(flatData);
+        else typedArray = new Int32Array(flatData);
+      } else {
+        typedArray = new Float32Array(flatData);
+      }
+
+      // Ensure buffer is large enough (we already sized it to state.width * 4, but verify flatData length?)
+      // flatData.length * 4 should be <= alignedSize
+
+      // Write
+      // We might need to handle padding if flatData < buffer size?
+      // writeBuffer writes available data.
+
+      device.queue.writeBuffer(state.gpuBuffer, 0, typedArray);
+    }
   }
 };
 

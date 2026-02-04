@@ -478,7 +478,9 @@ require('./intrinsics.js');
         const varId = node['var'];
         if (func.localVars.some(v => v.id === varId)) return sanitizeId(varId, 'var');
         if (func.inputs.some(i => i.id === varId)) return sanitizeId(varId, 'input');
-        return `((id) => { const v = ctx.inputs.get(id); return v !== undefined ? v : 0; })('${varId}')`; // Fix for missing _getVar
+        // Let validator catch this, or fail at runtime/execution meta-check?
+        // But for safe runtime behavior in case validator is skipped:
+        return `((id) => { const v = ctx.inputs.get(id); if (v !== undefined) return v; throw new Error("Variable '" + id + "' is not defined"); })('${varId}')`;
       }
       case 'literal': return JSON.stringify(node['val']);
       case 'loop_index': return `loop_${node['loop'].replace(/[^a-zA-Z0-9_]/g, '_')}`;

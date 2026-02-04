@@ -1,6 +1,7 @@
 import { InterpreterBackend } from './interpreter-backend';
 import { ForceOntoGPUTestBackend } from './force-on-gpu-test-backend';
 import { WebGpuBackend } from './webgpu-backend';
+import { validateIR } from '../../ir/validator';
 
 /**
  * Browser-side bridge for Puppeteer-based tests.
@@ -30,6 +31,14 @@ import { WebGpuBackend } from './webgpu-backend';
   let backend = ForceOntoGPUTestBackend;
   if (backendName === 'Interpreter') backend = InterpreterBackend;
   else if (backendName === 'WebGPU') backend = WebGpuBackend;
+
+  // Validate IR
+  const errors = validateIR(ir);
+  if (errors.length > 0) {
+    const msg = errors.map(e => e.message).join('\n');
+    console.error('[Bridge] Validation Errors:', msg);
+    throw new Error(msg);
+  }
 
   const ctx = await backend.createContext(ir, inputsMap);
 
