@@ -962,22 +962,10 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   },
 
   'cmd_dispatch': (ctx, args) => {
-    const targetId = args.func as string;
-    const dim = args.dispatch as [number, number, number] || [1, 1, 1];
-    // Pass everything minus infrastructure props as potential arguments
-    const { func: _, dispatch: __, ...rest } = args;
-    ctx.webGpuExec.executeShader(targetId, dim, rest);
+    throw new Error(`cmd_dispatch unhandled (should be handled in Interpreter)`);
   },
   'cmd_draw': (ctx, args) => {
-    // Basic draw command that delegates to the backend executor
-    const targetId = args.target as string;
-    const vertexId = args.vertex as string;
-    const fragmentId = args.fragment as string;
-    const count = args.count as number;
-    const pipeline = args.pipeline as any;
-
-    // In Phase 2, this will also trigger the SoftwareRasterizer if ctx has it.
-    ctx.webGpuExec?.executeDraw(targetId, vertexId, fragmentId, count, pipeline);
+    throw new Error(`cmd_draw unhandled (should be handled in Interpreter)`);
   },
   'mat_extract': (ctx, args) => {
     const m = validateArg(args as any, 'mat', 'vector') as number[];
