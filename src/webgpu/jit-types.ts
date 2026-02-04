@@ -1,5 +1,5 @@
 import { RuntimeValue, ResourceState } from '../interpreter/context';
-import { WebGpuHost } from './webgpu-host';
+import { IGpuExecutor, WebGpuHost } from './webgpu-host';
 
 export interface JitContext {
   resources: Map<string, ResourceState>;
@@ -8,3 +8,4 @@ export interface JitContext {
 }
 
 export type CompiledTaskFunction = (ctx: JitContext) => Promise<RuntimeValue>;
+export type CompiledInitFunction = (device: GPUDevice) => Promise<IGpuExecutor>;

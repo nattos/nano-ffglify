@@ -1,7 +1,7 @@
 import { EvaluationContext, RuntimeValue } from '../interpreter/context';
 import { WebGpuExecutor } from './webgpu-executor';
 import { FunctionDef, IRDocument } from '../ir/types';
-import { CpuJitCompiler } from './cpu-jit';
+import { CompiledJitResult, CpuJitCompiler } from './cpu-jit';
 import { WebGpuHost } from './webgpu-host';
 
 /**
@@ -11,7 +11,7 @@ export class WebGpuHostExecutor {
   webGpuExec: WebGpuExecutor;
   ctx: EvaluationContext;
   jit: CpuJitCompiler;
-  compiledCache: Map<string, Function> = new Map();
+  compiledCache: Map<string, CompiledJitResult> = new Map(); // Stores JitResult
 
   constructor(ctx: EvaluationContext, webGpuExec: WebGpuExecutor) {
     this.ctx = ctx;
@@ -26,25 +26,16 @@ export class WebGpuHostExecutor {
       this.compiledCache.set(func.id, compiled);
     }
 
-    const hostGlobals = new WebGpuHost({
-      executeShader: async (targetId, dim, args) => {
-        const targetFunc = functions.find(f => f.id === targetId);
-        if (!targetFunc) throw new Error(`Shader '${targetId}' not found`);
-        await this.webGpuExec.executeShader(targetFunc, dim, args);
-      },
-      executeDraw: async (targetId, vertexId, fragmentId, count, pipeline) => {
-        const resources = Array.from(this.ctx.resources.values()).map(r => r.def);
-        await this.webGpuExec.executeDraw(targetId, vertexId, fragmentId, count, pipeline as any, resources as any);
-      }
-    }, this.ctx.resources as any, (resId, size, format) => {
-      this.ctx.logAction('resize', resId, { size, format });
-    }, (msg, payload) => {
-      this.ctx.logAction('log', msg, payload);
+    // Initialize the GPU executor structure for this specific graph
+    // compiled.init returns Promise<IGpuExecutor>
+    const gpuExecutor = await compiled.init(this.webGpuExec.device);
+    const webGpuHost = new WebGpuHost({
+      executor: gpuExecutor,
+      resources: this.ctx.resources,
     });
 
-    // Compiled signature: (resources, inputs, globals, variables)
-    // Compiled signature: (ctx)
-    return await compiled({ resources: this.ctx.resources, inputs: this.ctx.inputs, globals: hostGlobals });
+    // Run the task function with the initialized executor
+    return await compiled.task({ resources: this.ctx.resources, inputs: this.ctx.inputs, globals: webGpuHost });
   }
 
   destroy() {

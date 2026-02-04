@@ -5,8 +5,8 @@ import { RuntimeGlobals, RuntimeValue, RenderPipelineDef, ResourceState } from '
  * This allows the host to be decoupled from any specific executor implementation.
  */
 export interface IGpuExecutor {
-  executeShader(funcId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue>): Promise<void>;
-  executeDraw(targetId: string, vertexId: string, fragmentId: string, count: number, pipeline: RenderPipelineDef): Promise<void>;
+  executeShader(funcId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue>, resources: Map<string, ResourceState>): Promise<void>;
+  executeDraw(targetId: string, vertexId: string, fragmentId: string, count: number, pipeline: RenderPipelineDef, resources: Map<string, ResourceState>): Promise<void>;
 }
 
 /**
@@ -14,20 +14,31 @@ export interface IGpuExecutor {
  * Bridges the JIT-compiled CPU code with the GPU executor and resource state.
  */
 export class WebGpuHost implements RuntimeGlobals {
+  private executor;
+  private resources;
+  private onResizeCallback;
+  private logHandler;
+
   constructor(
-    // TODO: Remove all deps of the emitted code on our host's objects.
-    private executor: IGpuExecutor,
-    private resources: Map<string, ResourceState>,
-    private onResizeCallback?: (resId: string, size: number | number[], format?: string | number) => void,
-    private logHandler?: (message: string, payload?: any) => void
-  ) { }
+    init: {
+      executor: IGpuExecutor,
+      resources: Map<string, ResourceState>,
+      onResizeCallback?: (resId: string, size: number | number[], format?: string | number) => void,
+      logHandler?: (message: string, payload?: any) => void
+    }
+  ) {
+    this.executor = init.executor;
+    this.resources = init.resources;
+    this.onResizeCallback = init.onResizeCallback;
+    this.logHandler = init.logHandler;
+  }
 
   async dispatch(targetId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue>): Promise<void> {
-    await this.executor.executeShader(targetId, workgroups, args);
+    await this.executor.executeShader(targetId, workgroups, args, this.resources);
   }
 
   async draw(targetId: string, vertexId: string, fragmentId: string, vertexCount: number, pipeline: RenderPipelineDef): Promise<void> {
-    await this.executor.executeDraw(targetId, vertexId, fragmentId, vertexCount, pipeline);
+    await this.executor.executeDraw(targetId, vertexId, fragmentId, vertexCount, pipeline, this.resources);
   }
 
   resize(resId: string, size: number | number[], format?: string | number, clear?: any): void {
