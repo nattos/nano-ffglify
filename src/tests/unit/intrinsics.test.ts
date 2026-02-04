@@ -31,13 +31,13 @@ function getIntrinsics() {
   // Evaluate the code in a function context and return the functions we need
   const fn = new Function(...Object.keys(context), `
     ${intrinsicsCode}
-    return { _ensureGpuResource, _ensureGpuResource2, _buffer_store, _buffer_load, _createExecutor, _createExecutor2 };
+    return { _ensureGpuResource, _ensureGpuResource2, _buffer_store, _buffer_load, _createExecutor };
   `);
 
   return fn(...Object.values(context));
 }
 
-const { _ensureGpuResource, _ensureGpuResource2, _buffer_store, _buffer_load, _createExecutor, _createExecutor2 } = getIntrinsics();
+const { _ensureGpuResource, _ensureGpuResource2, _buffer_store, _buffer_load, _createExecutor } = getIntrinsics();
 
 describe('WebGPU Intrinsics', () => {
   let mockDevice: any;
@@ -343,106 +343,6 @@ describe('WebGPU Intrinsics', () => {
   });
 
   describe('_createExecutor', () => {
-    it('should create an executor object', () => {
-      const pipelines = new Map();
-      const pipelineMeta = new Map();
-      const renderPipelines = new Map();
-
-      const executor = _createExecutor(mockDevice, pipelines, pipelineMeta, renderPipelines);
-
-      expect(executor).toHaveProperty('executeShader');
-      expect(executor).toHaveProperty('executeDraw');
-    });
-
-    it('should execute compute shader with data bindings', async () => {
-      const pipelines = new Map([['func1', {
-        getBindGroupLayout: vi.fn().mockReturnValue({})
-      }]]);
-      const meta = {
-        inputBinding: 0,
-        inputLayout: {
-          totalSize: 16,
-          fields: [
-            { name: 'u_val', offset: 0, type: 'f32' }
-          ]
-        },
-        resourceBindings: {}
-      };
-      const pipelineMeta = new Map([['func1', meta]]);
-      const renderPipelines = new Map();
-
-      const executor = _createExecutor(mockDevice, pipelines, pipelineMeta, renderPipelines);
-      const resources = new Map();
-
-      await executor.executeShader('func1', [1, 1, 1], { u_val: 1.23 }, resources);
-
-      expect(mockDevice.createBuffer).toHaveBeenCalled(); // For indices/inputs
-      expect(mockQueue.writeBuffer).toHaveBeenCalled();
-      expect(mockDevice.createBindGroup).toHaveBeenCalled();
-    });
-
-    it('should flatten complex nested types in executeShader inputs', async () => {
-      const pipelines = new Map([['func1', {
-        getBindGroupLayout: vi.fn().mockReturnValue({})
-      }]]);
-
-      const meta = {
-        inputBinding: 0,
-        inputLayout: {
-          totalSize: 64,
-          fields: [
-            { name: 'u_struct', offset: 0, type: 'MyStruct' }
-          ]
-        },
-        structLayouts: {
-          'MyStruct': {
-            size: 64,
-            members: [
-              { name: 'v', offset: 0, type: 'vec4<f32>' },
-              { name: 'm', offset: 16, type: 'mat2x2<f32>' },
-              { name: 'a', offset: 32, type: 'f32[2]' }
-            ]
-          }
-        },
-        resourceBindings: {}
-      };
-
-      const pipelineMeta = new Map([['func1', meta]]);
-      const executor = _createExecutor(mockDevice, pipelines, pipelineMeta, new Map());
-
-      const inputs = {
-        u_struct: {
-          v: [1, 2, 3, 4],
-          m: [1, 0, 0, 1],
-          a: [10, 20]
-        }
-      };
-
-      await executor.executeShader('func1', [1, 1, 1], inputs, new Map());
-
-      expect(mockQueue.writeBuffer).toHaveBeenCalled();
-      const [, , bufferSource] = mockQueue.writeBuffer.mock.calls[0];
-
-      // bufferSource is an ArrayBuffer from the DataView
-      const view = new DataView(bufferSource instanceof ArrayBuffer ? bufferSource : bufferSource.buffer);
-
-      // Check vec4
-      expect(view.getFloat32(0, true)).toBe(1);
-      expect(view.getFloat32(12, true)).toBe(4);
-
-      // Check mat2x2 (offset 16)
-      // Column-major: m00 m01 m10 m11 -> wait, mat2x2 is 2 vec2s.
-      // Column stride is 8.
-      expect(view.getFloat32(16, true)).toBe(1);
-      expect(view.getFloat32(24, true)).toBe(0); // second column start
-
-      // Check array f32[2] (offset 32)
-      expect(view.getFloat32(32, true)).toBe(10);
-      expect(view.getFloat32(36, true)).toBe(20);
-    });
-  });
-
-  describe('_createExecutor2', () => {
     it('should execute compute shader with precomputed info', async () => {
       const meta: CompilationMetadata = {
         inputBinding: 0,
@@ -464,7 +364,7 @@ describe('WebGPU Intrinsics', () => {
         getBindGroupLayout: vi.fn().mockReturnValue({})
       }]]);
 
-      const executor = _createExecutor2(mockDevice, pipelines, precomputed, new Map());
+      const executor = _createExecutor(mockDevice, pipelines, precomputed, new Map());
       const resources = new Map();
 
       await executor.executeShader('func1', [1, 1, 1], { u_val: 1.23 }, resources);
@@ -508,7 +408,7 @@ describe('WebGPU Intrinsics', () => {
         getBindGroupLayout: vi.fn().mockReturnValue({})
       }]]);
 
-      const executor = _createExecutor2(mockDevice, pipelines, precomputed, new Map());
+      const executor = _createExecutor(mockDevice, pipelines, precomputed, new Map());
 
       const inputs = {
         u_struct: {
@@ -550,7 +450,7 @@ describe('WebGPU Intrinsics', () => {
         getBindGroupLayout: vi.fn().mockReturnValue({})
       }]]);
 
-      const executor = _createExecutor2(mockDevice, pipelines, precomputed, new Map());
+      const executor = _createExecutor(mockDevice, pipelines, precomputed, new Map());
 
       const inputs = {
         u_arr: [1.1, 2.2, 3.3]
@@ -585,7 +485,7 @@ describe('WebGPU Intrinsics', () => {
       const resInfo = precomputeResourceLayout(resDef);
       const resourceInfos = new Map([['buf1', resInfo]]);
 
-      const executor = _createExecutor2(mockDevice, pipelines, precomputed, new Map(), resourceInfos);
+      const executor = _createExecutor(mockDevice, pipelines, precomputed, new Map(), resourceInfos);
 
       const resState = {
         id: 'buf1',

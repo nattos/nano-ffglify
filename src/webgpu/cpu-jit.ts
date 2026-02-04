@@ -230,7 +230,7 @@ require('./intrinsics.js');
     });
 
     lines.push(`
-      return _createExecutor2(device, pipelines, precomputedInfos, renderPipelines, resourceInfos);
+      return _createExecutor(device, pipelines, precomputedInfos, renderPipelines, resourceInfos);
     `);
 
     return lines.join('\n');
