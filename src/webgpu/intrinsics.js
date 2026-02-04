@@ -78,7 +78,7 @@ const _quat_to_mat4 = (q) => {
     0, 0, 0, 1
   ];
 };
-const _getVar = (id) => {
-  if (inputs.has(id)) return inputs.get(id);
+const _getVar = (ctx, id) => {
+  if (ctx.inputs.has(id)) return ctx.inputs.get(id);
   throw new Error("Variable '" + id + "' is not defined");
 };

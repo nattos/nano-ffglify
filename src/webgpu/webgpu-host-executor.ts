@@ -43,8 +43,8 @@ export class WebGpuHostExecutor {
     });
 
     // Compiled signature: (resources, inputs, globals, variables)
-    // We use context resources, global inputs, and current frame variables
-    return await compiled(this.ctx.resources, this.ctx.inputs, hostGlobals);
+    // Compiled signature: (ctx)
+    return await compiled({ resources: this.ctx.resources, inputs: this.ctx.inputs, globals: hostGlobals });
   }
 
   destroy() {

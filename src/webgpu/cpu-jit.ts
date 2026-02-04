@@ -2,6 +2,7 @@ import { IRDocument, FunctionDef, Node, Edge } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
 // @ts-ignore
 import intrinsicsRaw from './intrinsics.js?raw';
+import { CompiledTaskFunction } from './jit-types';
 
 /**
  * CPU JIT Compiler for WebGPU Host
@@ -10,13 +11,13 @@ import intrinsicsRaw from './intrinsics.js?raw';
 export class CpuJitCompiler {
   private ir?: IRDocument;
 
-  compile(ir: IRDocument, entryPointId: string): Function {
+  compile(ir: IRDocument, entryPointId: string): CompiledTaskFunction {
     let body = this.compileToSource(ir, entryPointId);
     body = body.replace(`require('./intrinsics.js');`, intrinsicsRaw);
     // console.log(body);
     try {
       const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
-      return new AsyncFunction('resources', 'inputs', 'globals', body);
+      return new AsyncFunction('ctx', body);
     } catch (e) {
       console.error("JIT Compilation Failed:\n", body);
       // Log the full body for debugging ReferenceErrors
@@ -83,9 +84,9 @@ export class CpuJitCompiler {
     lines.push('// Entry Point');
     lines.push('const entryInputs = {};');
     for (const input of func.inputs) {
-      lines.push(`entryInputs['${input.id}'] = inputs.get('${input.id}');`);
+      lines.push(`entryInputs['${input.id}'] = ctx.inputs.get('${input.id}');`);
     }
-    lines.push(`return await ${funcName(func.id)}(entryInputs);`);
+    lines.push(`return await ${funcName(func.id)}(ctx, entryInputs);`);
 
     return lines.join('\n');
   }
@@ -95,7 +96,8 @@ export class CpuJitCompiler {
   }
 
   private emitFunction(f: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[]) {
-    lines.push(`async function ${funcName(f.id)}(args) {`);
+    lines.push(`async function ${funcName(f.id)}(ctx, args) {`);
+    lines.push(`  const { resources, inputs, globals } = ctx;`);
 
     // Unpack args into local vars
     for (const input of f.inputs) {
@@ -265,7 +267,7 @@ export class CpuJitCompiler {
         const dimCode = `[${dx === '0' ? 1 : dx}, ${dy === '0' ? 1 : dy}, ${dz === '0' ? 1 : dz}]`;
         lines.push(`${indent}await globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
       } else if (targetFunc) {
-        lines.push(`${indent}${nodeResId(node.id)} = await ${funcName(targetId)}(${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
+        lines.push(`${indent}${nodeResId(node.id)} = await ${funcName(targetId)}(ctx, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
       }
     }
     else if (node.op === 'cmd_draw') {
@@ -362,7 +364,7 @@ export class CpuJitCompiler {
         const varId = node['var'];
         if (func.localVars.some(v => v.id === varId)) return sanitizeId(varId, 'var');
         if (func.inputs.some(i => i.id === varId)) return sanitizeId(varId, 'input');
-        return `_getVar('${varId}')`;
+        return `_getVar(ctx, '${varId}')`;
       }
       case 'literal': return JSON.stringify(node['val']);
       case 'loop_index': return `loop_${node['loop'].replace(/[^a-zA-Z0-9_]/g, '_')}`;
