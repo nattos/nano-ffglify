@@ -98,7 +98,11 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
   ctx.pushFrame(entryPoint);
 
   if (results !== undefined && results !== null && results.result !== undefined) {
-    ctx.result = results.result;
+    let res = results.result;
+    if (res === 'NaN') res = NaN;
+    else if (res === 'Infinity') res = Infinity;
+    else if (res === '-Infinity') res = -Infinity;
+    ctx.result = res;
   }
 
   if (results && typeof results === 'object' && results.vars) {

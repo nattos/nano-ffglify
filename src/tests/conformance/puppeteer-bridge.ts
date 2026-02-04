@@ -86,6 +86,13 @@ import { WebGpuBackend } from './webgpu-backend';
     });
 
     results.log = ctx.log;
+
+    // Serialize result if it's a special float
+    if (typeof results.result === 'number') {
+      if (Number.isNaN(results.result)) results.result = 'NaN';
+      else if (results.result === Infinity) results.result = 'Infinity';
+      else if (results.result === -Infinity) results.result = '-Infinity';
+    }
   } catch (e: any) {
     console.error('[Bridge] Error serializing results:', e.message);
     throw e;
