@@ -93,6 +93,64 @@ const _ensureGpuResource = (device, state) => {
         usage: 0x1F // RENDER_ATTACHMENT | TEXTURE_BINDING | STORAGE_BINDING | COPY_SRC | COPY_DST
       });
     }
+
+    // Upload data if present
+    if (state.data) {
+      const w = state.width;
+      const h = state.height;
+      const format = state.def.format || 'rgba8unorm';
+
+      let data = null;
+      let bytesPerRow = 0;
+
+      if (format === 'rgba8' || format === 'rgba8unorm') {
+        // Expects 4 components per pixel, 0..1 float in state.data -> 0..255 byte
+        const raw = new Uint8Array(w * h * 4);
+        const src = state.data;
+        // Flatten
+        let ptr = 0;
+        // src can be flat or mixed? Test uses array of arrays for lines?
+        // Test: tex.data = [[r,g,b,a], ...] (Flat list of pixels? No, usually tex.data is flat array or array of pixels)
+        // Test uses: [[1,0,0,1], [0,1,0,1]..] which is Array<Array<number>>. Each inner array is a pixel.
+
+        if (Array.isArray(src)) {
+          src.forEach(p => {
+            if (Array.isArray(p)) {
+              raw[ptr++] = p[0] * 255;
+              raw[ptr++] = p[1] * 255;
+              raw[ptr++] = p[2] * 255;
+              raw[ptr++] = p[3] * 255;
+            } else {
+              raw[ptr++] = p * 255; // scalar? unlikely for rgba8
+            }
+          });
+        }
+        data = raw;
+        bytesPerRow = w * 4;
+      } else if (format === 'r32f') {
+        const raw = new Float32Array(w * h);
+        const src = state.data;
+        let ptr = 0;
+        if (Array.isArray(src)) {
+          src.forEach(p => {
+            if (Array.isArray(p)) raw[ptr++] = p[0];
+            else raw[ptr++] = p;
+          });
+        }
+        data = raw;
+        bytesPerRow = w * 4;
+      }
+      // TODO: other formats
+
+      if (data) {
+        device.queue.writeTexture(
+          { texture: state.gpuTexture },
+          data,
+          { bytesPerRow },
+          { width: w, height: h }
+        );
+      }
+    }
   } else {
     // Buffer
     // Calculate size in bytes. Assumes 4 bytes per element (float/int/uint).
@@ -370,7 +428,26 @@ const _createExecutor = (device, pipelines, pipelineMeta, renderPipelines) => {
           await staging.mapAsync(1); // READ
           const range = staging.getMappedRange();
           const data = new Float32Array(range);
-          state.data = Array.from(data).slice(0, state.width); // Truncate padding
+
+          // Restructure data based on type
+          const type = state.def.dataType || 'float';
+          const flat = Array.from(data);
+          let structured = flat;
+
+          if (type === 'float4' || type === 'vec4') {
+            structured = [];
+            for (let i = 0; i < state.width; i++) structured.push(flat.slice(i * 4, i * 4 + 4));
+          } else if (type === 'float3' || type === 'vec3') {
+            structured = [];
+            for (let i = 0; i < state.width; i++) structured.push(flat.slice(i * 4, i * 4 + 3));
+          } else if (type === 'float2' || type === 'vec2') {
+            structured = [];
+            for (let i = 0; i < state.width; i++) structured.push(flat.slice(i * 2, i * 2 + 2));
+          } else {
+            structured = flat.slice(0, state.width);
+          }
+
+          state.data = structured;
           staging.unmap();
           staging.destroy();
         }));
