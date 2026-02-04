@@ -152,11 +152,11 @@ require('./intrinsics.js');
     // Analyze graph for shader calls
     ir.functions.forEach(f => {
       f.nodes.forEach(n => {
-        if (n.op === 'call_func' && typeof n['func'] === 'string') {
+        if ((n.op === 'call_func' || n.op === 'cmd_dispatch') && typeof n['func'] === 'string') {
           const target = ir.functions.find(tf => tf.id === n['func']);
           if (target && target.type === 'shader') {
             if (!shaders.has(target.id)) {
-              const res = gen.compileFunctions(ir.functions, target.id, { stage: 'compute', inputBinding: 1 }, ir);
+              const res = gen.compile(ir, target.id, { stage: 'compute', inputBinding: 1 });
               shaders.set(target.id, { code: WgslGenerator.resolveImports(res), metadata: res.metadata });
             }
           }
@@ -165,8 +165,8 @@ require('./intrinsics.js');
           // For draw, we need unique pipeline keys
           const key = `${n['vertex']}|${n['fragment']}`;
           if (!renderPipelines.has(key)) {
-            const vsRes = gen.compileFunctions(ir.functions, n['vertex'], { stage: 'vertex', inputBinding: 1 }, ir);
-            const fsRes = gen.compileFunctions(ir.functions, n['fragment'], { stage: 'fragment', inputBinding: 1 }, ir);
+            const vsRes = gen.compile(ir, n['vertex'], { stage: 'vertex', inputBinding: 1 });
+            const fsRes = gen.compile(ir, n['fragment'], { stage: 'fragment', inputBinding: 1 });
             renderPipelines.set(key, {
               vsCode: WgslGenerator.resolveImports(vsRes),
               fsCode: WgslGenerator.resolveImports(fsRes),
@@ -194,7 +194,8 @@ require('./intrinsics.js');
       lines.push(`       compute: { module, entryPoint: 'main' }`);
       lines.push(`    });`);
       lines.push(`    pipelines.set('${id}', pipeline);`);
-      lines.push(`    pipelineMeta.set('${id}', ${JSON.stringify(data.metadata)});`);
+      const metaSafe = { ...data.metadata, resourceBindings: Object.fromEntries(data.metadata.resourceBindings) };
+      lines.push(`    pipelineMeta.set('${id}', ${JSON.stringify(metaSafe)});`);
       lines.push(`  }`);
     });
 
@@ -211,7 +212,8 @@ require('./intrinsics.js');
       lines.push(`        fragment: { module: fsModule, entryPoint: 'main', targets: [{ format: 'rgba8unorm' }] }`); // Format hardcoded for now
       lines.push(`     });`);
       lines.push(`     renderPipelines.set('${key}', pipeline);`);
-      lines.push(`     pipelineMeta.set('${key}', ${JSON.stringify(data.metadata)});`);
+      const metaSafe = { ...data.metadata, resourceBindings: Object.fromEntries(data.metadata.resourceBindings) };
+      lines.push(`     pipelineMeta.set('${key}', ${JSON.stringify(metaSafe)});`);
       lines.push(`  }`);
     });
 
@@ -862,5 +864,26 @@ require('./intrinsics.js');
 
       default: return '0';
     }
+  }
+
+  private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]): string {
+    const parts: string[] = [];
+    const targetId = node['func'];
+    const targetFunc = allFunctions.find(f => f.id === targetId);
+
+    if (targetFunc) {
+      targetFunc.inputs.forEach((input, idx) => {
+        let valExpr = '0';
+        if (node['args'] && node['args'][idx] !== undefined) valExpr = JSON.stringify(node['args'][idx]);
+        else valExpr = this.resolveArg(node, input.id, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        parts.push(`'${input.id}': ${valExpr}`);
+      });
+    } else {
+      for (const k in node) {
+        if (['id', 'op', 'metadata', 'const_data', 'func', 'args', 'dispatch'].includes(k)) continue;
+        parts.push(`'${k}': ${this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}`);
+      }
+    }
+    return `{ ${parts.join(', ')} }`;
   }
 }

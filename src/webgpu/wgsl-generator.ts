@@ -1448,8 +1448,7 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
     func.nodes.forEach(node => {
       if (node.op === 'buffer_load' || node.op === 'buffer_store') {
         if (node['buffer'] && resourceIds.has(node['buffer'] as string)) resources.add(node['buffer'] as string);
-      }
-      if (node.op === 'texture_load' || node.op === 'texture_store' || node.op === 'texture_sample') {
+      } else if (node.op === 'texture_load' || node.op === 'texture_store' || node.op === 'texture_sample') {
         if (node['tex'] && resourceIds.has(node['tex'] as string)) resources.add(node['tex'] as string);
       }
     });

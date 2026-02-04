@@ -51,6 +51,7 @@ export interface ResourceState {
   data?: any; // The raw data depending on type
   width: number;
   height: number;
+  // TODO: Properly document fields like `gpuBuffer`.
 }
 
 /**
