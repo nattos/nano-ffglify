@@ -8,6 +8,8 @@ export class UiViewport extends LitElement {
 
   @query('canvas') private canvas!: HTMLCanvasElement;
 
+  @state() private isDragging = false;
+
   private context: GPUCanvasContext | null = null;
   private unsubscribe: (() => void) | null = null;
 
@@ -30,6 +32,23 @@ export class UiViewport extends LitElement {
             height: 100%;
             display: block;
             image-rendering: pixelated;
+        }
+        .overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(16, 185, 129, 0.2);
+            border: 2px dashed var(--color-emerald-500);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-weight: bold;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .overlay.active {
+            opacity: 1;
         }
         .stats {
             position: absolute;
@@ -242,8 +261,12 @@ export class UiViewport extends LitElement {
     return html`
             <canvas
               @dragover=${this.handleDragOver}
+              @dragleave=${this.handleDragLeave}
               @drop=${this.handleDrop}
             ></canvas>
+            <div class="overlay ${this.isDragging ? 'active' : ''}">
+                Drop to Load Texture
+            </div>
             <div class="stats">
                 FPS: ${this.runtime?.fps.toFixed(1) || 0}<br>
                 Frame: ${this.runtime?.frameCount || 0}<br>
@@ -254,13 +277,19 @@ export class UiViewport extends LitElement {
 
   private handleDragOver(e: DragEvent) {
     e.preventDefault();
+    this.isDragging = true;
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'copy';
     }
   }
 
+  private handleDragLeave() {
+    this.isDragging = false;
+  }
+
   private handleDrop(e: DragEvent) {
     e.preventDefault();
+    this.isDragging = false;
     const file = e.dataTransfer?.files[0];
     if (file && this.runtime) {
       const textureInputs = this.runtime.getTextureInputIds();

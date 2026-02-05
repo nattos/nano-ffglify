@@ -13,7 +13,7 @@
  */
 import { FunctionDeclaration, SchemaType } from '@google/generative-ai';
 
-export type FieldType = 'string' | 'number' | 'boolean' | 'array' | 'object';
+export type FieldType = 'string' | 'number' | 'boolean' | 'array' | 'object' | 'any';
 
 export interface FieldSchema {
   type: FieldType;

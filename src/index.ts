@@ -15,6 +15,7 @@ import './views/components/ui-icon';
 import './views/components/ui-button';
 import './views/components/ui-ir-widget';
 import './views/components/ui-viewport';
+import './views/components/ui-inspector';
 
 import { MobxLitElement } from './views/mobx-lit-element';
 import { runInAction } from 'mobx';
@@ -34,6 +35,7 @@ export class App extends MobxLitElement {
   @state() scriptLogs: LLMLogEntry[] = [];
   @state() scriptFinalState: any = null;
   @state() runningScriptLine: number | null = null;
+  @state() isGlobalDragging = false;
   static readonly styles = [
     globalStyles,
     css`
@@ -190,6 +192,26 @@ export class App extends MobxLitElement {
         margin: 0.5rem 0;
         color: #666;
       }
+
+      .global-drop-zone {
+        position: absolute;
+        inset: 0;
+        background: rgba(16, 185, 129, 0.1);
+        border: 4px dashed var(--color-emerald-500);
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 2rem;
+        font-weight: bold;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .global-drop-zone.active {
+        opacity: 1;
+      }
     `
   ];
 
@@ -197,6 +219,43 @@ export class App extends MobxLitElement {
 
   async firstUpdated() {
     await this.runDemoScript();
+
+    // Global drag and drop setup
+    window.addEventListener('dragover', this.handleGlobalDragOver);
+    window.addEventListener('dragleave', this.handleGlobalDragLeave);
+    window.addEventListener('drop', this.handleGlobalDrop);
+  }
+
+  private handleGlobalDragOver = (e: DragEvent) => {
+    e.preventDefault();
+    this.isGlobalDragging = true;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  };
+
+  private handleGlobalDragLeave = (e: DragEvent) => {
+    // Only leave if we actually left the window
+    if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+      this.isGlobalDragging = false;
+    }
+  };
+
+  private handleGlobalDrop = (e: DragEvent) => {
+    e.preventDefault();
+    this.isGlobalDragging = false;
+    const file = e.dataTransfer?.files[0];
+    if (file) {
+      const ids = appController.runtime.getTextureInputIds();
+      if (ids.length > 0) {
+        appController.runtime.setTextureSource(ids[0], { type: 'file', value: file });
+      }
+    }
+  };
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    window.removeEventListener('dragover', this.handleGlobalDragOver);
+    window.removeEventListener('dragleave', this.handleGlobalDragLeave);
+    window.removeEventListener('drop', this.handleGlobalDrop);
   }
 
   async runDemoScript() {
@@ -385,42 +444,49 @@ export class App extends MobxLitElement {
         ` : ''}
 
         ${local.settings.activeTab === 'results' ? html`
-          <div class="results-view" style="display: flex; flex-direction: column; gap: 1rem; height: 100%; overflow: hidden;">
-            <ui-viewport .runtime=${appController.runtime} style="flex: 1; min-height: 300px;"></ui-viewport>
+          <div class="results-view" style="display: flex; flex-direction: row; height: 100%; overflow: hidden;">
+            <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #333;">
+                <ui-viewport .runtime=${appController.runtime} style="flex: 1; min-height: 300px;"></ui-viewport>
 
-            <div class="debug-panel" style="flex: 1; overflow: auto; border-top: 1px solid #333;">
-            <h3>IR Validation Errors</h3>
-            ${local.validationErrors.length === 0 ? html`<p>No errors found.</p>` : html`
-              <div class="errors-list">
-                ${local.validationErrors.map(err => html`
-                  <div class="error-item" style="color: ${err.severity === 'error' ? 'red' : 'orange'}; margin-bottom: 0.5rem;">
-                    [${err.severity.toUpperCase()}] ${err.nodeId ? html`Node <strong>${err.nodeId}</strong>: ` : ''} ${err.message}
+                <div class="debug-panel" style="flex: 1; overflow: auto; border-top: 1px solid #333;">
+                <h3>IR Validation Errors</h3>
+                ${local.validationErrors.length === 0 ? html`<p>No errors found.</p>` : html`
+                  <div class="errors-list">
+                    ${local.validationErrors.map(err => html`
+                      <div class="error-item" style="color: ${err.severity === 'error' ? 'red' : 'orange'}; margin-bottom: 0.5rem;">
+                        [${err.severity.toUpperCase()}] ${err.nodeId ? html`Node <strong>${err.nodeId}</strong>: ` : ''} ${err.message}
+                      </div>
+                    `)}
                   </div>
-                `)}
-              </div>
-            `}
+                `}
 
-            <hr/>
+                <hr/>
 
-            <h3>Compilation Results</h3>
-            ${!local.compilationResult ? html`<p>Not compiled yet.</p>` : html`
-              <div class="compilation-results">
-                <h4>JavaScript (CPU Host)</h4>
-                <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.js}</pre>
-                <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.jsInit}</pre>
+                <h3>Compilation Results</h3>
+                ${!local.compilationResult ? html`<p>Not compiled yet.</p>` : html`
+                  <div class="compilation-results">
+                    <h4>JavaScript (CPU Host)</h4>
+                    <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.js}</pre>
+                    <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.jsInit}</pre>
 
-                <h4>WGSL (GPU Shaders)</h4>
-                ${Object.entries(local.compilationResult.wgsl).map(([id, code]) => html`
-                  <div class="wgsl-block">
-                    <h5>Function: ${id}</h5>
-                    <pre style="background: #0f0f0f; padding: 0.5rem; overflow: auto; max-height: 300px;">${code}</pre>
+                    <h4>WGSL (GPU Shaders)</h4>
+                    ${Object.entries(local.compilationResult.wgsl).map(([id, code]) => html`
+                      <div class="wgsl-block">
+                        <h5>Function: ${id}</h5>
+                        <pre style="background: #0f0f0f; padding: 0.5rem; overflow: auto; max-height: 300px;">${code}</pre>
+                      </div>
+                    `)}
                   </div>
-                `)}
-              </div>
-            `}
+                `}
+                </div>
+            </div>
+            <ui-inspector .runtime=${appController.runtime}></ui-inspector>
           </div>
-        </div>
         ` : ''}
+      </div>
+
+      <div class="global-drop-zone ${this.isGlobalDragging ? 'active' : ''}">
+        Drop to Load into First Slot
       </div>
 
       <div class="chat-interface">

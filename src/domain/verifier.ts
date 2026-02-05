@@ -30,6 +30,10 @@ function validateField(value: any, schema: FieldSchema, path: string, errors: Va
   }
 
   // Type Check
+  if (schema.type === 'any') {
+    return; // Accept anything
+  }
+
   if (schema.type === 'array') {
     if (!Array.isArray(value)) {
       errors.push({ field: path, message: `Expected array at '${path}'`, severity: 'error' });
