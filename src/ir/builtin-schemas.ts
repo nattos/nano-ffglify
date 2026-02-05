@@ -140,7 +140,7 @@ export interface QuatRotateArgs { v: any; q: any;[key: string]: any; }
 export interface ConstGetArgs { name: string;[key: string]: any; }
 export interface LoopIndexArgs { loop: string;[key: string]: any; }
 export interface FlowBranchArgs { cond: any; exec_true: string; exec_false: string;[key: string]: any; }
-export interface CallFuncArgs { func: string;[key: string]: any; }
+export interface CallFuncArgs { func: string; args?: Record<string, any>; }
 export interface CmdResizeResourceArgs { resource: string; size: any; clear?: any;[key: string]: any; }
 export interface CmdSyncToCpuArgs { resource: string;[key: string]: any; }
 export interface CmdWaitCpuSyncArgs { resource: string;[key: string]: any; }
@@ -164,9 +164,15 @@ export interface MatUnaryArgs { val: any;[key: string]: any; }
 export interface QuatMulArgs { a: any; b: any;[key: string]: any; }
 export interface DynamicArgs { [key: string]: any; }
 
-export interface ArrayConstructArgs extends DynamicArgs {
+export interface StructConstructArgs { type: string; values?: Record<string, any>; }
+export interface CmdDispatchArgs { func: string; dispatch?: any; args?: Record<string, any>; }
+export interface CallFuncArgs { func: string; args?: Record<string, any>; }
+
+export interface ArrayConstructArgs {
   values?: any[];
   type?: string;
+  length?: number;
+  fill?: any;
 }
 
 // --- Math ---
@@ -302,8 +308,6 @@ export const VecMixDef = defineOp<VecMixArgs>({
 
 // --- Commands ---
 
-// --- Commands ---
-
 export interface CmdDrawArgs {
   target: string;
   vertex: string;
@@ -322,20 +326,6 @@ export const CmdDrawDef = defineOp<CmdDrawArgs>({
     count: { type: IntSchema, doc: "Number of vertices/indices to draw", refable: true },
     pipeline: { type: RenderPipelineSchema, doc: "Optional render pipeline state", optional: true }
   }
-});
-
-export interface CmdDispatchArgs { target: string; x: any; y: any; z: any;[key: string]: any; }
-export const CmdDispatchDef = defineOp<CmdDispatchArgs>({
-  doc: "Dispatch compute shader.",
-  args: {
-    target: { type: z.string(), doc: "ID of the compute function", requiredRef: true, optional: true, refType: 'func' },
-    func: { type: z.string(), doc: "Alias for target", optional: true, requiredRef: true, refType: 'func' },
-    x: { type: IntSchema, doc: "Group count X", refable: true, optional: true },
-    y: { type: IntSchema, doc: "Group count Y", refable: true, optional: true },
-    z: { type: IntSchema, doc: "Group count Z", refable: true, optional: true },
-    dispatch: { type: z.array(z.number()), doc: "Group counts [x, y, z]", optional: true, literalTypes: ['float3'] }
-  },
-  isDynamic: true
 });
 
 // --- Resources ---
@@ -635,7 +625,14 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'math_ldexp': defineOp<MathLdexpArgs>({ doc: "ldexp function", args: { val: { type: AnyData, doc: "Value", refable: true }, exp: { type: AnyData, doc: "Exponent", refable: true } } }),
 
   // Structs & Arrays
-  'struct_construct': defineOp<DynamicArgs>({ doc: "Construct struct", args: {}, isDynamic: true }),
+  'struct_construct': defineOp<StructConstructArgs>({
+    doc: "Construct struct",
+    args: {
+      type: { type: z.string(), doc: "Struct type", refType: 'struct' },
+      values: { type: z.any(), doc: "Struct fields", optional: true }
+    },
+    isDynamic: true
+  }),
   'struct_extract': StructExtractDef,
   'array_construct': defineOp<ArrayConstructArgs>({
     doc: "Construct array",
@@ -651,7 +648,15 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
 
   // Commands
   'cmd_draw': CmdDrawDef,
-  'cmd_dispatch': CmdDispatchDef,
+  'cmd_dispatch': defineOp<CmdDispatchArgs>({
+    doc: "Dispatch compute shader",
+    args: {
+      func: { type: z.string(), doc: "Shader function ID", requiredRef: true, refType: 'func' },
+      dispatch: { type: z.any(), doc: "Dispatch dimensions (vec3<u32> or scalar)", optional: true, refable: true },
+      args: { type: z.any(), doc: "Shader arguments", optional: true }
+    },
+    isDynamic: true
+  }),
   'cmd_resize_resource': defineOp<CmdResizeResourceArgs>({ doc: "Resize a resource", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' }, size: { type: AnyData, doc: "New size [w, h] or scalar", refable: true, literalTypes: ['float', 'int', 'float2'] }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
   'cmd_sync_to_cpu': defineOp<CmdSyncToCpuArgs>({ doc: "Initiate async readback", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' } } }),
   'cmd_wait_cpu_sync': defineOp<CmdWaitCpuSyncArgs>({ doc: "Wait for readback completion", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' } } }),
@@ -664,7 +669,14 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true, refType: 'loop' } } }),
   'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, exec_true: { type: z.string(), doc: "Node ID for true", requiredRef: true, optional: true, refType: 'exec' }, exec_false: { type: z.string(), doc: "Node ID for false", requiredRef: true, optional: true, refType: 'exec' } } }),
   'flow_loop': FlowLoopDef,
-  'call_func': defineOp<CallFuncArgs>({ doc: "Call a function", args: { func: { type: z.string(), doc: "Function ID", requiredRef: true, refType: 'func' } }, isDynamic: true }),
+  'call_func': defineOp<CallFuncArgs>({
+    doc: "Call a function",
+    args: {
+      func: { type: z.string(), doc: "Function ID", requiredRef: true, refType: 'func' },
+      args: { type: z.any(), doc: "Function arguments", optional: true }
+    },
+    isDynamic: true
+  }),
   'func_return': defineOp<FuncReturnArgs>({ doc: "Return from function", args: { val: { type: z.any(), doc: "Return value", optional: true, refable: true }, value: { type: z.any(), doc: "Return value (alias)", optional: true, refable: true } } }),
 };
 
@@ -746,9 +758,9 @@ export type OpArgs = {
   'math_frexp_mantissa': MathUnaryArgs;
   'math_frexp_exponent': MathUnaryArgs;
   'math_ldexp': MathLdexpArgs;
-  'struct_construct': DynamicArgs;
+  'struct_construct': StructConstructArgs;
   'struct_extract': StructExtractArgs;
-  'array_construct': DynamicArgs;
+  'array_construct': ArrayConstructArgs;
   'array_set': ArraySetArgs;
   'array_extract': ArrayExtractArgs;
   'array_length': { array: any;[key: string]: any; };

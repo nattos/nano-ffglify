@@ -1,6 +1,6 @@
 import { observable, makeObservable, action } from 'mobx';
 import { IRDocument } from '../ir/types';
-import { validateIR, ValidationError } from '../ir/validator';
+import { validateIR, LogicValidationError } from '../ir/validator';
 import { CpuJitCompiler, CompiledJitResult } from '../webgpu/cpu-jit';
 import { WgslGenerator } from '../webgpu/wgsl-generator';
 
@@ -19,7 +19,7 @@ export class ReplManager {
   public lastError: string | null = null;
 
   @observable
-  public validationErrors: ValidationError[] = [];
+  public validationErrors: LogicValidationError[] = [];
 
   @observable
   public currentArtifacts: CompilationArtifacts | null = null;
@@ -36,13 +36,13 @@ export class ReplManager {
    * If successful, it returns the artifacts (but DOES NOT swap them in automatically).
    */
   public async compile(ir: IRDocument): Promise<CompilationArtifacts | null> {
-    this.setValidationErrors([]);
+    this.setLogicValidationErrors([]);
     this.setLastError(null);
 
     // 1. Validate
     const errors = validateIR(ir);
     if (errors.length > 0) {
-      this.setValidationErrors(errors);
+      this.setLogicValidationErrors(errors);
       this.setLastError('Validation failed');
       return null;
     }
@@ -76,7 +76,7 @@ export class ReplManager {
   }
 
   @action
-  private setValidationErrors(errors: ValidationError[]) {
+  private setLogicValidationErrors(errors: LogicValidationError[]) {
     this.validationErrors = errors;
   }
 

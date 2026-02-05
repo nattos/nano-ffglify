@@ -40,56 +40,104 @@ export function verifyLiteralsOrRefsExist(
 
     // Optional argument handling
     if (value === undefined) {
-      // Check if there is an incoming edge for this port (data or execution)
       if (!argDef.optional) {
         errors.push(`Missing required argument '${key}'`);
       }
       continue;
     }
 
-    const isString = typeof value === 'string';
+    validateArg(key, value, argDef, errors, ir, func);
+  }
 
-    if (argDef.requiredRef) {
-      if (!isString) {
-        errors.push(`Argument '${key}' must be a reference (string), but got ${typeof value}`);
-      } else if (ir || func) {
-        if (!checkReferenceExists(value, ir, func)) {
-          errors.push(`Variable '${value}' is not defined`);
-        }
-      }
-    } else {
-      // It's either refable or a strict literal.
-      if (isString && argDef.refable) {
-        // It's a reference.
-        if (ir || func) {
-          if (!checkReferenceExists(value, ir, func)) {
-            errors.push(`Argument '${key}' references unknown ID '${value}'`);
-          }
-        }
-      } else {
-        // It's a literal value.
-        // We MUST validate the literal type if provided, OR if it's a strict literal.
-        if (argDef.literalTypes) {
-          const type = getLiteralType(value);
-          if (!matchesLiteralTypes(type, argDef.literalTypes)) {
-            errors.push(`Argument '${key}' has invalid literal type: expected one of [${argDef.literalTypes.join(', ')}], but got ${type}`);
-          }
-        } else if (!argDef.refable && isString) {
-          // Strict literal that doesn't allow strings, but got a string.
-          // EXCEPTION: If the literal type itself is a string, then it's fine.
-          const isActuallyStringLiteral = (argDef.literalTypes as any)?.includes('string') ||
-            (argDef.type instanceof z.ZodString) ||
-            (argDef.type instanceof z.ZodEnum);
-
-          if (!isActuallyStringLiteral) {
-            errors.push(`Argument '${key}' does not support references, but got string '${value}'`);
-          }
-        }
+  // Check for unexpected extra keys if NOT dynamic
+  if (!def.isDynamic) {
+    const internalKeys = ['op', 'id', 'metadata', 'type', 'comment', 'next', '_next', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', 'dataType'];
+    const definedKeys = Object.keys(def.args);
+    for (const key of Object.keys(nodeProps)) {
+      if (!internalKeys.includes(key) && !definedKeys.includes(key)) {
+        errors.push(`Unknown argument(s) '${key}' in operation '${op}'`);
       }
     }
   }
 
+  // Special handling for consolidated dynamic args: 'args' or 'values'
+  // If these exist and contain a dictionary, we should check their content for refs.
+  const dynamicKeys = ['args', 'values'];
+  for (const dKey of dynamicKeys) {
+    if (nodeProps[dKey] && typeof nodeProps[dKey] === 'object' && !Array.isArray(nodeProps[dKey])) {
+      const dict = nodeProps[dKey] as Record<string, unknown>;
+      for (const [key, val] of Object.entries(dict)) {
+        // Here we assume these are 'refable' by default as they are dynamic input args
+        if (typeof val === 'string' && (ir || func)) {
+          if (!checkReferenceExists(val, ir, func)) {
+            errors.push(`Argument '${key}' in '${dKey}' references unknown ID '${val}'`);
+          }
+        }
+      }
+    } else if (nodeProps[dKey] && Array.isArray(nodeProps[dKey])) {
+      // For array_construct values
+      const arr = nodeProps[dKey] as unknown[];
+      arr.forEach((val, idx) => {
+        if (typeof val === 'string' && (ir || func)) {
+          if (!checkReferenceExists(val, ir, func)) {
+            errors.push(`Element at index ${idx} in '${dKey}' references unknown ID '${val}'`);
+          }
+        }
+      });
+    }
+  }
+
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Inner validator for a single argument.
+ */
+function validateArg(
+  key: string,
+  value: unknown,
+  argDef: any,
+  errors: string[],
+  ir?: IRDocument,
+  func?: FunctionDef
+) {
+  const isString = typeof value === 'string';
+
+  if (argDef.requiredRef) {
+    if (!isString) {
+      errors.push(`Argument '${key}' must be a reference (string), but got ${typeof value}`);
+    } else if (ir || func) {
+      if (!checkReferenceExists(value, ir, func)) {
+        errors.push(`Variable '${value}' is not defined`);
+      }
+    }
+  } else {
+    // It's either refable or a strict literal.
+    if (isString && argDef.refable) {
+      // It's a reference.
+      if (ir || func) {
+        if (!checkReferenceExists(value, ir, func)) {
+          errors.push(`Argument '${key}' references unknown ID '${value}'`);
+        }
+      }
+    } else {
+      // It's a literal value.
+      if (argDef.literalTypes) {
+        const type = getLiteralType(value);
+        if (!matchesLiteralTypes(type, argDef.literalTypes)) {
+          errors.push(`Argument '${key}' has invalid literal type: expected one of [${argDef.literalTypes.join(', ')}], but got ${type}`);
+        }
+      } else if (!argDef.refable && isString) {
+        const isActuallyStringLiteral = (argDef.literalTypes as any)?.includes('string') ||
+          (argDef.type instanceof z.ZodString) ||
+          (argDef.type instanceof z.ZodEnum);
+
+        if (!isActuallyStringLiteral) {
+          errors.push(`Argument '${key}' does not support references, but got string '${value}'`);
+        }
+      }
+    }
+  }
 }
 
 /**

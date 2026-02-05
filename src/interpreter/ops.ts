@@ -910,15 +910,8 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   // Structs & Arrays
   // ----------------------------------------------------------------
   'struct_construct': (ctx, args) => {
-    // Return a copy of args as the struct, filtering out metadata
-    const out: Record<string, RuntimeValue> = {};
-    const ignore = ['op', 'id', 'metadata', 'type'];
-    for (const k in args) {
-      if (!ignore.includes(k)) {
-        out[k] = args[k];
-      }
-    }
-    return out;
+    const { type, values, ...rest } = args;
+    return { ...(values || {}), ...rest };
   },
 
   'struct_extract': (ctx, args) => {
@@ -931,12 +924,11 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   },
 
   'array_construct': (ctx, args) => {
-    if (args.values && Array.isArray(args.values)) {
-      return [...args.values];
+    if (args.values) return [...args.values];
+    if (args.length !== undefined) {
+      return new Array(args.length).fill(args.fill ?? 0);
     }
-    const len = args.length as number || 0;
-    const fill = args.fill ?? 0;
-    return new Array(len).fill(fill) as unknown as RuntimeValue;
+    return [];
   },
 
   'array_extract': (ctx, args) => {

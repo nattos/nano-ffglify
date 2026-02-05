@@ -78,16 +78,21 @@ export class InterpretedExecutor {
     if (opId === 'flow_branch' || opId === 'flow_loop') return;
 
     if (opId === 'cmd_dispatch') {
-      const args: Record<string, RuntimeValue> = {};
-      this.mixinNodeProperties(node, args, func, edges);
-      const targetId = (args.func || args.target || node.func || (node as any).target) as string;
+      const nodeProps: Record<string, RuntimeValue> = {};
+      this.mixinNodeProperties(node, nodeProps, func, edges);
+
+      const targetId = (nodeProps.func || nodeProps.target) as string;
+      const dispatchArgs = { ...nodeProps, ...(nodeProps.args as any || {}) };
+      const dimExpr = nodeProps.dispatch;
 
       const dim: [number, number, number] = [1, 1, 1];
-      if (Array.isArray(args.dispatch)) {
-        const d = args.dispatch as unknown as any[];
-        dim[0] = d[0] || 1;
-        dim[1] = d[1] || 1;
-        dim[2] = d[2] || 1;
+      if (Array.isArray(dimExpr)) {
+        const d = dimExpr as any[];
+        dim[0] = Number(d[0]) || 1;
+        dim[1] = Number(d[1]) || 1;
+        dim[2] = Number(d[2]) || 1;
+      } else if (typeof dimExpr === 'number') {
+        dim[0] = dimExpr;
       }
 
       const targetFunc = this.context.ir.functions.find(f => f.id === targetId);
@@ -96,7 +101,7 @@ export class InterpretedExecutor {
           for (let y = 0; y < dim[1]; y++) {
             for (let x = 0; x < dim[0]; x++) {
               this.context.builtins.set('global_invocation_id', [x, y, z]);
-              this.context.builtins.set('local_invocation_id', [x, y, z]); // For now 1:1 with global
+              this.context.builtins.set('local_invocation_id', [x, y, z]);
               this.context.builtins.set('workgroup_id', [0, 0, 0]);
               this.context.builtins.set('local_invocation_index', 0);
               this.context.builtins.set('num_workgroups', dim);
@@ -105,9 +110,8 @@ export class InterpretedExecutor {
               // Set arguments into the shader frame
               if (targetFunc.inputs) {
                 for (const inputDef of targetFunc.inputs) {
-                  const val = args[inputDef.id];
+                  const val = (dispatchArgs as any)[inputDef.id];
                   if (val !== undefined) {
-                    // String to shader error
                     if (typeof val === 'string') {
                       throw new Error(`Runtime Error: Cannot marshal string value "${val}" to shader non-string input '${inputDef.id}'`);
                     }
@@ -153,14 +157,15 @@ export class InterpretedExecutor {
         throw new Error(`Runtime Error: Recursion detected for function '${targetId}'`);
       }
 
-      const args: Record<string, RuntimeValue> = {};
-      this.mixinNodeProperties(node, args, func, edges);
+      const nodeProps: Record<string, RuntimeValue> = {};
+      this.mixinNodeProperties(node, nodeProps, func, edges);
+      const callArgs = { ...nodeProps, ...(nodeProps.args as any || {}) };
 
       this.context.pushFrame(targetId);
 
       if (targetFunc.inputs) {
         for (const inputDef of targetFunc.inputs) {
-          const val = args[inputDef.id];
+          const val = (callArgs as any)[inputDef.id];
           if (val !== undefined) {
             this.context.setVar(inputDef.id, val);
           }
@@ -301,25 +306,7 @@ export class InterpretedExecutor {
 
       const argDef = def?.args[key];
       if (argDef || def?.isDynamic) {
-        let finalVal = val;
-
-        // Surgical resolution:
-        // Only resolve strings if they are meant to be data (not var names, func names, etc.)
-        // and if they are not already node IDs in this function.
-        const refType = argDef?.refType || 'data';
-        if (typeof val === 'string' && refType === 'data' && !isNodeId(val)) {
-          const varVal = this.context.getVar(val);
-          if (varVal !== undefined) {
-            finalVal = varVal;
-          } else {
-            try {
-              finalVal = this.context.getInput(val);
-            } catch (e) {
-              // Not a var or input, keep as literal (might be node ID or other meta)
-            }
-          }
-        }
-        args[key] = finalVal;
+        args[key] = this.resolveLiteralValue(val, argDef?.refType || 'data', func);
       }
     }
 
@@ -336,25 +323,56 @@ export class InterpretedExecutor {
   }
 
   /**
-   * Helper to set value to a port, handling indexed notation (e.g. "values[0]")
-   * without using regex heuristics.
+   * Recursively resolve literal values, handling references inside dictionaries/arrays.
+   */
+  private resolveLiteralValue(val: any, refType: string, func: FunctionDef): any {
+    const isNodeId = (id: string) => func.nodes.some(n => n.id === id);
+
+    if (typeof val === 'string' && refType === 'data' && !isNodeId(val)) {
+      const varVal = this.context.getVar(val);
+      if (varVal !== undefined) return varVal;
+      try { return this.context.getInput(val); } catch (e) { }
+      return val;
+    }
+
+    if (Array.isArray(val)) {
+      return val.map(v => this.resolveLiteralValue(v, refType, func));
+    }
+
+    if (val !== null && typeof val === 'object') {
+      const out: any = {};
+      for (const [k, v] of Object.entries(val)) {
+        out[k] = this.resolveLiteralValue(v, refType, func);
+      }
+      return out;
+    }
+
+    return val;
+  }
+
+  /**
+   * Helper to set value to a port, handling indexed or nested notation (e.g. "args.x", "values[0]")
    */
   private assignValueToPort(args: Record<string, any>, port: string, value: any) {
-    if (port.endsWith(']')) {
-      const openIdx = port.indexOf('[');
-      if (openIdx !== -1) {
-        const key = port.substring(0, openIdx);
-        const indexStr = port.substring(openIdx + 1, port.length - 1);
-        const index = parseInt(indexStr, 10);
-
-        if (!isNaN(index)) {
-          if (!Array.isArray(args[key])) {
-            args[key] = [];
-          }
-          args[key][index] = value;
-          return;
+    if (port.includes('.') || port.includes('[')) {
+      const parts = port.split(/[\.\[\]]/).filter(p => p !== '');
+      let curr = args;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i];
+        const nextIsIndex = !isNaN(parseInt(parts[i + 1], 10));
+        if (curr[p] === undefined) {
+          curr[p] = nextIsIndex ? [] : {};
         }
+        curr = curr[p];
       }
+      const last = parts[parts.length - 1];
+      const lastIdx = parseInt(last, 10);
+      if (!isNaN(lastIdx)) {
+        curr[lastIdx] = value;
+      } else {
+        curr[last] = value;
+      }
+      return;
     }
 
     // Default: direct property assignment

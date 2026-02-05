@@ -620,7 +620,7 @@ export class WgslGenerator {
     } else if (node.op === 'call_func') {
       const targetFunc = ir.functions.find(f => f.id === node['func']);
       if (targetFunc) {
-        const args = targetFunc.inputs.map(inp => this.resolveArg(node, inp.id, func, options, ir, 'any', edges)).join(', ');
+        const args = targetFunc.inputs.map(inp => this.resolveArg(node, `args.${inp.id}`, func, options, ir, 'any', edges)).join(', ');
         if (targetFunc.outputs.length > 0) lines.push(`${indent}let v_${node.id} = ${node['func']}(${args});`);
         else lines.push(`${indent}${node['func']}(${args});`);
       }
@@ -679,6 +679,18 @@ export class WgslGenerator {
       lines.push(`${indent}if (u32(${idx}) < arrayLength(&${bufVar}.data)) {`);
       lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
       lines.push(`${indent}}`);
+    } else if (node.op === 'cmd_dispatch') {
+      const targetId = (node['func'] || node['target']) as string;
+      const targetFunc = ir.functions.find(f => f.id === targetId);
+      if (targetFunc) {
+        const dispatchArgs = targetFunc.inputs.map((inp: any) => this.resolveArg(node, `args.${inp.id}`, func, options, ir, 'any', edges)).join(', ');
+        const dimExpr = this.resolveArg(node, 'dispatch', func, options, ir, 'any', edges);
+        lines.push(`${indent}// Dispatch: ${targetId}(${dispatchArgs}) with dim ${dimExpr}`);
+        // Dispatch is a command, usually not emitted directly as code in the shader body
+        // but here we might be emitting a call if it's a nested dispatch (rare)
+        // or just a placeholder.
+        lines.push(`${indent}${targetId}(${dispatchArgs});`);
+      }
     } else {
       lines.push(`${indent}// Op: ${node.op}`);
     }
@@ -754,15 +766,24 @@ export class WgslGenerator {
 
     for (const k of keys) {
       let val: any = undefined;
-      if (node[k] !== undefined) {
-        val = node[k];
-      } else {
-        const match = k.match(/^(.+)\[(\d+)\]$/);
-        if (match) {
-          const baseKey = match[1];
-          const idx = parseInt(match[2], 10);
-          if (Array.isArray(node[baseKey])) val = node[baseKey][idx];
+
+      // Path resolution for consolidated args (e.g., "args.foo" or "values[0]")
+      if (k.includes('.') || k.includes('[')) {
+        const parts = k.split(/[\.\[\]]/).filter(p => p !== '');
+        let curr: any = node;
+        for (const p of parts) {
+          if (curr === undefined || curr === null) break;
+          curr = curr[p];
         }
+        val = curr;
+
+        // Fallback for transition: if args.FOO or values.FOO is missing, check top level FOO
+        if (val === undefined) {
+          if (k.startsWith('args.')) val = node[k.substring(5)];
+          else if (k.startsWith('values.')) val = node[k.substring(7)];
+        }
+      } else {
+        val = node[k];
       }
 
       if (val !== undefined) {
@@ -854,7 +875,7 @@ export class WgslGenerator {
     if (node.op === 'struct_construct') {
       const type = node['type'];
       const structDef = ir.structs?.find(s => s.id === type);
-      const args = structDef ? structDef.members.map(m => this.resolveArg(node, m.name, func, options, ir, 'any', edges)) : [];
+      const args = structDef ? structDef.members.map(m => this.resolveArg(node, `values.${m.name}`, func, options, ir, 'any', edges)) : [];
       return `${type}(${args.join(', ')})`;
     }
     if (node.op === 'array_construct') {
@@ -1397,7 +1418,12 @@ export class WgslGenerator {
 
       for (const [argName, argDef] of Object.entries(opDef.args)) {
         if (argDef.refType === 'resource') {
-          const resId = node[argName];
+          // Check top-level or consolidated 'args'
+          let resId = node[argName];
+          if (resId === undefined && node['args']) {
+            resId = node['args'][argName];
+          }
+
           if (typeof resId === 'string' && resourceIds.has(resId)) {
             resources.add(resId);
           }

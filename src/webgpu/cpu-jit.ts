@@ -377,27 +377,16 @@ require('./intrinsics.js');
 
   private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
     if (node.op === 'cmd_dispatch') {
-      const targetId = node['func'];
-      let dimCode: string;
-      if (Array.isArray(node['dispatch'])) {
-        dimCode = JSON.stringify(node['dispatch']);
-      } else {
-        const dx = this.resolveArg(node, 'x', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        const dy = this.resolveArg(node, 'y', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        const dz = this.resolveArg(node, 'z', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        dimCode = `[${dx === '0' ? 1 : dx}, ${dy === '0' ? 1 : dy}, ${dz === '0' ? 1 : dz}]`;
-      }
-      lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
+      const targetId = node['target'] || node['func'];
+      const dimExpr = this.resolveArg(node, 'dispatch', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimExpr}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
     }
     else if (node.op === 'call_func') {
       const targetId = node['func'];
       const targetFunc = allFunctions.find(f => f.id === targetId);
       if (targetFunc?.type === 'shader') {
-        const dx = this.resolveArg(node, 'x', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        const dy = this.resolveArg(node, 'y', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        const dz = this.resolveArg(node, 'z', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        const dimCode = `[${dx === '0' ? 1 : dx}, ${dy === '0' ? 1 : dy}, ${dz === '0' ? 1 : dz}]`;
-        lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimCode}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
+        const dimExpr = this.resolveArg(node, 'dispatch', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimExpr}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
       } else if (targetFunc) {
         lines.push(`${indent}${nodeResId(node.id)} = await ${funcName(targetId)}(ctx, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
       }
@@ -465,15 +454,28 @@ require('./intrinsics.js');
     }
 
     let val: any = undefined;
-    if (node[key] !== undefined || (key === 'val' && node['value'] !== undefined)) {
-      val = (node[key] !== undefined) ? node[key] : node['value'];
-    } else {
-      const match = key.match(/^(.+)\[(\d+)\]$/);
-      if (match) {
-        const baseKey = match[1];
-        const idx = parseInt(match[2], 10);
-        if (Array.isArray(node[baseKey])) val = node[baseKey][idx];
+    if (key.includes('.') || key.includes('[')) {
+      const parts = key.split(/[\.\[\]]/).filter(p => p !== '');
+      let curr: any = node;
+      for (const p of parts) {
+        if (curr === undefined || curr === null) break;
+        curr = curr[p];
       }
+      val = curr;
+
+      // Fallback for transition: if args.FOO or values.FOO is missing, check top-level FOO
+      if (val === undefined) {
+        if (key.startsWith('args.')) val = node[key.substring(5)];
+        else if (key.startsWith('values.')) val = node[key.substring(7)];
+        else if (key.startsWith('values[')) {
+          const match = key.match(/values\[(\d+)\]/);
+          if (match) val = node[match[1]]; // Old format might have used indices as keys or just array?
+          // Actually array_construct usually had values as an array.
+        }
+      }
+    } else {
+      val = node[key];
+      if (val === undefined && key === 'val') val = node['value'];
     }
 
     if (val !== undefined) {
@@ -504,8 +506,6 @@ require('./intrinsics.js');
         const varId = node['var'];
         if (func.localVars.some(v => v.id === varId)) return sanitizeId(varId, 'var');
         if (func.inputs.some(i => i.id === varId)) return sanitizeId(varId, 'input');
-        // Let validator catch this, or fail at runtime/execution meta-check?
-        // But for safe runtime behavior in case validator is skipped:
         return `((id) => { const v = ctx.inputs.get(id); if (v !== undefined) return v; throw new Error("Variable '" + id + "' is not defined"); })('${varId}')`;
       }
       case 'literal': return JSON.stringify(node['val']);
@@ -555,7 +555,6 @@ require('./intrinsics.js');
           const h = res.height;
 
           const getSample = (x, y) => {
-             // Safe Clamp for pixel access after wrapping normalized coords
              const sx = Math.max(0, Math.min(w - 1, x));
              const sy = Math.max(0, Math.min(h - 1, y));
              const val = res.data[sy * w + sx];
@@ -569,7 +568,6 @@ require('./intrinsics.js');
             return val !== undefined ? val : [0, 0, 0, 0];
           }
 
-          // Bilinear
           const tx = u * w - 0.5;
           const ty = v * h - 0.5;
           const x0 = Math.floor(tx);
@@ -577,7 +575,6 @@ require('./intrinsics.js');
           const fx = tx - x0;
           const fy = ty - y0;
 
-          // Helper to handle wrapping at the TEXEL level for neighborhood
           const getWrappedSample = (targetX, targetY) => {
              let sx = targetX;
              let sy = targetY;
@@ -628,7 +625,6 @@ require('./intrinsics.js');
         })('${resId}')`;
       }
 
-      // Basic Math (Unary)
       case 'math_neg': return `_applyUnary(${val()}, v => -v)`;
       case 'math_abs': return `_applyUnary(${val()}, Math.abs)`;
       case 'math_sign': return `_applyUnary(${val()}, Math.sign)`;
@@ -662,7 +658,6 @@ require('./intrinsics.js');
         return Math.floor(Math.log2(Math.abs(v))) + 1;
       })`;
 
-      // Basic Math (Binary)
       case 'math_add': return `_applyBinary(${a()}, ${b()}, (x, y) => x + y)`;
       case 'math_sub': return `_applyBinary(${a()}, ${b()}, (x, y) => x - y)`;
       case 'math_mul': return `_applyBinary(${a()}, ${b()}, (x, y) => x * y)`;
@@ -681,7 +676,6 @@ require('./intrinsics.js');
         const cVal = this.resolveArg(node, 'c', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `_applyBinary(_applyBinary(${a()}, ${b()}, (x, y) => x * y), ${cVal}, (x, y) => x + y)`;
       }
-
       case 'math_mix': {
         const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${a()}, ${b()}, ${t})`;
@@ -693,7 +687,6 @@ require('./intrinsics.js');
         return `((v, edge0, edge1) => _applyUnary(_applyBinary(_applyBinary(v, edge0, (x, e) => (x - e)), _applyBinary(edge1, edge0, (e1, e0) => (e1 - e0)), (n, d) => Math.max(0, Math.min(1, n / d))), t => t * t * (3 - 2 * t)))(${val()}, ${e0}, ${e1})`;
       }
 
-      // Matrix
       case 'mat_identity': {
         const size = Number(node['size'] || 4);
         const arr = new Array(size * size).fill(0);
@@ -712,7 +705,6 @@ require('./intrinsics.js');
         })(${m})`;
       }
 
-      // Color
       case 'color_mix': {
         const dst = a();
         const src = b();
@@ -733,18 +725,15 @@ require('./intrinsics.js');
         })(${dst}, ${src})`;
       }
 
-      // Vectors / Arrays
       case 'vec_get_element': return `(${this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}[${this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}])`;
       case 'vec_mix': {
         const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${a()}, ${b()}, ${t})`;
       }
 
-      // Constants
       case 'math_pi': return `Math.PI`;
       case 'math_e': return `Math.E`;
 
-      // Comparison
       case 'math_gt': return `_applyBinary(${a()}, ${b()}, (x, y) => x > y ? 1.0 : 0.0)`;
       case 'math_lt': return `_applyBinary(${a()}, ${b()}, (x, y) => x < y ? 1.0 : 0.0)`;
       case 'math_ge': return `_applyBinary(${a()}, ${b()}, (x, y) => x >= y ? 1.0 : 0.0)`;
@@ -752,23 +741,20 @@ require('./intrinsics.js');
       case 'math_eq': return `_applyBinary(${a()}, ${b()}, (x, y) => x === y ? 1.0 : 0.0)`;
       case 'math_neq': return `_applyBinary(${a()}, ${b()}, (x, y) => x !== y ? 1.0 : 0.0)`;
 
-      // Logic
       case 'math_and': return `_applyBinary(${a()}, ${b()}, (x, y) => (x && y) ? 1.0 : 0.0)`;
       case 'math_or': return `_applyBinary(${a()}, ${b()}, (x, y) => (x || y) ? 1.0 : 0.0)`;
       case 'math_xor': return `_applyBinary(${a()}, ${b()}, (x, y) => (x ^ y) ? 1.0 : 0.0)`;
       case 'math_not': return `_applyUnary(${val()}, v => (!v) ? 1.0 : 0.0)`;
 
-      // Casts
       case 'float': return `Number(${val()})`;
       case 'int': return `Math.trunc(${val()})`;
       case 'bool': return `Boolean(${val()})`;
       case 'static_cast_float': return `Number(${val()})`;
       case 'static_cast_int': return `(${val()} | 0)`;
       case 'mat_inverse': return a('val');
-      case 'static_cast_uint': return `Math.abs(Math.trunc(${val()}))`; // Simplification for Uint
+      case 'static_cast_uint': return `Math.abs(Math.trunc(${val()}))`;
       case 'static_cast_bool': return `Boolean(${val()})`;
 
-      // Vectors
       case 'float2': return `[${a('x')}, ${a('y')}]`;
       case 'float3': return `[${a('x')}, ${a('y')}, ${a('z')}]`;
       case 'float4': return `[${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}]`;
@@ -794,18 +780,14 @@ require('./intrinsics.js');
         return `[${idxs.map((i: number) => `${vec}[${i}]`).join(', ')}]`;
       }
 
-      // Structs
       case 'struct_construct': {
-        const parts = [];
-        for (const k in node) {
-          if (['id', 'op', 'metadata', 'type'].includes(k)) continue;
-          parts.push(`'${k}': ${this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}`);
-        }
+        const type = node['type'];
+        const structDef = this.ir?.structs?.find(s => s.id === type);
+        const parts = structDef ? structDef.members.map(m => `'${m.name}': ${this.resolveArg(node, `values.${m.name}`, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}`) : [];
         return `{ ${parts.join(', ')} }`;
       }
       case 'struct_extract': return `(${this.resolveArg(node, 'struct', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}['${node['field'] || node['member']}'])`;
 
-      // Arrays
       case 'array_construct': {
         const values = node['values'];
         if (Array.isArray(values)) {
@@ -814,13 +796,15 @@ require('./intrinsics.js');
         }
         const len = this.resolveArg(node, 'length', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         const fill = this.resolveArg(node, 'fill', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        return `new Array(${len}).fill(${fill})`;
+        if (len !== undefined && len !== 'undefined') {
+          return `new Array(${len}).fill(${fill ?? 0})`;
+        }
+        return `[]`;
       }
       case 'array_extract': return `${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}[${a('index')}]`;
       case 'array_length': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}.length)`;
       case 'array_set': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}[${a('index')}] = ${val('value')})`;
 
-      // Quaternions
       case 'quat': return `[${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}]`;
       case 'quat_identity': return `[0, 0, 0, 1]`;
       case 'quat_mul': return `_quat_mul(${a()}, ${b()})`;
@@ -849,23 +833,15 @@ require('./intrinsics.js');
   }
 
   private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]): string {
-    const parts: string[] = [];
-    const targetId = node['func'];
+    const targetId = (node['func'] || node['target']) as string;
     const targetFunc = allFunctions.find(f => f.id === targetId);
+    if (!targetFunc) return '{}';
 
-    if (targetFunc) {
-      targetFunc.inputs.forEach((input, idx) => {
-        let valExpr = '0';
-        if (node['args'] && node['args'][idx] !== undefined) valExpr = JSON.stringify(node['args'][idx]);
-        else valExpr = this.resolveArg(node, input.id, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        parts.push(`'${input.id}': ${valExpr}`);
-      });
-    } else {
-      for (const k in node) {
-        if (['id', 'op', 'metadata', 'func', 'args', 'dispatch'].includes(k)) continue;
-        parts.push(`'${k}': ${this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}`);
-      }
-    }
+    const parts: string[] = [];
+    targetFunc.inputs.forEach(input => {
+      const valExpr = this.resolveArg(node, `args.${input.id}`, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      parts.push(`'${input.id}': ${valExpr}`);
+    });
     return `{ ${parts.join(', ')} }`;
   }
 }

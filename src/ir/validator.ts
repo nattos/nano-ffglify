@@ -3,7 +3,7 @@ import { OpSignatures, OpSignature, ValidationType } from './signatures';
 import { OpSchemas } from './builtin-schemas';
 import { verifyLiteralsOrRefsExist } from './schema-verifier';
 
-import { TextureFormat, TextureFormatValues, PRIMITIVE_TYPES, Edge } from './types';
+import { TextureFormat, Edge } from './types';
 import { reconstructEdges } from './utils';
 
 // Local Error Type (Internal to logic validator, mapped by schema.ts)
@@ -109,49 +109,74 @@ const resolveNodeType = (
   const incomingEdges = edges.filter(e => e.to === nodeId && e.type === 'data');
   incomingEdges.forEach(edge => {
     const srcType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors, edges);
-    inputTypes[edge.portIn] = srcType;
+    const port = edge.portIn;
+    // Handle path resolution: if edge is to 'args.foo', update 'foo' in inputTypes
+    if (port.startsWith('args.')) {
+      inputTypes[port.substring(5)] = srcType;
+    } else if (port.startsWith('values.')) {
+      inputTypes[port.substring(7)] = srcType;
+    } else if (port.startsWith('values[')) {
+      // Just mark that we have some values if it's an array
+      inputTypes['values'] = 'array';
+    } else {
+      inputTypes[port] = srcType;
+    }
   });
 
   // 2. Gather Input Types from Literal Props
-  const reservedKeys = new Set(['id', 'op', 'metadata', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', '_next', 'next', 'type', 'dataType']);
-  Object.keys(node).forEach(key => {
-    if (reservedKeys.has(key)) return;
-    if (inputTypes[key]) return; // Already from edge
+  const reservedKeys = new Set(['id', 'op', 'metadata', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', '_next', 'next', 'type', 'dataType', 'args', 'values']);
 
-    const val = node[key];
-    if (val !== undefined) {
-      if (Array.isArray(val)) {
-        if (val.length === 2) inputTypes[key] = 'float2';
-        else if (val.length === 3) inputTypes[key] = 'float3';
-        else if (val.length === 4) inputTypes[key] = 'float4';
-        else if (val.length === 9) inputTypes[key] = 'float3x3';
-        else if (val.length === 16) inputTypes[key] = 'float4x4';
-        else inputTypes[key] = 'array';
-      } else if (typeof val === 'number') {
-        inputTypes[key] = 'float';
-      } else if (typeof val === 'boolean') {
-        inputTypes[key] = 'boolean';
-      } else if (typeof val === 'string') {
-        const refNode = func.nodes.find(n => n.id === val);
-        const refInput = func.inputs.find(i => i.id === val);
-        const refGlobal = doc.inputs.find(i => i.id === val);
+  const processArg = (key: string, val: any) => {
+    if (inputTypes[key]) return;
+    if (val === undefined) return;
 
-        // Properties that are NAMES, not DATA references
-        const nameProperties = ['var', 'buffer', 'tex', 'resource', 'field', 'loop', 'name', 'func', 'member', 'channels', 'swizzle', 'target', 'vertex', 'fragment', 'mask', 'type', 'dataType'];
-        const isNameProperty = nameProperties.includes(key);
+    if (Array.isArray(val)) {
+      if (val.length === 2) inputTypes[key] = 'float2';
+      else if (val.length === 3) inputTypes[key] = 'float3';
+      else if (val.length === 4) inputTypes[key] = 'float4';
+      else if (val.length === 9) inputTypes[key] = 'float3x3';
+      else if (val.length === 16) inputTypes[key] = 'float4x4';
+      else inputTypes[key] = 'array';
+    } else if (typeof val === 'number') {
+      inputTypes[key] = 'float';
+    } else if (typeof val === 'boolean') {
+      inputTypes[key] = 'boolean';
+    } else if (typeof val === 'string') {
+      const refNode = func.nodes.find(n => n.id === val);
+      const refInput = func.inputs.find(i => i.id === val);
+      const refGlobal = doc.inputs.find(i => i.id === val);
 
-        if (refNode && !isNameProperty) {
-          inputTypes[key] = resolveNodeType(val, func, doc, cache, resourceIds, errors, edges);
-        } else if (refInput && !isNameProperty) {
-          inputTypes[key] = refInput.type as ValidationType;
-        } else if (refGlobal && !isNameProperty) {
-          inputTypes[key] = refGlobal.type as ValidationType;
-        } else {
-          inputTypes[key] = 'string';
-        }
+      const nameProperties = ['var', 'buffer', 'tex', 'resource', 'field', 'loop', 'name', 'func', 'member', 'channels', 'swizzle', 'target', 'vertex', 'fragment', 'mask', 'type', 'dataType'];
+      const isNameProperty = nameProperties.includes(key);
+
+      if (refNode && !isNameProperty) {
+        inputTypes[key] = resolveNodeType(val, func, doc, cache, resourceIds, errors, edges);
+      } else if (refInput && !isNameProperty) {
+        inputTypes[key] = refInput.type as ValidationType;
+      } else if (refGlobal && !isNameProperty) {
+        inputTypes[key] = refGlobal.type as ValidationType;
+      } else {
+        inputTypes[key] = 'string';
       }
     }
+  };
+
+  Object.keys(node).forEach(key => {
+    if (reservedKeys.has(key)) return;
+    processArg(key, node[key]);
   });
+
+  // Handle consolidated args/values in literals
+  if (node['args'] && typeof node['args'] === 'object' && !Array.isArray(node['args'])) {
+    Object.entries(node['args']).forEach(([k, v]) => processArg(k, v));
+  }
+  if (node['values'] && typeof node['values'] === 'object') {
+    if (Array.isArray(node['values'])) {
+      inputTypes['values'] = 'array';
+    } else {
+      Object.entries(node['values']).forEach(([k, v]) => processArg(k, v));
+    }
+  }
 
   // 3. New Zod Schema Validation
   const zodSchema = OpSchemas[node.op as BuiltinOp];
@@ -470,9 +495,6 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       }
     }
 
-
-
-
     // Forbidden Ops in Shader Context
     if (func.type !== 'cpu') {
       const forbiddenOps = ['cmd_dispatch', 'cmd_draw', 'cmd_resize_resource'];
@@ -486,7 +508,12 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
     }
 
     if (node.op.startsWith('buffer_') || node.op.startsWith('texture_') || node.op === 'cmd_resize_resource') {
-      const resId = node['buffer'] || node['tex'] || node['resource'];
+      let resId = node['buffer'] || node['tex'] || node['resource'];
+      // Fallback for consolidated args
+      if (resId === undefined && node['args']) {
+        resId = node['args']['buffer'] || node['args']['tex'] || node['args']['resource'];
+      }
+
       if (typeof resId === 'string' && !resourceIds.has(resId)) {
         errors.push({ nodeId: node.id, message: `Referenced resource '${resId}' not found`, severity: 'error' });
       } else if (typeof resId === 'string') {

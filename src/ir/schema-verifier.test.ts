@@ -105,4 +105,37 @@ describe('Schema Verifier', () => {
       expect(isArgumentAReference('literal', 'val', 'any_string')).toBe(false);
     });
   });
+
+  describe('Dynamic Ops Structure (Target)', () => {
+    it('should validate call_func with arguments in an "args" field', () => {
+      // This represents the new desired structure
+      const node = {
+        id: 'n1',
+        op: 'call_func',
+        func: 'my_func',
+        args: {
+          x: 5,
+          y: 'other_node'
+        }
+      };
+      const result = verifyLiteralsOrRefsExist(node as any);
+      // This will fail until we update the schema
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should fail call_func if arguments are at the top level (after refactor)', () => {
+      // This represents the OLD structure which we want to discourage/forbid
+      const node = {
+        id: 'n1',
+        op: 'call_func',
+        func: 'my_func',
+        x: 5 // Top-level arg
+      };
+      const result = verifyLiteralsOrRefsExist(node as any);
+      // After refactor, this should probably be invalid OR at least ignored.
+      // If we remove isDynamic: true and just have an 'args' field, it will fail validation.
+      expect(result.valid).toBe(false);
+    });
+  });
 });
