@@ -1,5 +1,6 @@
 
-import { FunctionDef, Node, Edge, DataType, ResourceDef, IRDocument, StructDef } from '../ir/types';
+import { FunctionDef, Node, Edge, DataType, ResourceDef, IRDocument, StructDef, BuiltinOp } from '../ir/types';
+import { OpDefs } from '../ir/builtin-schemas';
 import { reconstructEdges } from '../ir/utils';
 import { ShaderLayout, BufferBlockLayout, StructLayoutInfo } from './shader-layout';
 // @ts-ignore
@@ -1457,15 +1458,21 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
     const resources = new Set<string>();
     const allResources = Array.isArray(ir) ? ir : [...(ir.resources || []), ...ir.inputs];
     const resourceIds = new Set(allResources.map(r => r.id));
+
     func.nodes.forEach(node => {
-      if (node.op === 'buffer_load' || node.op === 'buffer_store') {
-        if (node['buffer'] && resourceIds.has(node['buffer'] as string)) resources.add(node['buffer'] as string);
-      } else if (node.op === 'texture_load' || node.op === 'texture_store' || node.op === 'texture_sample') {
-        if (node['tex'] && resourceIds.has(node['tex'] as string)) resources.add(node['tex'] as string);
-      } else if (node.op === 'resource_get_size' || node.op === 'resource_get_format') {
-        if (node['resource'] && resourceIds.has(node['resource'] as string)) resources.add(node['resource'] as string);
+      const opDef = OpDefs[node.op as BuiltinOp];
+      if (!opDef) return;
+
+      for (const [argName, argDef] of Object.entries(opDef.args)) {
+        if (argDef.refType === 'resource') {
+          const resId = node[argName];
+          if (typeof resId === 'string' && resourceIds.has(resId)) {
+            resources.add(resId);
+          }
+        }
       }
     });
+
     return resources;
   }
 
