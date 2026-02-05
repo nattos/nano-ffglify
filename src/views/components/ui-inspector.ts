@@ -68,12 +68,12 @@ export class UiInspector extends MobxLitElement {
     /* Range/Slider Styles */
     input[type="range"] {
       width: 100%;
-      height: 4px;
-      background: #333;
-      border-radius: 2px;
+      height: 24px; /* Expanded hit area */
+      background: transparent; /* Remove default background */
       appearance: none;
       outline: none;
-      margin: 0.5rem 0;
+      margin: 0;
+      cursor: pointer;
     }
 
     input[type="range"]::-webkit-slider-runnable-track {
@@ -89,11 +89,14 @@ export class UiInspector extends MobxLitElement {
       background: var(--color-emerald-500, #10b981);
       border-radius: 50%;
       cursor: pointer;
-      transition: transform 0.1s ease;
+      margin-top: -4px; /* Center thumb on track (track is 4px, thumb is 12px) */
+      transition: transform 0.1s ease, box-shadow 0.2s;
+      border: none;
     }
 
     input[type="range"]::-webkit-slider-thumb:hover {
       transform: scale(1.2);
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
     }
 
     /* Texture Slot Styles */
