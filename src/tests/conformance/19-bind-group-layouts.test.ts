@@ -25,7 +25,7 @@ describe('Conformance: Bind Group Layouts', () => {
           type: 'buffer',
           dataType: 'float',
           size: { mode: 'fixed', value: 3 },
-          persistence: { retain: false }
+          persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false }
         }
       ],
       structs: [],
@@ -72,9 +72,9 @@ describe('Conformance: Bind Group Layouts', () => {
       entryPoint: 'main',
       inputs: [],
       resources: [
-        { id: 'b_used', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 1 }, persistence: { retain: false } },
-        { id: 'b_unused', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 1 }, persistence: { retain: false } },
-        { id: 't_unused', type: 'texture2d', format: TextureFormat.RGBA8, size: { mode: 'fixed', value: [4, 4] }, persistence: { retain: false } }
+        { id: 'b_used', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 1 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } },
+        { id: 'b_unused', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 1 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } },
+        { id: 't_unused', type: 'texture2d', format: TextureFormat.RGBA8, size: { mode: 'fixed', value: [4, 4] }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
       ],
       structs: [],
       functions: [
@@ -118,7 +118,7 @@ describe('Conformance: Bind Group Layouts', () => {
       entryPoint: 'main',
       inputs: [],
       resources: [
-        { id: 'b_res', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 1 }, persistence: { retain: false } }
+        { id: 'b_res', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 1 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
       ],
       structs: [],
       functions: [
@@ -150,5 +150,48 @@ describe('Conformance: Bind Group Layouts', () => {
       const res = ctx.getResource('b_res');
       expect(res.data?.[0]).toBe(789);
     }, backends);
+    // 4. resource_get_size Bindings
+    describe('resource_get_size Bindings', () => {
+      const ir: IRDocument = {
+        version: '3.0.0',
+        meta: { name: 'Resource Get Size' },
+        entryPoint: 'main',
+        inputs: [],
+        resources: [
+          { id: 'b_test', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 42 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } },
+          { id: 'b_output', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 1 }, persistence: { retain: false, clearOnResize: false, clearEveryFrame: false, cpuAccess: false } }
+        ],
+        structs: [],
+        functions: [
+          {
+            id: 'main',
+            type: 'cpu',
+            inputs: [],
+            outputs: [],
+            localVars: [],
+            nodes: [
+              { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1] }
+            ]
+          },
+          {
+            id: 'shader_main',
+            type: 'shader',
+            inputs: [],
+            outputs: [],
+            localVars: [],
+            nodes: [
+              { id: 'size_vec', op: 'resource_get_size', resource: 'b_test' },
+              { id: 'size_x', op: 'vec_get_element', vec: 'size_vec', index: 0 },
+              { id: 's0', op: 'buffer_store', buffer: 'b_output', index: 0, value: 'size_x' }
+            ]
+          }
+        ]
+      };
+
+      runFullGraphTest('properly binds resource touched only by get_size', ir, (ctx) => {
+        const res = ctx.getResource('b_output');
+        expect(res.data?.[0]).toBe(42);
+      }, backends);
+    });
   });
 });

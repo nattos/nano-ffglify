@@ -1462,6 +1462,8 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
         if (node['buffer'] && resourceIds.has(node['buffer'] as string)) resources.add(node['buffer'] as string);
       } else if (node.op === 'texture_load' || node.op === 'texture_store' || node.op === 'texture_sample') {
         if (node['tex'] && resourceIds.has(node['tex'] as string)) resources.add(node['tex'] as string);
+      } else if (node.op === 'resource_get_size' || node.op === 'resource_get_format') {
+        if (node['resource'] && resourceIds.has(node['resource'] as string)) resources.add(node['resource'] as string);
       }
     });
     return resources;
