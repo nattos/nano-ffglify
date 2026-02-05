@@ -45,7 +45,6 @@ export interface CompilationResult {
 }
 
 export class WgslGenerator {
-  private helpers = new Set<string>();
   private allUsedBuiltins = new Set<string>();
 
   /**
@@ -61,7 +60,6 @@ export class WgslGenerator {
     if (!entryFunc) throw new Error(`Entry point function '${entryPointId}' not found`);
     options.entryPointId = entryPointId;
 
-    this.helpers.clear();
     this.allUsedBuiltins.clear();
 
     const fullIr: IRDocument = {
@@ -232,13 +230,7 @@ export class WgslGenerator {
     }
     if (options.resourceBindings && options.resourceBindings.size > 0) finalLines.push('');
 
-    // Add injected helpers
-    this.addHelper('#import "intrinsics.wgsl"');
-    if (this.helpers.size > 0) {
-      finalLines.push('// Injected Helpers');
-      this.helpers.forEach(h => finalLines.push(h));
-      finalLines.push('');
-    }
+    // 2.5. Inputs Buffer
 
     // Global built-ins
     const builtins = ['global_invocation_id', 'local_invocation_id', 'workgroup_id', 'local_invocation_index', 'num_workgroups', 'position', 'frag_coord', 'front_facing', 'sample_index', 'vertex_index', 'instance_index'];
@@ -322,9 +314,7 @@ export class WgslGenerator {
     return this.compileFunctions(ir.functions, entryPointId, options, ir);
   }
 
-  private addHelper(code: string) {
-    this.helpers.add(code);
-  }
+
 
   private emitTextureSamplers(lines: string[], options: WgslOptions, ir: IRDocument, usedResources: Set<string>) {
     if (!options.resourceDefs) return;
@@ -914,17 +904,6 @@ export class WgslGenerator {
         // Components
         return `vec4<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'w', func, options, ir, 'float', edges)}))`;
       } else {
-        // Axis-Angle
-        // q = [sin(angle/2)*axis, cos(angle/2)]
-        // We'll use a helper for clarity or inline it? A helper is safer.
-        this.addHelper(`
-fn quat_from_axis_angle(axis: vec3<f32>, angle: f32) -> vec4<f32> {
-  let half_angle = angle * 0.5;
-  let s = sin(half_angle);
-  let c = cos(half_angle);
-  return vec4<f32>(axis * s, c);
-}
-`);
         const axis = this.resolveArg(node, 'axis', func, options, ir, 'float3', edges);
         const angle = this.resolveArg(node, 'angle', func, options, ir, 'float', edges);
         return `quat_from_axis_angle(${axis}, ${angle})`;
@@ -934,64 +913,22 @@ fn quat_from_axis_angle(axis: vec3<f32>, angle: f32) -> vec4<f32> {
       return `vec4<f32>(0.0, 0.0, 0.0, 1.0)`;
     }
     if (node.op === 'quat_mul') {
-      this.addHelper(`
-fn quat_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
-  return vec4<f32>(
-    a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
-    a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-    a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
-    a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
-  );
-}
-`);
       const a = this.resolveArg(node, 'a', func, options, ir, 'float4', edges);
       const b = this.resolveArg(node, 'b', func, options, ir, 'float4', edges);
       return `quat_mul(${a}, ${b})`;
     }
     if (node.op === 'quat_slerp') {
-      this.addHelper(`
-fn quat_slerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
-  let cos_half_theta = dot(a, b);
-  if (abs(cos_half_theta) >= 1.0) { return a; }
-  let sin_half_theta = sqrt(1.0 - cos_half_theta * cos_half_theta);
-  if (abs(sin_half_theta) < 0.001) { return vec4<f32>((1.0 - t) * a + t * b); }
-  let half_theta = acos(cos_half_theta);
-  let ratio_a = sin((1.0 - t) * half_theta) / sin_half_theta;
-  let ratio_b = sin(t * half_theta) / sin_half_theta;
-  return ratio_a * a + ratio_b * b;
-}
-`);
       const a = this.resolveArg(node, 'a', func, options, ir, 'float4', edges);
       const b = this.resolveArg(node, 'b', func, options, ir, 'float4', edges);
       const t = this.resolveArg(node, 't', func, options, ir, 'float', edges);
       return `quat_slerp(${a}, ${b}, ${t})`;
     }
     if (node.op === 'quat_rotate') {
-      this.addHelper(`
-fn quat_rotate(v: vec3<f32>, q: vec4<f32>) -> vec3<f32> {
-  let t = 2.0 * cross(q.xyz, v);
-  return v + q.w * t + cross(q.xyz, t);
-}
-`);
       const v = this.resolveArg(node, 'v', func, options, ir, 'float3', edges);
       const q = this.resolveArg(node, 'q', func, options, ir, 'float4', edges);
       return `quat_rotate(${v}, ${q})`;
     }
     if (node.op === 'quat_to_float4x4' || node.op === 'quat_to_mat4') { // Handle alias
-      this.addHelper(`
-fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
-  let x2 = q.x + q.x; let y2 = q.y + q.y; let z2 = q.z + q.z;
-  let xx = q.x * x2; let xy = q.x * y2; let xz = q.x * z2;
-  let yy = q.y * y2; let yz = q.y * z2; let zz = q.z * z2;
-  let wx = q.w * x2; let wy = q.w * y2; let wz = q.w * z2;
-  return mat4x4<f32>(
-    1.0 - (yy + zz), xy + wz, xz - wy, 0.0,
-    xy - wz, 1.0 - (xx + zz), yz + wx, 0.0,
-    xz + wy, yz - wx, 1.0 - (xx + yy), 0.0,
-    0.0, 0.0, 0.0, 1.0
-  );
-}
-`);
       const q = this.resolveArg(node, 'q', func, options, ir, 'float4', edges);
       return `quat_to_mat4(${q})`;
     }
@@ -1021,11 +958,6 @@ fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
       return `${type}(${bufVar}.data[u32(${idx})])`;
     }
     if (node.op === 'color_mix') {
-      this.addHelper(`fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let outA = src.a + dst.a * (1.0 - src.a);
-  if (outA < 1e-6) { return vec4<f32>(0.0); }
-  return vec4<f32>((src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / outA, outA);
-}`);
       return `color_mix_impl(${this.resolveArg(node, 'a', func, options, ir, 'float4', edges)}, ${this.resolveArg(node, 'b', func, options, ir, 'float4', edges)})`;
     }
     if (node.op === 'vec_swizzle') {
