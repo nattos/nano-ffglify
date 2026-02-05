@@ -3,7 +3,7 @@ import intrinsicsRaw from './intrinsics.js?raw';
 
 import { IRDocument, FunctionDef, Node, Edge } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
-import { WgslGenerator } from './wgsl-generator';
+import { CompilationMetadata, WgslGenerator } from './wgsl-generator';
 import { CompiledTaskFunction, CompiledInitFunction } from './jit-types';
 import { precomputeShaderInfo, precomputeResourceLayout } from './precompute';
 
@@ -142,8 +142,8 @@ require('./intrinsics.js');
     // The latter is better as it keeps the generated JS dependency-free.
 
     // 1. Identify all shaders
-    const shaders = new Map<string, any>(); // id -> { code, metadata }
-    const renderPipelines = new Map<string, any>(); // key -> { codePair, metadata }
+    const shaders = new Map<string, { code: string; metadata: CompilationMetadata }>();
+    const renderPipelines = new Map<string, { vsCode: string, fsCode: string, metadata: CompilationMetadata, vertexId: Node }>();
 
     // We use WgslGenerator to generate WGSL strings at compile time.
     const gen = new WgslGenerator();
