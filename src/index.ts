@@ -220,6 +220,10 @@ export class App extends MobxLitElement {
   async firstUpdated() {
     await this.runDemoScript();
 
+    // Wait for settings and DB to load, then restore transport
+    await appState.initialized;
+    await appController.restoreTransportState();
+
     // Global drag and drop setup
     window.addEventListener('dragover', this.handleGlobalDragOver);
     window.addEventListener('dragleave', this.handleGlobalDragLeave);
@@ -342,20 +346,19 @@ export class App extends MobxLitElement {
         <div class="title">Nano FFGLify</div>
         <div class="controls">
           <div class="tabs">
-            <div class="tab ${local.settings.activeTab === 'state' ? 'active' : ''}" @click=${() => appController.setActiveTab('state')}>State</div>
-            <div class="tab ${local.settings.activeTab === 'logs' ? 'active' : ''}" @click=${() => appController.setActiveTab('logs')}>LLM Logs</div>
+            <div class="tab ${local.settings.activeTab === 'live' ? 'active' : ''}" @click=${() => appController.setActiveTab('live')}>Live</div>
             <div class="tab ${local.settings.activeTab === 'ir' ? 'active' : ''}" @click=${() => appController.setActiveTab('ir')}>IR Code</div>
+            <div class="tab ${local.settings.activeTab === 'raw_code' ? 'active' : ''}" @click=${() => appController.setActiveTab('raw_code')}>Raw Code</div>
+            <div class="tab ${local.settings.activeTab === 'state' ? 'active' : ''}" @click=${() => appController.setActiveTab('state')}>State</div>
             <div class="tab ${local.settings.activeTab === 'script' ? 'active' : ''}" @click=${() => appController.setActiveTab('script')}>Script</div>
-            <div class="tab ${local.settings.activeTab === 'results' ? 'active' : ''}" @click=${() => appController.setActiveTab('results')}>Results</div>
+            <div class="tab ${local.settings.activeTab === 'logs' ? 'active' : ''}" @click=${() => appController.setActiveTab('logs')}>LLM Logs</div>
           </div>
           <div class="divider" style="width: 1px; background: #333; margin: 0 0.5rem;"></div>
           <div class="actions" style="display: flex; gap: 0.5rem;">
-            <ui-button @click=${() => appController.validateCurrentIR()}>Validate</ui-button>
-            <ui-button @click=${() => appController.compileCurrentIR()}>Compile</ui-button>
             <div class="divider" style="width: 1px; background: #333; margin: 0 0.5rem;"></div>
             <ui-button icon="la-play" square @click=${() => appController.play()} .variant=${appController.runtime.transportState === 'playing' ? 'primary' : 'outline'} title="Play"></ui-button>
-            <ui-button icon="la-pause" square @click=${() => appController.runtime.pause()} .variant=${appController.runtime.transportState === 'paused' ? 'primary' : 'outline'} title="Pause"></ui-button>
-            <ui-button icon="la-stop" square @click=${() => appController.runtime.stop()} title="Stop"></ui-button>
+            <ui-button icon="la-pause" square @click=${() => appController.pause()} .variant=${appController.runtime.transportState === 'paused' ? 'primary' : 'outline'} title="Pause"></ui-button>
+            <ui-button icon="la-stop" square @click=${() => appController.stop()} .variant=${appController.runtime.transportState === 'stopped' ? 'primary' : 'outline'} title="Stop"></ui-button>
             <ui-button icon="la-step-forward" square @click=${() => appController.runtime.step()} title="Step"></ui-button>
           </div>
           <div class="divider" style="width: 1px; background: #333; margin: 0 0.5rem;"></div>
@@ -443,42 +446,48 @@ export class App extends MobxLitElement {
           </div>
         ` : ''}
 
-        ${local.settings.activeTab === 'results' ? html`
+        ${local.settings.activeTab === 'raw_code' ? html`
+          <div class="debug-panel" style="flex: 1; overflow: auto; padding: 1rem;">
+            <div class="toolbar" style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                <ui-button @click=${() => appController.validateCurrentIR()}>Validate</ui-button>
+                <ui-button @click=${() => appController.compileCurrentIR()}>Compile</ui-button>
+            </div>
+            <h3>IR Validation Errors</h3>
+            ${local.validationErrors.length === 0 ? html`<p>No errors found.</p>` : html`
+              <div class="errors-list">
+                ${local.validationErrors.map(err => html`
+                  <div class="error-item" style="color: ${err.severity === 'error' ? 'red' : 'orange'}; margin-bottom: 0.5rem;">
+                    [${err.severity.toUpperCase()}] ${err.nodeId ? html`Node <strong>${err.nodeId}</strong>: ` : ''} ${err.message}
+                  </div>
+                `)}
+              </div>
+            `}
+
+            <hr style="border: none; border-top: 1px solid #333; margin: 1rem 0;"/>
+
+            <h3>Compilation Results</h3>
+            ${!local.compilationResult ? html`<p>Not compiled yet.</p>` : html`
+              <div class="compilation-results">
+                <h4>JavaScript (CPU Host)</h4>
+                <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.js}</pre>
+                <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.jsInit}</pre>
+
+                <h4>WGSL (GPU Shaders)</h4>
+                ${Object.entries(local.compilationResult.wgsl).map(([id, code]) => html`
+                  <div class="wgsl-block">
+                    <h5>Function: ${id}</h5>
+                    <pre style="background: #0f0f0f; padding: 0.5rem; overflow: auto; max-height: 300px;">${code}</pre>
+                  </div>
+                `)}
+              </div>
+            `}
+          </div>
+        ` : ''}
+
+        ${local.settings.activeTab === 'live' ? html`
           <div class="results-view" style="display: flex; flex-direction: row; height: 100%; overflow: hidden;">
             <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #333;">
                 <ui-viewport .runtime=${appController.runtime} style="flex: 1; min-height: 300px;"></ui-viewport>
-
-                <div class="debug-panel" style="flex: 1; overflow: auto; border-top: 1px solid #333;">
-                <h3>IR Validation Errors</h3>
-                ${local.validationErrors.length === 0 ? html`<p>No errors found.</p>` : html`
-                  <div class="errors-list">
-                    ${local.validationErrors.map(err => html`
-                      <div class="error-item" style="color: ${err.severity === 'error' ? 'red' : 'orange'}; margin-bottom: 0.5rem;">
-                        [${err.severity.toUpperCase()}] ${err.nodeId ? html`Node <strong>${err.nodeId}</strong>: ` : ''} ${err.message}
-                      </div>
-                    `)}
-                  </div>
-                `}
-
-                <hr/>
-
-                <h3>Compilation Results</h3>
-                ${!local.compilationResult ? html`<p>Not compiled yet.</p>` : html`
-                  <div class="compilation-results">
-                    <h4>JavaScript (CPU Host)</h4>
-                    <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.js}</pre>
-                    <pre style="background: #080808; padding: 0.5rem; overflow: auto; max-height: 300px;">${local.compilationResult.jsInit}</pre>
-
-                    <h4>WGSL (GPU Shaders)</h4>
-                    ${Object.entries(local.compilationResult.wgsl).map(([id, code]) => html`
-                      <div class="wgsl-block">
-                        <h5>Function: ${id}</h5>
-                        <pre style="background: #0f0f0f; padding: 0.5rem; overflow: auto; max-height: 300px;">${code}</pre>
-                      </div>
-                    `)}
-                  </div>
-                `}
-                </div>
             </div>
             <ui-inspector .runtime=${appController.runtime}></ui-inspector>
           </div>

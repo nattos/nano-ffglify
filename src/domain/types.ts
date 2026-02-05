@@ -36,9 +36,10 @@ export interface ChatMsg {
 }
 
 export interface AppSettings {
-  activeTab: 'state' | 'logs' | 'script' | 'results' | 'ir';
+  activeTab: 'live' | 'ir' | 'raw_code' | 'state' | 'script' | 'logs';
   chatOpen: boolean;
   useMockLLM: boolean;
+  transportState?: 'playing' | 'paused' | 'stopped';
 }
 
 export interface LLMLogEntry {

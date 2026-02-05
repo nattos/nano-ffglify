@@ -26,10 +26,14 @@ export class AppController {
   public readonly repl = new ReplManager();
   public readonly runtime = new RuntimeManager();
 
-  public setActiveTab(tab: 'state' | 'logs' | 'script' | 'results' | 'ir') {
+  public setActiveTab(tab: 'live' | 'ir' | 'raw_code' | 'state' | 'script' | 'logs') {
     runInAction(() => {
       appState.local.settings.activeTab = tab;
     });
+    this.saveSettings();
+  }
+
+  private saveSettings() {
     settingsManager.saveSettings(toJS(appState.local.settings));
   }
 
@@ -121,19 +125,64 @@ export class AppController {
     const errors = validateIR(ir);
     runInAction(() => {
       appState.local.validationErrors = errors;
-      this.setActiveTab('results');
+      if (errors.length) {
+        this.setActiveTab('raw_code');
+      }
     });
+    return !errors.length;
   }
 
   public async play() {
     if (!this.repl.currentArtifacts) {
       const success = await this.compileCurrentIR();
       if (!success) return;
+      this.setActiveTab('live');
     }
+    runInAction(() => {
+      appState.local.settings.transportState = 'playing';
+    });
+    this.saveSettings();
     this.runtime.play();
   }
 
+  public pause() {
+    runInAction(() => {
+      appState.local.settings.transportState = 'paused';
+    });
+    this.saveSettings();
+    this.runtime.pause();
+  }
+
+  public stop() {
+    runInAction(() => {
+      appState.local.settings.transportState = 'stopped';
+    });
+    this.saveSettings();
+    this.runtime.stop();
+  }
+
+  /**
+   * Restores transport state from settings.
+   * Called once app is initialized and IR is supposedly loaded.
+   */
+  public async restoreTransportState() {
+    const s = appState.local.settings.transportState;
+    console.info("[AppController] Restoring transport state:", s);
+    if (s === 'playing') {
+      await this.play();
+    } else if (s === 'paused') {
+      // For paused, we still want to compile if possible to show a frame?
+      // But maybe just let it be.
+      this.runtime.pause();
+    } else {
+      this.runtime.stop();
+    }
+  }
+
   public async compileCurrentIR(): Promise<boolean> {
+    if (!this.validateCurrentIR()) {
+      return false;
+    }
     console.info("[AppController] Compiling IR...");
     const ir = appState.database.ir;
 
@@ -151,7 +200,6 @@ export class AppController {
           jsInit: artifacts.compiled.init.toString(),
           wgsl: artifacts.wgsl
         };
-        this.setActiveTab('results');
       });
       return true;
     } else {

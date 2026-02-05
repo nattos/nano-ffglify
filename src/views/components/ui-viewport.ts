@@ -52,7 +52,7 @@ export class UiViewport extends LitElement {
         }
         .stats {
             position: absolute;
-            top: 8px;
+            bottom: 8px;
             left: 8px;
             background: rgba(0, 0, 0, 0.6);
             color: #fff;
@@ -268,9 +268,7 @@ export class UiViewport extends LitElement {
                 Drop to Load Texture
             </div>
             <div class="stats">
-                FPS: ${this.runtime?.fps.toFixed(1) || 0}<br>
-                Frame: ${this.runtime?.frameCount || 0}<br>
-                Res: ${outRes?.width || 0}x${outRes?.height || 0}
+                ${outRes?.width || 0}x${outRes?.height || 0} ${this.runtime?.fps.toFixed(1) || 0} FPS
             </div>
         `;
   }

@@ -32,6 +32,7 @@ export class AppState {
   // Observability is *only* for display purposes. Logic should not rely on reactions to this field.
   public database: DatabaseState;
   public local: LocalState;
+  public initialized: Promise<void>;
 
   constructor(initialDatabaseState?: DatabaseState) {
     this.database = observable(initialDatabaseState || INITIAL_DATABASE_STATE);
@@ -40,7 +41,8 @@ export class AppState {
       settings: {
         activeTab: 'state',
         chatOpen: true,
-        useMockLLM: false
+        useMockLLM: false,
+        transportState: 'stopped'
       },
       llmLogs: [],
       draftChat: '',
@@ -58,8 +60,10 @@ export class AppState {
     });
 
     // Load settings async
-    this.loadSettings();
-    this.initPersistence();
+    this.initialized = Promise.all([
+      this.loadSettings(),
+      this.initPersistence()
+    ]).then(() => { });
   }
 
   async loadSettings() {

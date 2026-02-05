@@ -44,7 +44,7 @@ describe('Integration: IR App Scenarios', () => {
     runInAction(() => {
       const ir = appState.database.ir;
       expect(ir.id).toBe('blur-ir');
-      expect(ir.inputs[1].default).toBe(32);
+      expect(ir.inputs[2].default).toBe(32);
     });
   });
 });
