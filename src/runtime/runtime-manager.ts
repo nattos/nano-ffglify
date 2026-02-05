@@ -24,6 +24,27 @@ interface InputSourceState {
   isLoading: boolean;
 }
 
+export enum RuntimeInputType {
+  Texture = 'texture',
+  Bool = 'bool',
+  Int = 'int',
+  Float = 'float',
+  Float2 = 'float2',
+  Float3 = 'float3',
+  Float4 = 'float4',
+}
+
+export interface RuntimeInputEntry {
+  id: string;
+  type: RuntimeInputType;
+  label: string;
+  currentValue: any;
+  defaultValue: any;
+  min?: number;
+  max?: number;
+  displayText?: string; // High-level metadata (e.g. filename for textures)
+}
+
 /**
  * Runtime Manager - orchestrates the execution loop and state.
  */
@@ -47,6 +68,9 @@ export class RuntimeManager {
   private inputs: Map<string, RuntimeValue> = new Map();
   private inputSources: Map<string, InputSourceState> = new Map();
   private textureInputIds: string[] = [];
+
+  @observable
+  public inputEntries: Map<string, RuntimeInputEntry> = new Map();
 
   private lastFrameTime: number = 0;
   private frameId: number | null = null;
@@ -93,17 +117,35 @@ export class RuntimeManager {
 
       // 2. Map inputs and apply defaults
       this.textureInputIds = [];
+      this.inputEntries.clear();
+
       ir.inputs.forEach(inp => {
+        const type = this.mapDataTypeToRuntimeType(inp.type);
+        if (!type) return;
+
+        const entry: RuntimeInputEntry = {
+          id: inp.id,
+          type,
+          label: inp.label || inp.id,
+          currentValue: inp.default,
+          defaultValue: inp.default,
+          min: inp.ui?.min,
+          max: inp.ui?.max,
+        };
+
         if (inp.type === 'texture2d') {
           this.textureInputIds.push(inp.id);
           // Initialize with test.png if not already set
           if (!this.inputSources.has(inp.id)) {
             this.setTextureSource(inp.id, { type: 'url', value: 'test.png' });
           }
+          entry.currentValue = inp.id; // The resource ID
           this.inputs.set(inp.id, inp.id);
         } else if (inp.default !== undefined) {
           this.inputs.set(inp.id, inp.default);
         }
+
+        this.inputEntries.set(inp.id, entry);
       });
     });
 
@@ -346,6 +388,12 @@ export class RuntimeManager {
       }
     }
     this.loadSource(state);
+
+    // Sync entry displayText
+    const entry = this.inputEntries.get(id);
+    if (entry) {
+      entry.displayText = typeof source.value === 'string' ? source.value : source.value.name;
+    }
   }
 
   private async loadSource(state: InputSourceState) {
@@ -442,11 +490,26 @@ export class RuntimeManager {
     return () => this.onFrameCallbacks.delete(cb);
   }
 
-  /**
-   * Temporary input management
-   */
+  @action
   public setInput(id: string, value: RuntimeValue) {
     this.inputs.set(id, value);
+    const entry = this.inputEntries.get(id);
+    if (entry) {
+      entry.currentValue = value;
+    }
+  }
+
+  private mapDataTypeToRuntimeType(type: string): RuntimeInputType | null {
+    switch (type) {
+      case 'texture2d': return RuntimeInputType.Texture;
+      case 'bool': return RuntimeInputType.Bool;
+      case 'int': return RuntimeInputType.Int;
+      case 'float': return RuntimeInputType.Float;
+      case 'float2': return RuntimeInputType.Float2;
+      case 'float3': return RuntimeInputType.Float3;
+      case 'float4': return RuntimeInputType.Float4;
+      default: return null;
+    }
   }
 
   public getResource(id: string): ResourceState | undefined {
