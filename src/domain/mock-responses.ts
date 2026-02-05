@@ -74,7 +74,7 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
               nodes: [
                 { id: 'th_id', op: 'builtin_get', name: 'global_invocation_id' },
                 { id: 'idx', op: 'vec_get_element', vec: 'th_id', index: 0 },
-                { id: 'val', op: 'math_mul', a: 'idx', b: 0.01 },
+                { id: 'val', op: 'math_mul', a: 'idx', b: 0.0025 },
                 { id: 'v_val', op: 'float4', x: 'val', y: 'val', z: 'val', w: 'val' },
                 { id: 'store', op: 'buffer_store', buffer: 'b_weights', index: 'idx', value: 'v_val' }
               ]

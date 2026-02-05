@@ -46,6 +46,7 @@ export class RuntimeManager {
   private resources: Map<string, ResourceState> = new Map();
   private inputs: Map<string, RuntimeValue> = new Map();
   private inputSources: Map<string, InputSourceState> = new Map();
+  private textureInputIds: string[] = [];
 
   private lastFrameTime: number = 0;
   private frameId: number | null = null;
@@ -91,8 +92,10 @@ export class RuntimeManager {
       });
 
       // 2. Map inputs and apply defaults
+      this.textureInputIds = [];
       ir.inputs.forEach(inp => {
         if (inp.type === 'texture2d') {
+          this.textureInputIds.push(inp.id);
           // Initialize with test.png if not already set
           if (!this.inputSources.has(inp.id)) {
             this.setTextureSource(inp.id, { type: 'url', value: 'test.png' });
@@ -448,5 +451,9 @@ export class RuntimeManager {
 
   public getResource(id: string): ResourceState | undefined {
     return this.resources.get(id);
+  }
+
+  public getTextureInputIds(): string[] {
+    return this.textureInputIds;
   }
 }

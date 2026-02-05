@@ -240,13 +240,35 @@ export class UiViewport extends LitElement {
   render() {
     const outRes = this.runtime?.getResource('t_output');
     return html`
-            <canvas></canvas>
+            <canvas
+              @dragover=${this.handleDragOver}
+              @drop=${this.handleDrop}
+            ></canvas>
             <div class="stats">
                 FPS: ${this.runtime?.fps.toFixed(1) || 0}<br>
                 Frame: ${this.runtime?.frameCount || 0}<br>
                 Res: ${outRes?.width || 0}x${outRes?.height || 0}
             </div>
         `;
+  }
+
+  private handleDragOver(e: DragEvent) {
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }
+
+  private handleDrop(e: DragEvent) {
+    e.preventDefault();
+    const file = e.dataTransfer?.files[0];
+    if (file && this.runtime) {
+      const textureInputs = this.runtime.getTextureInputIds();
+      if (textureInputs.length > 0) {
+        const firstSlot = textureInputs[0];
+        this.runtime.setTextureSource(firstSlot, { type: 'file', value: file });
+      }
+    }
   }
 
   disconnectedCallback() {
