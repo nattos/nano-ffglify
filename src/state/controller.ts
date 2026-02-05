@@ -27,8 +27,13 @@ import { WebGpuHostExecutor } from '../webgpu/webgpu-host-executor';
 import { TextureFormat } from '../ir/types';
 import { WebGpuHost } from '../webgpu/webgpu-host';
 import { makeResourceStates } from '../runtime/resources';
+import { ReplManager } from '../runtime/repl-manager';
+import { RuntimeManager } from '../runtime/runtime-manager';
 
 export class AppController {
+  public readonly repl = new ReplManager();
+  public readonly runtime = new RuntimeManager();
+
   public setActiveTab(tab: 'state' | 'logs' | 'script' | 'results' | 'ir') {
     runInAction(() => {
       appState.local.settings.activeTab = tab;
@@ -128,140 +133,32 @@ export class AppController {
     });
   }
 
-  public compileCurrentIR() {
+  public async compileCurrentIR() {
     console.info("[AppController] Compiling IR...");
     const ir = appState.database.ir;
-    const cpuJit = new CpuJitCompiler();
-    const wgslGen = new WgslGenerator();
 
-    try {
-      const js = cpuJit.compileToSource(ir, ir.entryPoint);
-      const jsInit = cpuJit.compileInitToSource(ir);
-      const wgsl: Record<string, string> = {};
+    const artifacts = await this.repl.compile(ir);
+    if (artifacts) {
+      this.repl.swap(artifacts);
 
-      ir.functions.forEach(f => {
-        if (f.type === 'shader') {
-          wgsl[f.id] = wgslGen.compile(ir, f.id).code;
-        }
-      });
+      // Auto-update runtime if we have one
+      const device = await getSharedDevice();
+      await this.runtime.setCompiled(artifacts, device);
 
       runInAction(() => {
-        appState.local.compilationResult = { js, jsInit, wgsl };
+        appState.local.compilationResult = {
+          js: artifacts.compiled.task.toString(),
+          jsInit: artifacts.compiled.init.toString(),
+          wgsl: artifacts.wgsl
+        };
         this.setActiveTab('results');
       });
-    } catch (e: any) {
-      console.error(e);
-      alert("Compilation failed: " + e.message);
+    } else {
+      alert("Compilation failed: " + this.repl.lastError);
     }
   }
 
-  public async runOne() {
-    console.info("[AppController] Running One...");
-    const ir = appState.database.ir;
-
-    try {
-      // 1. Get GPU Device
-      const device = await getSharedDevice();
-
-      // 2. Fetch and Decode Input Image
-      const inputAsset = await fetchAndDecodeImage('test.png');
-
-      // 3. Create Evaluation Context
-      const inputs = new Map<string, any>();
-      // Use defaults for scalar inputs
-      ir.inputs.forEach(inp => {
-        if (inp.default !== undefined) {
-          inputs.set(inp.id, inp.default);
-        }
-        // If it's a texture input, the "value" is its resource name
-        if (inp.type === 'texture2d') {
-          inputs.set(inp.id, inp.id);
-        }
-      });
-      inputs.set('u_kernel_size', 16); // Fallback for blur demo if not set
-
-      const resources = makeResourceStates(ir);
-
-      // 4. Populate texture inputs with image data
-      ir.inputs.forEach(inp => {
-        if (inp.type === 'texture2d') {
-          const state = resources.get(inp.id);
-          if (state) {
-            state.width = inputAsset.width;
-            state.height = inputAsset.height;
-            state.data = inputAsset.data;
-          }
-        }
-      });
-
-      // Special case: if t_input is a resource (legacy), populate it too
-      const tInputRes = resources.get('t_input');
-      if (tInputRes) {
-        tInputRes.width = inputAsset.width;
-        tInputRes.height = inputAsset.height;
-        tInputRes.data = inputAsset.data;
-      }
-
-      // 5. Initialize other resources (ensure they exist and have initial sizes)
-      // For textures that reference another texture's size, resolve them
-      ir.resources.forEach(res => {
-        const state = resources.get(res.id);
-        if (res.size.mode === 'reference') {
-          const refId = res.size.ref;
-          if (refId) {
-            // Try to find the reference in inputs or resources
-            const refInp = ir.inputs.find(i => i.id === refId);
-            const refRes = ir.resources.find(r => r.id === refId);
-            if (state && (refInp || (refRes && refRes.id === 't_input'))) {
-              state.width = inputAsset.width;
-              state.height = inputAsset.height;
-            }
-          }
-        }
-      });
-
-      // 6. Setup Executors
-      const cpuJit = new CpuJitCompiler();
-      const compiled = cpuJit.compile(ir, ir.entryPoint);
-      const gpuExecutor = await compiled.init(device);
-      const webGpuHost = new WebGpuHost({
-        device: device,
-        executor: gpuExecutor,
-        resources: resources,
-        logHandler: (msg, payload) => console.log(msg, payload),
-      });
-
-      const hostExec = new WebGpuHostExecutor({
-        ir: ir,
-        compiledCode: compiled,
-        host: webGpuHost
-      });
-
-      await hostExec.execute(inputs);
-
-      // [TEMP] Explicit readback for debug
-      for (const resourceId of resources.keys()) {
-        webGpuHost.executeSyncToCpu(resourceId);
-      }
-      for (const resourceId of resources.keys()) {
-        await webGpuHost.executeWaitCpuSync(resourceId);
-      }
-
-      // 8. Extract t_output and Download
-      const tOutput = resources.get('t_output');
-      if (!tOutput || !tOutput.data) {
-        throw new Error("t_output not found or has no data after execution");
-      }
-
-      await encodeAndDownloadImage(tOutput.data as number[][], tOutput.width, tOutput.height, 'result.png');
-      console.info("[AppController] Run One completed successfully!");
-      // alert("Run One completed! Downloaded result.png");
-
-    } catch (e: any) {
-      console.error(e);
-      alert("Run One failed: " + e.message);
-    }
-  }
+  // runOne is now managed by RuntimeManager
 
   public goBack() {
     runInAction(() => {

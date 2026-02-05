@@ -22,6 +22,14 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
     ...doc.inputs.map(i => i.id)
   ]);
 
+  // Check Entry Point
+  if (!doc.functions.some(f => f.id === doc.entryPoint)) {
+    errors.push({
+      message: `Entry point '${doc.entryPoint}' not found in functions`,
+      severity: 'error'
+    });
+  }
+
   // Check Resources
   validateResources(doc, errors);
 

@@ -14,6 +14,7 @@
 import './views/components/ui-icon';
 import './views/components/ui-button';
 import './views/components/ui-ir-widget';
+import './views/components/ui-viewport';
 
 import { MobxLitElement } from './views/mobx-lit-element';
 import { runInAction } from 'mobx';
@@ -292,7 +293,11 @@ export class App extends MobxLitElement {
           <div class="actions" style="display: flex; gap: 0.5rem;">
             <ui-button @click=${() => appController.validateCurrentIR()}>Validate</ui-button>
             <ui-button @click=${() => appController.compileCurrentIR()}>Compile</ui-button>
-            <ui-button @click=${() => appController.runOne()}>Run One</ui-button>
+            <div class="divider" style="width: 1px; background: #333; margin: 0 0.5rem;"></div>
+            <ui-button icon="la-play" square @click=${() => appController.runtime.play()} .variant=${appController.runtime.transportState === 'playing' ? 'primary' : 'outline'} title="Play"></ui-button>
+            <ui-button icon="la-pause" square @click=${() => appController.runtime.pause()} .variant=${appController.runtime.transportState === 'paused' ? 'primary' : 'outline'} title="Pause"></ui-button>
+            <ui-button icon="la-stop" square @click=${() => appController.runtime.stop()} title="Stop"></ui-button>
+            <ui-button icon="la-step-forward" square @click=${() => appController.runtime.step()} title="Step"></ui-button>
           </div>
           <div class="divider" style="width: 1px; background: #333; margin: 0 0.5rem;"></div>
           <ui-button
@@ -380,7 +385,10 @@ export class App extends MobxLitElement {
         ` : ''}
 
         ${local.settings.activeTab === 'results' ? html`
-          <div class="debug-panel">
+          <div class="results-view" style="display: flex; flex-direction: column; gap: 1rem; height: 100%; overflow: hidden;">
+            <ui-viewport .runtime=${appController.runtime} style="flex: 1; min-height: 300px;"></ui-viewport>
+
+            <div class="debug-panel" style="flex: 1; overflow: auto; border-top: 1px solid #333;">
             <h3>IR Validation Errors</h3>
             ${local.validationErrors.length === 0 ? html`<p>No errors found.</p>` : html`
               <div class="errors-list">
@@ -411,6 +419,7 @@ export class App extends MobxLitElement {
               </div>
             `}
           </div>
+        </div>
         ` : ''}
       </div>
 
