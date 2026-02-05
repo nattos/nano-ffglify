@@ -28,7 +28,10 @@ describe('RuntimeManager', () => {
       meta: { name: 'Test' },
       entryPoint: 'main',
       functions: [],
-      inputs: [],
+      inputs: [
+        { id: 'u_scalar', type: 'float', default: 42.0 },
+        { id: 't_input', type: 'texture2d' }
+      ],
       resources: [
         {
           id: 't_output',
@@ -57,6 +60,11 @@ describe('RuntimeManager', () => {
     expect(runtimeManager.currentCompiled).toBeDefined();
     expect(runtimeManager.transportState).toBe('stopped');
     expect(runtimeManager.getResource('t_output')).toBeDefined();
+
+    // Verify default values
+    // Note: access private inputs via any for testing or expose it
+    expect((runtimeManager as any).inputs.get('u_scalar')).toBe(42.0);
+    expect((runtimeManager as any).inputs.get('t_input')).toBe('t_input');
   });
 
   it('should play, pause, and stop', async () => {

@@ -1,4 +1,4 @@
-import { observable, makeObservable, action, computed } from 'mobx';
+import { observable, makeObservable, action, computed, runInAction } from 'mobx';
 import { CompilationArtifacts } from './repl-manager';
 import { WebGpuHostExecutor } from '../webgpu/webgpu-host-executor';
 import { WebGpuHost } from '../webgpu/webgpu-host';
@@ -38,23 +38,29 @@ export class RuntimeManager {
     makeObservable(this);
   }
 
-  @action
   public async setCompiled(artifacts: CompilationArtifacts, device: GPUDevice | any) {
-    this.currentCompiled = artifacts;
-    this.device = device;
-    this.resources = makeResourceStates(artifacts.ir);
-
-    // [TEMP] Preload image inputs
     const testImage = await fetchAndDecodeImage('test.png');
-    artifacts.ir.inputs.forEach(inp => {
-      if (inp.type === 'texture2d') {
-        const state = this.resources.get(inp.id);
-        if (state) {
-          state.width = testImage.width;
-          state.height = testImage.height;
-          state.data = testImage.data;
+
+    runInAction(() => {
+      this.currentCompiled = artifacts;
+      this.device = device;
+      this.resources = makeResourceStates(artifacts.ir);
+
+      // [TEMP] Preload image inputs and apply defaults
+      artifacts.ir.inputs.forEach(inp => {
+        if (inp.type === 'texture2d') {
+          const state = this.resources.get(inp.id);
+          if (state) {
+            state.width = testImage.width;
+            state.height = testImage.height;
+            state.data = testImage.data;
+          }
+          // Texture inputs in the host expect the resource ID as the value
+          this.inputs.set(inp.id, inp.id);
+        } else if (inp.default !== undefined) {
+          this.inputs.set(inp.id, inp.default);
         }
-      }
+      });
     });
 
     // We assume the device passed in is either a real GPUDevice or a mock
@@ -131,7 +137,9 @@ export class RuntimeManager {
     try {
       // Execute the frame
       await this.executor.execute(this.inputs);
-      this.frameCount++;
+      runInAction(() => {
+        this.frameCount++;
+      });
 
       // Calculate FPS
       const elapsed = startTime - this.lastFrameTime;
