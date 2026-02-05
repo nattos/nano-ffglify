@@ -38,6 +38,15 @@ export class WebGpuHostExecutor {
     });
 
     // Run the task function with the initialized executor
-    return await compiled.task({ resources: this.ctx.resources, inputs: this.ctx.inputs, globals: webGpuHost });
+    const result = await compiled.task({ resources: this.ctx.resources, inputs: this.ctx.inputs, globals: webGpuHost });
+
+    for (const resourceId of this.ctx.resources.keys()) {
+      webGpuHost.executeSyncToCpu(resourceId);
+    }
+    for (const resourceId of this.ctx.resources.keys()) {
+      await webGpuHost.executeWaitCpuSync(resourceId);
+    }
+
+    return result;
   }
 }

@@ -427,6 +427,14 @@ require('./intrinsics.js');
       else if (func.inputs.some(i => i.id === varId)) lines.push(`${indent}${sanitizeId(varId, 'input')} = ${val};`);
       else throw new Error(`JIT Error: Cannot set undefined variable '${varId}'`);
     }
+    else if (node.op === 'cmd_sync_to_cpu') {
+      const resId = node['resource'];
+      lines.push(`${indent}ctx.globals.executeSyncToCpu('${resId}');`);
+    }
+    else if (node.op === 'cmd_wait_cpu_sync') {
+      const resId = node['resource'];
+      lines.push(`${indent}await ctx.globals.executeWaitCpuSync('${resId}');`);
+    }
     else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'];
       const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);

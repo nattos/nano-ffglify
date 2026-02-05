@@ -142,6 +142,8 @@ export interface LoopIndexArgs { loop: string;[key: string]: any; }
 export interface FlowBranchArgs { cond: any; exec_true: string; exec_false: string;[key: string]: any; }
 export interface CallFuncArgs { func: string;[key: string]: any; }
 export interface CmdResizeResourceArgs { resource: string; size: any; clear?: any;[key: string]: any; }
+export interface CmdSyncToCpuArgs { resource: string;[key: string]: any; }
+export interface CmdWaitCpuSyncArgs { resource: string;[key: string]: any; }
 export interface FuncReturnArgs { val: any; value?: any;[key: string]: any; }
 export interface QuatToMatArgs { q: any;[key: string]: any; }
 export interface FlowLoopArgs { count?: any; start?: any; end?: any; exec_body: string; exec_completed?: string; tag?: string;[key: string]: any; }
@@ -651,6 +653,8 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'cmd_draw': CmdDrawDef,
   'cmd_dispatch': CmdDispatchDef,
   'cmd_resize_resource': defineOp<CmdResizeResourceArgs>({ doc: "Resize a resource", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' }, size: { type: AnyData, doc: "New size [w, h] or scalar", refable: true, literalTypes: ['float', 'int', 'float2'] }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
+  'cmd_sync_to_cpu': defineOp<CmdSyncToCpuArgs>({ doc: "Initiate async readback", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' } } }),
+  'cmd_wait_cpu_sync': defineOp<CmdWaitCpuSyncArgs>({ doc: "Wait for readback completion", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' } } }),
 
   // Logic / Control
   'var_set': VarSetDef,
@@ -751,6 +755,8 @@ export type OpArgs = {
   'cmd_draw': CmdDrawArgs;
   'cmd_dispatch': CmdDispatchArgs;
   'cmd_resize_resource': CmdResizeResourceArgs;
+  'cmd_sync_to_cpu': CmdSyncToCpuArgs;
+  'cmd_wait_cpu_sync': CmdWaitCpuSyncArgs;
   'var_set': VarSetArgs;
   'var_get': VarGetArgs;
   'builtin_get': BuiltinGetArgs;

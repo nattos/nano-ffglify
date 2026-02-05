@@ -128,4 +128,14 @@ export interface RuntimeGlobals {
    * Logs a message or action for debugging/profiling.
    */
   log(message: string, payload?: any): void;
+
+  /**
+   * Initiates an asynchronous readback of a resource from GPU to CPU.
+   */
+  executeSyncToCpu(resId: string): void;
+
+  /**
+   * Waits for a previously initiated readback to complete.
+   */
+  executeWaitCpuSync(resId: string): Promise<void>;
 }

@@ -87,14 +87,12 @@ const _buffer_store = (resources, id, idx, val) => {
   const res = resources.get(id);
   if (res && res.data) {
     if (idx < 0 || idx >= res.data.length && idx < 100000) {
-      // Auto-expand if safe? Or strictly OOB?
-      // WebGPU is strict. JS is loose.
-      // For JIT, we should probably be compatible with how WebGPU behaves (clamping/ignoring), OR how our test expects it.
-      // The error test expects NO error for Type Mismatch? No, the error test expects ERROR for OOB.
+      // OOB check omitted for performance in JIT, reliant on validation/tests
     }
     res.data[idx] = val;
-    // Invalidate GPU buffer since we modified CPU data
-    if (res.gpuBuffer) { res.gpuBuffer.destroy(); res.gpuBuffer = undefined; }
+    // Mark as dirty on CPU so we know to upload later
+    if (!res.flags) res.flags = { cpuDirty: false, gpuDirty: false };
+    res.flags.cpuDirty = true;
   }
 };
 
@@ -161,6 +159,10 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
     }
   };
 
+  // Staging buffers for async readbacks
+  // Map<ResourceId, { buffer: GPUBuffer, bytesPerRow?: number, type: 'buffer'|'texture' }>
+  const activeReadbacks = new Map();
+
   return {
     async executeShader(funcId, dim, args, resources) {
       const info = precomputedInfos.get(funcId);
@@ -213,9 +215,15 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
       for (const resBind of info.resourceBindings) {
         const state = resources.get(resBind.id);
         if (!state) continue;
-
         const resInfo = resourceInfos.get(resBind.id);
         _ensureGpuResource(device, state, resInfo);
+
+        // Mark as potentially dirty on GPU since we are computing
+        if (!state.flags) state.flags = { cpuDirty: false, gpuDirty: false };
+        // We assume write access for storage bindings.
+        // Ideally we'd check if it's read-only, but for now be conservative.
+        state.flags.gpuDirty = true;
+
         if (state.def.type === 'texture2d') {
           entries.push({ binding: resBind.binding, resource: state.gpuTexture.createView() });
         } else {
@@ -235,91 +243,7 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
       }
       pass.dispatchWorkgroups(dim[0], dim[1], dim[2]);
       pass.end();
-
-      // Readback logic (same as v1 for now)
-      const readbackEncoder = device.createCommandEncoder();
-      const stagingBuffers = [];
-      let needsReadback = false;
-
-      for (const resBind of info.resourceBindings) {
-        const state = resources.get(resBind.id);
-        if (!state) continue;
-
-        if (state.def.type === 'buffer' && state.gpuBuffer) {
-          const size = state.gpuBuffer.size;
-          const staging = device.createBuffer({
-            size: size,
-            usage: 1 | 8 // MAP_READ | COPY_DST
-          });
-          readbackEncoder.copyBufferToBuffer(state.gpuBuffer, 0, staging, 0, size);
-          stagingBuffers.push({ state, staging, type: 'buffer' });
-          needsReadback = true;
-        } else if (state.def.type === 'texture2d' && state.gpuTexture) {
-          // Texture Readback
-          const bytesPerPixel = 4; // Assuming rgba8unorm/bgra8unorm for now
-          // Align to 256 bytes per row
-          const bytesPerRow = Math.ceil((state.width * bytesPerPixel) / 256) * 256;
-          const staging = device.createBuffer({
-            size: bytesPerRow * state.height,
-            usage: 1 | 8 // MAP_READ | COPY_DST
-          });
-          readbackEncoder.copyTextureToBuffer(
-            { texture: state.gpuTexture },
-            { buffer: staging, bytesPerRow },
-            [state.width, state.height, 1]
-          );
-          stagingBuffers.push({ state, staging, type: 'texture', bytesPerRow });
-          needsReadback = true;
-        }
-      }
-
       device.queue.submit([encoder.finish()]);
-
-      if (needsReadback) {
-        device.queue.submit([readbackEncoder.finish()]);
-        await Promise.all(stagingBuffers.map(async ({ state, staging, type, bytesPerRow }) => {
-          await staging.mapAsync(1);
-          const range = staging.getMappedRange();
-
-          if (type === 'buffer') {
-            const info = resourceInfos.get(state.def.id);
-            const taType = info?.typedArray || 'Float32Array';
-            let rawData;
-            if (taType === 'Uint32Array') rawData = new Uint32Array(range);
-            else if (taType === 'Int32Array') rawData = new Int32Array(range);
-            else if (taType === 'Uint8Array') rawData = new Uint8Array(range);
-            else rawData = new Float32Array(range);
-
-            const componentCount = info?.componentCount || 1;
-            const flatData = Array.from(rawData).slice(0, state.width * componentCount);
-
-            if (componentCount > 1) {
-              const structured = [];
-              for (let i = 0; i < state.width; i++) {
-                structured.push(flatData.slice(i * componentCount, (i + 1) * componentCount));
-              }
-              state.data = structured;
-            } else {
-              state.data = flatData;
-            }
-          } else {
-            // Texture Readback
-            const data = new Uint8Array(range);
-            const reshaped = [];
-            for (let y = 0; y < state.height; y++) {
-              const rowStart = y * bytesPerRow;
-              for (let x = 0; x < state.width; x++) {
-                const start = rowStart + (x * 4);
-                reshaped.push(Array.from(data.slice(start, start + 4)).map(v => v / 255.0)); // Normalize to 0-1
-              }
-            }
-            state.data = reshaped;
-          }
-
-          staging.unmap();
-          staging.destroy();
-        }));
-      }
     },
 
     async executeDraw(targetId, vertexId, fragmentId, count, pipelineDef, resources) {
@@ -336,12 +260,15 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
       const targetResInfo = resourceInfos.get(targetId);
       _ensureGpuResource(device, targetState, targetResInfo);
 
+      // Target will be written to
+      if (!targetState.flags) targetState.flags = { cpuDirty: false, gpuDirty: false };
+      targetState.flags.gpuDirty = true;
+
       const entries = [];
       for (const resBind of info.resourceBindings) {
         if (resBind.id === targetId) continue;
         const state = resources.get(resBind.id);
         if (!state) continue;
-
         const resInfo = resourceInfos.get(resBind.id);
         _ensureGpuResource(device, state, resInfo);
         if (state.def.type === 'texture2d') {
@@ -373,44 +300,111 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
       }
       pass.draw(count);
       pass.end();
+      device.queue.submit([encoder.finish()]);
+    },
 
-      // Readback Target (optimized row-padding)
-      const bytesPerPixel = 4;
-      const bytesPerRow = Math.ceil((targetState.width * bytesPerPixel) / 256) * 256;
-      const staging = device.createBuffer({
-        size: bytesPerRow * targetState.height,
-        usage: 1 | 8 // MAP_READ | COPY_DST
-      });
+    executeSyncToCpu(resourceId, resources) {
+      const state = resources.get(resourceId);
+      if (!state) return;
+      // Only readback if GPU is dirty
+      if (!state.flags || !state.flags.gpuDirty) return;
 
-      encoder.copyTextureToBuffer(
-        { texture: targetState.gpuTexture },
-        { buffer: staging, bytesPerRow },
-        [targetState.width, targetState.height, 1]
-      );
+      const encoder = device.createCommandEncoder();
+
+      if (state.def.type === 'buffer' && state.gpuBuffer) {
+        const size = state.gpuBuffer.size;
+        const staging = device.createBuffer({
+          size: size,
+          usage: 1 | 8 // MAP_READ | COPY_DST
+        });
+        encoder.copyBufferToBuffer(state.gpuBuffer, 0, staging, 0, size);
+        activeReadbacks.set(resourceId, { staging, type: 'buffer' });
+      } else if (state.def.type === 'texture2d' && state.gpuTexture) {
+        const bytesPerPixel = 4;
+        const bytesPerRow = Math.ceil((state.width * bytesPerPixel) / 256) * 256;
+        const staging = device.createBuffer({
+          size: bytesPerRow * state.height,
+          usage: 1 | 8 // MAP_READ | COPY_DST
+        });
+        encoder.copyTextureToBuffer(
+          { texture: state.gpuTexture },
+          { buffer: staging, bytesPerRow },
+          [state.width, state.height, 1]
+        );
+        activeReadbacks.set(resourceId, { staging, type: 'texture', bytesPerRow });
+      }
 
       device.queue.submit([encoder.finish()]);
 
-      await staging.mapAsync(1);
-      const data = new Uint8Array(staging.getMappedRange());
-
-      const reshaped = [];
-      for (let y = 0; y < targetState.height; y++) {
-        const rowStart = y * bytesPerRow;
-        for (let x = 0; x < targetState.width; x++) {
-          const start = rowStart + (x * 4);
-          reshaped.push(Array.from(data.slice(start, start + 4)).map(v => v / 255.0));
-        }
+      // Start async mapping (don't await here)
+      const pending = activeReadbacks.get(resourceId);
+      if (pending) {
+        pending.promise = pending.staging.mapAsync(1);
       }
-      targetState.data = reshaped;
+    },
 
-      staging.unmap();
-      staging.destroy();
+    async executeWaitCpuSync(resourceId, resources) {
+      const pending = activeReadbacks.get(resourceId);
+      if (!pending) return; // Maybe already synced or not dirty
+
+      await pending.promise;
+
+      const state = resources.get(resourceId);
+      const range = pending.staging.getMappedRange();
+
+      if (pending.type === 'buffer') {
+        const info = resourceInfos.get(resourceId);
+        const taType = info?.typedArray || 'Float32Array';
+        let rawData;
+        if (taType === 'Uint32Array') rawData = new Uint32Array(range);
+        else if (taType === 'Int32Array') rawData = new Int32Array(range);
+        else if (taType === 'Uint8Array') rawData = new Uint8Array(range);
+        else rawData = new Float32Array(range);
+
+        const componentCount = info?.componentCount || 1;
+        const flatData = Array.from(rawData).slice(0, state.width * componentCount);
+
+        if (componentCount > 1) {
+          const structured = [];
+          for (let i = 0; i < state.width; i++) {
+            structured.push(flatData.slice(i * componentCount, (i + 1) * componentCount));
+          }
+          state.data = structured;
+        } else {
+          state.data = flatData;
+        }
+      } else {
+        const bytesPerRow = pending.bytesPerRow;
+        const data = new Uint8Array(range);
+        const reshaped = [];
+        for (let y = 0; y < state.height; y++) {
+          const rowStart = y * bytesPerRow;
+          for (let x = 0; x < state.width; x++) {
+            const start = rowStart + (x * 4);
+            reshaped.push(Array.from(data.slice(start, start + 4)).map(v => v / 255.0)); // Normalize to 0-1
+          }
+        }
+        state.data = reshaped;
+      }
+
+      pending.staging.unmap();
+      pending.staging.destroy();
+      activeReadbacks.delete(resourceId);
+
+      if (state.flags) {
+        state.flags.gpuDirty = false;
+        state.flags.cpuDirty = false;
+      }
     }
   };
 };
 
 const _ensureGpuResource = (device, state, info) => {
   if (!info) return;
+
+  if (!state.flags) state.flags = { cpuDirty: true, gpuDirty: false };
+
+  // 1. Create/Resize GPU resource if needed
   if (info.type === 'texture2d') {
     if (!state.gpuTexture || state.gpuTexture.width !== state.width || state.gpuTexture.height !== state.height) {
       if (state.gpuTexture) state.gpuTexture.destroy();
@@ -419,9 +413,28 @@ const _ensureGpuResource = (device, state, info) => {
         format: info.format || 'rgba8unorm',
         usage: 0x1F // RENDER_ATTACHMENT | TEXTURE_BINDING | STORAGE_BINDING | COPY_SRC | COPY_DST
       });
+      // New texture needs data
+      state.flags.cpuDirty = true;
     }
+  } else {
+    // Buffer
+    const { componentCount } = info;
+    const byteSize = state.width * componentCount * 4;
+    const alignedSize = Math.max(Math.ceil(byteSize / 4) * 4, 16);
 
-    if (state.data) {
+    if (!state.gpuBuffer || state.gpuBuffer.size < alignedSize) {
+      if (state.gpuBuffer) state.gpuBuffer.destroy();
+      state.gpuBuffer = device.createBuffer({
+        size: alignedSize,
+        usage: 128 | 8 | 4 // STORAGE | COPY_DST | COPY_SRC
+      });
+      state.flags.cpuDirty = true;
+    }
+  }
+
+  // 2. Upload if CPU is dirty
+  if (state.flags.cpuDirty && state.data) {
+    if (info.type === 'texture2d') {
       const { typedArray, componentCount } = info;
       const flatSize = state.width * state.height * componentCount;
       const raw = typedArray === 'Float32Array' ? new Float32Array(flatSize) : new Uint8Array(flatSize);
@@ -445,22 +458,8 @@ const _ensureGpuResource = (device, state, info) => {
         { bytesPerRow: state.width * (typedArray === 'Float32Array' ? 4 : 1) * componentCount },
         { width: state.width, height: state.height }
       );
-    }
-  } else {
-    // Buffer
-    const { componentCount } = info;
-    const byteSize = state.width * componentCount * 4;
-    const alignedSize = Math.max(Math.ceil(byteSize / 4) * 4, 16);
-
-    if (!state.gpuBuffer || state.gpuBuffer.size < alignedSize) {
-      if (state.gpuBuffer) state.gpuBuffer.destroy();
-      state.gpuBuffer = device.createBuffer({
-        size: alignedSize,
-        usage: 128 | 8 | 4 // STORAGE | COPY_DST | COPY_SRC
-      });
-    }
-
-    if (state.data) {
+    } else {
+      const { componentCount } = info;
       const flatSize = state.width * componentCount;
       const raw = info.typedArray === 'Float32Array' ? new Float32Array(flatSize) :
         info.typedArray === 'Uint32Array' ? new Uint32Array(flatSize) : new Int32Array(flatSize);
@@ -477,5 +476,6 @@ const _ensureGpuResource = (device, state, info) => {
       for (let i = 0; i < state.data.length; i++) push(state.data[i]);
       device.queue.writeBuffer(state.gpuBuffer, 0, raw);
     }
+    state.flags.cpuDirty = false;
   }
 };

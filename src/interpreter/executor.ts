@@ -186,6 +186,8 @@ export class InterpretedExecutor {
         this.context.currentFrame.nodeResults.set(node.id, result);
       }
       return result;
+    } else {
+      throw new Error(`Op not supported ${opId}`);
     }
   }
 

@@ -323,5 +323,7 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { resource: 'string', size: 'any' }, output: 'any' },
     { inputs: { resource: 'string', size: 'any', clear: 'any' }, output: 'any' } // Added optional clear
   ],
-  'cmd_draw': [{ inputs: { target: 'string', vertex: 'string', fragment: 'string', count: 'int' }, output: 'any' }]
+  'cmd_draw': [{ inputs: { target: 'string', vertex: 'string', fragment: 'string', count: 'int' }, output: 'any' }],
+  'cmd_sync_to_cpu': [{ inputs: { resource: 'string' }, output: 'any' }],
+  'cmd_wait_cpu_sync': [{ inputs: { resource: 'string' }, output: 'any' }]
 };

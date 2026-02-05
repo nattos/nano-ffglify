@@ -30,7 +30,6 @@ export const WebGpuBackend: TestBackend = {
 
   run: async (ctx: EvaluationContext, entryPoint: string) => {
     await gpuSemaphore.acquire();
-    let hostExec;
     try {
       const device = (ctx as any).device as GPUDevice;
       if (!device) throw new Error('Context missing GPUDevice');
@@ -41,7 +40,7 @@ export const WebGpuBackend: TestBackend = {
       // 3. Execute
       if (func.type === 'cpu') {
         ctx.pushFrame(entryPoint);
-        hostExec = new WebGpuHostExecutor(ctx, device);
+        const hostExec = new WebGpuHostExecutor(ctx, device);
         ctx.result = await hostExec.executeFunction(func, ctx.ir.functions);
       } else {
         throw new Error(`Entry point '${entryPoint}' must be 'cpu'`);

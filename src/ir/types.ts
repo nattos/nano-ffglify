@@ -422,7 +422,9 @@ export type BuiltinOp =
   // ----------------------------------------------------------------
   | 'cmd_dispatch' // { func: string, dispatch: int3, ...args }
   | 'cmd_resize_resource' // { id: string, size: int2 }
-  | 'cmd_draw'; // { target: string, vertex: string, fragment: string, count: int, pipeline: RenderPipelineDef }
+  | 'cmd_draw' // { target: string, vertex: string, fragment: string, count: int, pipeline: RenderPipelineDef }
+  | 'cmd_sync_to_cpu' // { resource: string }
+  | 'cmd_wait_cpu_sync'; // { resource: string }
 
 
 // ------------------------------------------------------------------

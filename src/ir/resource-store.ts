@@ -22,6 +22,10 @@ export interface ResourceState {
   data?: RuntimeValue[];
   width: number;
   height: number;
+  flags?: {
+    cpuDirty: boolean; // Data on CPU has changed, needs upload
+    gpuDirty: boolean; // Data on GPU has changed, needs download
+  };
 }
 
 export interface ActionLogEntry {

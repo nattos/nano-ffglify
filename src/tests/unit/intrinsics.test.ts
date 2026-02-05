@@ -82,7 +82,7 @@ describe('WebGPU Intrinsics', () => {
     it('should create and upload texture data using precomputed info', () => {
       const def = { type: 'texture2d', format: 'rgba8unorm' };
       const info = precomputeResourceLayout(def);
-      const state = {
+      const state: any = {
         def,
         width: 2,
         height: 1,
@@ -90,13 +90,18 @@ describe('WebGPU Intrinsics', () => {
         gpuTexture: null as any,
       };
 
+      // First call: Creates texture AND uploads because data is present.
       _ensureGpuResource(mockDevice, state, info);
 
+      // It should have uploaded.
       expect(mockDevice.createTexture).toHaveBeenCalled();
       expect(mockQueue.writeTexture).toHaveBeenCalled();
       const [, data] = mockQueue.writeTexture.mock.calls[0];
       expect(data[0]).toBe(255);
       expect(data[5]).toBe(255);
+
+      // Flags should be clean after upload
+      expect(state.flags.cpuDirty).toBe(false);
     });
 
     it('should create and upload buffer data using precomputed info', () => {
@@ -144,20 +149,22 @@ describe('WebGPU Intrinsics', () => {
   });
 
   describe('_buffer_store', () => {
-    it('should store value and invalidate GPU buffer', () => {
+    it('should store value and set cpuDirty flag without destroying GPU buffer', () => {
       const gpuBuffer = { destroy: vi.fn() };
-      const resState = {
+      const resState: any = {
         def: { type: 'buffer' },
         data: [0, 0, 0],
         gpuBuffer: gpuBuffer as any,
+        flags: { cpuDirty: false, gpuDirty: false },
       };
       const resources = new Map([['buf1', resState]]);
 
       _buffer_store(resources, 'buf1', 1, 123);
 
       expect(resState.data[1]).toBe(123);
-      expect(resState.gpuBuffer).toBeUndefined();
-      expect(gpuBuffer.destroy).toHaveBeenCalled();
+      expect(resState.gpuBuffer).toBeDefined(); // Should NOT be destroyed
+      expect(gpuBuffer.destroy).not.toHaveBeenCalled();
+      expect(resState.flags.cpuDirty).toBe(true);
     });
   });
 
@@ -318,7 +325,7 @@ describe('WebGPU Intrinsics', () => {
       expect(view.getFloat32(8, true)).toBeCloseTo(3.3);
     });
 
-    it('should restore structured data (vectors) during readback', async () => {
+    it('should restore structured data (vectors) during explicit readback', async () => {
       // Mock a buffer with float4 data
       const meta: CompilationMetadata = {
         inputBinding: 0,
@@ -339,13 +346,19 @@ describe('WebGPU Intrinsics', () => {
 
       const executor = _createExecutor(mockDevice, pipelines, precomputed, new Map(), resourceInfos);
 
-      const resState = {
+      const resState: any = {
         id: 'buf1',
         def: resDef,
         width: 1, // 1 float4
         data: [[0, 0, 0, 0]],
-        gpuBuffer: { size: 16, destroy: vi.fn(), mapAsync: vi.fn().mockResolvedValue(undefined), getMappedRange: vi.fn(), unmap: vi.fn() } as any
+        gpuBuffer: { size: 16, destroy: vi.fn(), mapAsync: vi.fn().mockResolvedValue(undefined), getMappedRange: vi.fn(), unmap: vi.fn() } as any,
+        flags: { gpuDirty: true, cpuDirty: false } // Mark GPU dirty to allow readback
       };
+
+      const resources = new Map([['buf1', resState]]);
+
+      // 1. Execute Shader (should NOT readback automatically)
+      await executor.executeShader('func1', [1, 1, 1], {}, resources);
 
       // Mock the buffer content: [0.1, 0.2, 0.3, 0.4]
       const bufferData = new Float32Array([0.1, 0.2, 0.3, 0.4]);
@@ -361,27 +374,24 @@ describe('WebGPU Intrinsics', () => {
             unmap: vi.fn()
           };
         }
-        return {
-          size: desc.size,
-          destroy: vi.fn(),
-          usage: desc.usage,
-          mapAsync: vi.fn().mockResolvedValue(undefined),
-          getMappedRange: vi.fn().mockReturnValue(new ArrayBuffer(desc.size)),
-          unmap: vi.fn()
-        };
+        return { size: desc.size, destroy: vi.fn(), usage: desc.usage };
       });
 
-      const resources = new Map([['buf1', resState]]);
+      // 2. Sync to CPU
+      executor.executeSyncToCpu('buf1', resources);
+      expect(mockDevice.createCommandEncoder).toHaveBeenCalled();
 
-      await executor.executeShader('func1', [1, 1, 1], {}, resources);
+      // 3. Wait CPU Sync
+      await executor.executeWaitCpuSync('buf1', resources);
 
-      // Current implementation returns flat array [0.1, 0.2, 0.3, 0.4] if width=4 or [0.1] if width=1
       // Expected: [[0.1, 0.2, 0.3, 0.4]]
       expect(resState.data[0]).toHaveLength(4);
       expect(resState.data[0][0]).toBeCloseTo(0.1);
       expect(resState.data[0][1]).toBeCloseTo(0.2);
       expect(resState.data[0][2]).toBeCloseTo(0.3);
       expect(resState.data[0][3]).toBeCloseTo(0.4);
+
+      expect(resState.flags.gpuDirty).toBe(false);
     });
 
     it('should execute draw call with precomputed info', async () => {
