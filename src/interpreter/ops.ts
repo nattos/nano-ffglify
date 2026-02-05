@@ -912,7 +912,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   'struct_construct': (ctx, args) => {
     // Return a copy of args as the struct, filtering out metadata
     const out: Record<string, RuntimeValue> = {};
-    const ignore = ['op', 'id', 'metadata', 'const_data', 'type'];
+    const ignore = ['op', 'id', 'metadata', 'type'];
     for (const k in args) {
       if (!ignore.includes(k)) {
         out[k] = args[k];
@@ -970,9 +970,6 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     return m[col * dim + row];
   },
 
-  'const_data': function (ctx: EvaluationContext, args: unknown): RuntimeValue | void {
-    throw new Error('Function not implemented.');
-  },
 
   'cmd_dispatch': (ctx, args) => {
     throw new Error(`cmd_dispatch unhandled (should be handled in Interpreter)`);

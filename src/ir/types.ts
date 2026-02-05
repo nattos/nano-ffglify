@@ -242,9 +242,6 @@ export interface Node {
   // e.g. "math_add", "cmd_dispatch", "flow_branch", "var_set"
   comment?: string;
 
-  // Static configuration/literals (not inputs)
-  const_data?: any;
-
   // Debug/Viz info
   metadata?: {
     x: number;
@@ -379,7 +376,6 @@ export type BuiltinOp =
   | 'var_get'    // { var: string } -> any
   | 'var_set'    // { var: string, val: any } -> val
   | 'const_get'  // { name: string } -> any
-  | 'const_data' // { val: any } -> any
   | 'builtin_get' // { name: BuiltinName } -> any
   | 'loop_index' // { loop: string } -> int
 

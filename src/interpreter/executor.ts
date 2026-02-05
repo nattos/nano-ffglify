@@ -292,7 +292,7 @@ export class InterpretedExecutor {
 
   protected mixinNodeProperties(node: Node, args: Record<string, RuntimeValue>, func: FunctionDef, edges: Edge[]) {
     const def = OpDefs[node.op as BuiltinOp];
-    const INTERNAL_KEYS = new Set(['id', 'op', 'metadata', 'comment', 'const_data', 'dataType', 'exec_in', 'exec_out', 'next', '_next']);
+    const INTERNAL_KEYS = new Set(['id', 'op', 'metadata', 'comment', 'dataType', 'exec_in', 'exec_out', 'next', '_next']);
     const isNodeId = (id: string) => func.nodes.some(n => n.id === id);
 
     // 1. Literal properties and metadata references (var names, resource IDs, etc.)

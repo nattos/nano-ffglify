@@ -99,7 +99,6 @@ const NodeSchema = z.object({
   id: z.string(),
   op: z.string(),
   comment: z.string().optional(),
-  const_data: z.any().optional(),
   metadata: z.object({
     x: z.number(),
     y: z.number(),

@@ -76,7 +76,7 @@ describe('Conformance: Functions', () => {
         localVars: [],
         nodes: [
           { id: 'in', op: 'var_get', var: 'arg' },
-          { id: 'zero', op: 'const_data', value: 0 }, // Implicit 0
+          { id: 'zero', op: 'literal', val: 0 }, // Implicit 0
           { id: 'cond', op: 'math_gt', a: 'in', b: 0 },
           { id: 'branch', op: 'flow_branch', cond: 'cond', exec_true: 'ret_pos', exec_false: 'ret_neg' },
           // True Path: Return arg

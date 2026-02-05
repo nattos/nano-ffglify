@@ -105,7 +105,7 @@ const resolveNodeType = (
   });
 
   // 2. Gather Input Types from Literal Props
-  const reservedKeys = new Set(['id', 'op', 'metadata', 'const_data', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', '_next', 'next', 'type', 'dataType']);
+  const reservedKeys = new Set(['id', 'op', 'metadata', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', '_next', 'next', 'type', 'dataType']);
   Object.keys(node).forEach(key => {
     if (reservedKeys.has(key)) return;
     if (inputTypes[key]) return; // Already from edge

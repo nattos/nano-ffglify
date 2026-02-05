@@ -318,7 +318,7 @@ require('./intrinsics.js');
       // Ensure all data dependencies for this executable node are emitted
       edges.filter(e => e.to === curr!.id && e.type === 'data').forEach(e => emitPure(e.from));
       for (const k in curr) {
-        if (['id', 'op', 'metadata', 'const_data', 'func', 'args', 'dispatch'].includes(k)) continue;
+        if (['id', 'op', 'metadata', 'func', 'args', 'dispatch'].includes(k)) continue;
         const val = (curr as any)[k];
         if (typeof val === 'string' && func.nodes.some(n => n.id === val)) emitPure(val);
       }
@@ -798,7 +798,7 @@ require('./intrinsics.js');
       case 'struct_construct': {
         const parts = [];
         for (const k in node) {
-          if (['id', 'op', 'metadata', 'const_data', 'type'].includes(k)) continue;
+          if (['id', 'op', 'metadata', 'type'].includes(k)) continue;
           parts.push(`'${k}': ${this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}`);
         }
         return `{ ${parts.join(', ')} }`;
@@ -862,7 +862,7 @@ require('./intrinsics.js');
       });
     } else {
       for (const k in node) {
-        if (['id', 'op', 'metadata', 'const_data', 'func', 'args', 'dispatch'].includes(k)) continue;
+        if (['id', 'op', 'metadata', 'func', 'args', 'dispatch'].includes(k)) continue;
         parts.push(`'${k}': ${this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}`);
       }
     }

@@ -298,7 +298,6 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { func: 'string' }, output: 'any' },
     { inputs: { func: 'string', '*': 'any' }, output: 'any' }
   ],
-  'const_data': [{ inputs: { '*': 'any' }, output: 'any' }], // Raw data node
 
   'func_return': [
     { inputs: { value: 'any' }, output: 'any' },
