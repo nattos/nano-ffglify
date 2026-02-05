@@ -17,7 +17,7 @@ export class InterpretedExecutor {
     this.context.pushFrame('entry');
     const entryFunc = this.context.ir.functions.find(f => f.id === this.context.ir.entryPoint);
     if (!entryFunc) throw new Error('Entry point not found');
-    this.context.result = this.executeFunction(entryFunc);
+    this.context.result = this.executeFunction(entryFunc) ?? undefined;
     this.context.popFrame();
   }
 

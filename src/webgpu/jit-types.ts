@@ -1,4 +1,4 @@
-import { RuntimeValue, ResourceState } from '../interpreter/context';
+import { ResourceState, RuntimeValue } from './host-interface';
 import { IGpuExecutor, WebGpuHost } from './webgpu-host';
 
 export interface JitContext {

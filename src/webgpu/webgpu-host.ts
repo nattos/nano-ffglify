@@ -16,19 +16,22 @@ export interface IGpuExecutor {
  * Bridges the JIT-compiled CPU code with the GPU executor and resource state.
  */
 export class WebGpuHost implements RuntimeGlobals {
-  private executor;
-  private resources;
+  readonly device;
+  readonly executor;
+  readonly resources;
   private onResizeCallback;
   private logHandler;
 
   constructor(
     init: {
+      device: GPUDevice,
       executor: IGpuExecutor,
       resources: Map<string, ResourceState>,
       onResizeCallback?: (resId: string, size: number | number[], format?: string | number) => void,
       logHandler?: (message: string, payload?: any) => void
     }
   ) {
+    this.device = init.device;
     this.executor = init.executor;
     this.resources = init.resources;
     this.onResizeCallback = init.onResizeCallback;

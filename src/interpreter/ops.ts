@@ -1,5 +1,5 @@
 import { IRDocument, BuiltinOp, TextureFormat, TextureFormatValues, TextureFormatFromId } from '../ir/types';
-import { OpArgs } from '../ir/builtin-schemas';
+import { CmdSyncToCpuArgs, CmdWaitCpuSyncArgs, OpArgs } from '../ir/builtin-schemas';
 import { EvaluationContext, RuntimeValue, VectorValue } from './context';
 
 export type OpHandler<K extends BuiltinOp> = (ctx: EvaluationContext, args: OpArgs[K]) => RuntimeValue | void;
@@ -254,6 +254,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     const hi = view.getUint32(0);
     const expBits = (hi >> 20) & 0x7FF;
     return expBits - 1023; // Standard frexp exponent is typically one less than the log2 exponent?
+
     // Wait, let's keep consistency with math_exponent if that's what's intended.
   }),
   'math_ldexp': (ctx, args) => applyBinary(args.val, args.exp, (val, exp) => val * Math.pow(2, exp)),
@@ -358,6 +359,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     const dst = args.a as number[]; // [r, g, b, a]
     const src = args.b as number[]; // [r, g, b, a]
 
+
     // Default alpha to 1.0 if missing (e.g. float3)
     const srcA = src[3] ?? 1.0;
     const dstA = dst[3] ?? 1.0;
@@ -369,8 +371,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     // If outA is 0, result is 0.
     if (outA < 1e-6) return [0, 0, 0, 0];
 
-    const mixCh = (d: number, s: number) =>
-      (s * srcA + d * dstA * (1.0 - srcA)) / outA;
+    const mixCh = (d: number, s: number) => (s * srcA + d * dstA * (1.0 - srcA)) / outA;
 
     return [
       mixCh(dst[0], src[0]),
@@ -757,7 +758,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   'resource_get_format': (ctx, args) => {
     const id = args.resource as string;
     const res = ctx.getResource(id);
-    const fmt = res.def.format ?? TextureFormat.RGBA8; // Returns string enum
+    const fmt: TextureFormat = res.def.format ?? TextureFormat.RGBA8; // Returns string enum
     return TextureFormatValues[fmt]; // Returns int ID
   },
 
@@ -961,17 +962,28 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     return Array.isArray(arr) ? arr.length : 0;
   },
 
-  'cmd_dispatch': (ctx, args) => {
-    throw new Error(`cmd_dispatch unhandled (should be handled in Interpreter)`);
-  },
-  'cmd_draw': (ctx, args) => {
-    throw new Error(`cmd_draw unhandled (should be handled in Interpreter)`);
-  },
   'mat_extract': (ctx, args) => {
     const m = validateArg(args as any, 'mat', 'vector') as number[];
     const col = validateArg(args as any, 'col', 'number') as number;
     const row = validateArg(args as any, 'row', 'number') as number;
     const dim = m.length === 16 ? 4 : 3;
     return m[col * dim + row];
+  },
+
+  'const_data': function (ctx: EvaluationContext, args: unknown): RuntimeValue | void {
+    throw new Error('Function not implemented.');
+  },
+
+  'cmd_dispatch': (ctx, args) => {
+    throw new Error(`cmd_dispatch unhandled (should be handled in Interpreter)`);
+  },
+  'cmd_draw': (ctx, args) => {
+    throw new Error(`cmd_draw unhandled (should be handled in Interpreter)`);
+  },
+  'cmd_sync_to_cpu': function (ctx: EvaluationContext, args: CmdSyncToCpuArgs): RuntimeValue | void {
+    throw new Error('Function not implemented.');
+  },
+  'cmd_wait_cpu_sync': function (ctx: EvaluationContext, args: CmdWaitCpuSyncArgs): RuntimeValue | void {
+    throw new Error('Function not implemented.');
   },
 };

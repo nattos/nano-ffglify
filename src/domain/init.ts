@@ -18,8 +18,7 @@ export const INITIAL_DATABASE_STATE: DatabaseState = {
         inputs: [],
         outputs: [],
         localVars: [],
-        nodes: [],
-        edges: []
+        nodes: []
       }
     ]
   },

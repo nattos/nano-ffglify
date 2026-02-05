@@ -1,13 +1,14 @@
 /**
  * Standalone types for the host interface, decoupled from the IR.
  */
-export type RuntimeValue =
-  | number
-  | boolean
-  | string
-  | number[]
-  | { [key: string]: RuntimeValue }
-  | RuntimeValue[];
+export type ScalarValue = number | boolean | string;
+export type VectorValue = number[]; // Supports float2, float3, float4, float3x3, float4x4
+export type MatrixValue = number[]; // Alias for clarity
+export type ArrayValue = (number | boolean | string | number[] | Record<string, any>)[];
+
+// Recursive structure for structs
+export interface StructValue { [key: string]: RuntimeValue };
+export type RuntimeValue = ScalarValue | VectorValue | MatrixValue | StructValue | ArrayValue;
 
 export interface RenderPipelineDef {
   topology?: 'point-list' | 'line-list' | 'line-strip' | 'triangle-list' | 'triangle-strip';
@@ -35,14 +36,32 @@ export type BlendFactor =
   | 'src' | 'one-minus-src' | 'src-alpha' | 'one-minus-src-alpha'
   | 'dst' | 'one-minus-dst' | 'dst-alpha' | 'one-minus-dst-alpha';
 
+export enum TextureFormat {
+  Unknown = 'unknown',
+  RGBA8 = 'rgba8',     // Standard 8-bit Normalized
+  RGBA16F = 'rgba16f', // Half-Float
+  RGBA32F = 'rgba32f', // Full-Float (High Precision)
+  R8 = 'r8',           // Single Channel 8-bit
+  R16F = 'r16f',       // Single Channel Half-Float
+  R32F = 'r32f'        // Single Channel Full-Float
+}
+
 export interface ResourceDef {
   id: string;
   type: 'texture2d' | 'buffer' | 'atomic_counter';
   dataType?: string;
-  format?: string;
+  format?: TextureFormat;
   sampler?: {
     wrap?: 'clamp' | 'repeat' | 'mirror';
     filter?: 'linear' | 'nearest';
+  };
+  // Persistence / Lifecycle
+  persistence: {
+    retain: boolean;         // If true, data persists across frames (History/Feedback).
+    clearOnResize: boolean;  // Reset content if size changes?
+    clearEveryFrame: boolean;// Explicitly clear at start of frame?
+    clearValue?: any;        // Value to clear to (if clearing).
+    cpuAccess: boolean;      // If true, enables Readback to Host (SLOW).
   };
 }
 

@@ -1,5 +1,5 @@
 import { DataType, StructDef, ResourceDef } from '../ir/types';
-import { RuntimeValue } from '../ir/resource-store';
+import { RuntimeValue } from './host-interface';
 
 /**
  * Represents the memory layout of a single field within a struct or buffer.

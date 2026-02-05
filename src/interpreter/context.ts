@@ -1,11 +1,18 @@
-import { IRDocument, ResourceDef, TextureFormat } from '../ir/types';
-import type { RuntimeValue, ResourceState, ActionLogEntry } from '../ir/resource-store';
+import { IRDocument } from '../ir/types';
+import { makeResourceStates } from '../runtime/resources';
+import { ResourceState, RuntimeValue } from '../webgpu/host-interface';
 
-export type { RuntimeValue, VectorValue, ScalarValue, MatrixValue, ArrayValue, StructValue, ResourceState, ActionLogEntry } from '../ir/resource-store';
+export type { RuntimeValue, VectorValue, ScalarValue, MatrixValue, ArrayValue, StructValue } from '../webgpu/host-interface';
 
 // ------------------------------------------------------------------
 // State
 // ------------------------------------------------------------------
+
+export interface ActionLogEntry {
+  type: 'dispatch' | 'draw' | 'resize' | 'log';
+  target?: string;
+  payload?: any;
+}
 
 export interface StackFrame {
   name: string; // Function ID or Block
@@ -37,56 +44,7 @@ export class EvaluationContext {
   constructor(ir: IRDocument, inputs: Map<string, RuntimeValue>) {
     this.ir = ir;
     this.inputs = inputs;
-    this.resources = new Map();
-
-    // Initialize Resources (default state)
-    for (const res of ir.resources) {
-      let width = 1;
-      let height = 1;
-
-      if (res.size.mode === 'fixed') {
-        const val = res.size.value;
-        if (Array.isArray(val)) {
-          width = val[0];
-          height = val[1];
-        } else {
-          width = val;
-        }
-      }
-
-      this.resources.set(res.id, {
-        def: {
-          ...res,
-          format: res.format ?? TextureFormat.RGBA8 // Default texture format
-        },
-        width,
-        height,
-        data: [] // Data initialized lazily or on resize
-      });
-
-      // Apply clearVal if present
-      if (res.persistence.clearValue !== undefined) {
-        const r = this.resources.get(res.id)!;
-        const count = width * height;
-        r.data = new Array(count).fill(res.persistence.clearValue);
-      }
-    }
-
-    // Treat 'texture2d' Inputs as Resources
-    for (const inp of ir.inputs) {
-      if (inp.type === 'texture2d') {
-        this.resources.set(inp.id, {
-          def: {
-            id: inp.id,
-            type: 'texture2d',
-            size: { mode: 'fixed', value: [1, 1] },
-            persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
-          },
-          width: 1,
-          height: 1
-        });
-      }
-    }
+    this.resources = makeResourceStates(ir);
   }
 
   // -------------------------------------------------------
@@ -180,12 +138,6 @@ export class EvaluationContext {
         (state as any).gpuTexture = undefined;
       }
     });
-
-    // 2. Cleanup Backend Specific
-    if (this.webGpuExec && typeof this.webGpuExec.destroy === 'function') {
-      this.webGpuExec.destroy();
-      this.webGpuExec = undefined;
-    }
 
     // Note: We don't destroy the device here because it might be shared (e.g. in tests)
     // or managed by a higher-level executor.

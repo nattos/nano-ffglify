@@ -25,9 +25,11 @@ import { fetchAndDecodeImage, encodeAndDownloadImage } from '../utils/image-util
 import { EvaluationContext } from '../interpreter/context';
 import { WebGpuHostExecutor } from '../webgpu/webgpu-host-executor';
 import { TextureFormat } from '../ir/types';
+import { WebGpuHost } from '../webgpu/webgpu-host';
+import { makeResourceStates } from '../runtime/resources';
 
 export class AppController {
-  public setActiveTab(tab: 'state' | 'logs' | 'script' | 'results') {
+  public setActiveTab(tab: 'state' | 'logs' | 'script' | 'results' | 'ir') {
     runInAction(() => {
       appState.local.settings.activeTab = tab;
     });
@@ -178,12 +180,12 @@ export class AppController {
       });
       inputs.set('u_kernel_size', 16); // Fallback for blur demo if not set
 
-      const ctx = new EvaluationContext(ir, inputs);
+      const resources = makeResourceStates(ir);
 
       // 4. Populate texture inputs with image data
       ir.inputs.forEach(inp => {
         if (inp.type === 'texture2d') {
-          const state = ctx.getResource(inp.id);
+          const state = resources.get(inp.id);
           if (state) {
             state.width = inputAsset.width;
             state.height = inputAsset.height;
@@ -193,25 +195,24 @@ export class AppController {
       });
 
       // Special case: if t_input is a resource (legacy), populate it too
-      const tInputRes = ir.resources.find(r => r.id === 't_input');
+      const tInputRes = resources.get('t_input');
       if (tInputRes) {
-        const state = ctx.getResource('t_input');
-        state.width = inputAsset.width;
-        state.height = inputAsset.height;
-        state.data = inputAsset.data;
+        tInputRes.width = inputAsset.width;
+        tInputRes.height = inputAsset.height;
+        tInputRes.data = inputAsset.data;
       }
 
       // 5. Initialize other resources (ensure they exist and have initial sizes)
       // For textures that reference another texture's size, resolve them
       ir.resources.forEach(res => {
-        const state = ctx.getResource(res.id);
+        const state = resources.get(res.id);
         if (res.size.mode === 'reference') {
           const refId = res.size.ref;
           if (refId) {
             // Try to find the reference in inputs or resources
             const refInp = ir.inputs.find(i => i.id === refId);
             const refRes = ir.resources.find(r => r.id === refId);
-            if (refInp || (refRes && refRes.id === 't_input')) {
+            if (state && (refInp || (refRes && refRes.id === 't_input'))) {
               state.width = inputAsset.width;
               state.height = inputAsset.height;
             }
@@ -220,20 +221,34 @@ export class AppController {
       });
 
       // 6. Setup Executors
-      const hostExec = new WebGpuHostExecutor(ctx, device);
+      const cpuJit = new CpuJitCompiler();
+      const compiled = cpuJit.compile(ir, ir.entryPoint);
+      const gpuExecutor = await compiled.init(device);
+      const webGpuHost = new WebGpuHost({
+        device: device,
+        executor: gpuExecutor,
+        resources: resources,
+        logHandler: (msg, payload) => console.log(msg, payload),
+      });
 
-      // 7. Execute JIT starting at entry point
-      const entryFunc = ir.functions.find(f => f.id === ir.entryPoint);
-      if (!entryFunc) throw new Error("Entry point not found");
+      const hostExec = new WebGpuHostExecutor({
+        ir: ir,
+        compiledCode: compiled,
+        host: webGpuHost
+      });
 
-      ctx.pushFrame(ir.entryPoint);
-      await hostExec.executeFunction(entryFunc, ir.functions);
+      await hostExec.execute(inputs);
 
       // [TEMP] Explicit readback for debug
-      // await gpuExec.readbackResource('t_output');
+      for (const resourceId of resources.keys()) {
+        webGpuHost.executeSyncToCpu(resourceId);
+      }
+      for (const resourceId of resources.keys()) {
+        await webGpuHost.executeWaitCpuSync(resourceId);
+      }
 
       // 8. Extract t_output and Download
-      const tOutput = ctx.getResource('t_output');
+      const tOutput = resources.get('t_output');
       if (!tOutput || !tOutput.data) {
         throw new Error("t_output not found or has no data after execution");
       }

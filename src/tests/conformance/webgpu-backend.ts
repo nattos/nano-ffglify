@@ -2,9 +2,12 @@
 import { getSharedDevice, gpuSemaphore } from './gpu-singleton';
 
 import type { TestBackend } from './types';
-import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
+import { EvaluationContext } from '../../interpreter/context';
 import { IRDocument } from '../../ir/types';
 import { WebGpuHostExecutor } from '../../webgpu/webgpu-host-executor';
+import { WebGpuHost } from '../../webgpu/webgpu-host';
+import { RuntimeValue } from '../../webgpu/host-interface';
+import { CpuJitCompiler } from '../../webgpu/cpu-jit';
 
 /**
  * A full backend that runs both CPU and GPU code.
@@ -40,8 +43,34 @@ export const WebGpuBackend: TestBackend = {
       // 3. Execute
       if (func.type === 'cpu') {
         ctx.pushFrame(entryPoint);
-        const hostExec = new WebGpuHostExecutor(ctx, device);
-        ctx.result = await hostExec.executeFunction(func, ctx.ir.functions);
+
+        const cpuJit = new CpuJitCompiler();
+        const compiled = cpuJit.compile(ctx.ir, func.id);
+        const gpuExecutor = await compiled.init(device);
+        const webGpuHost = new WebGpuHost({
+          device: device,
+          executor: gpuExecutor,
+          resources: ctx.resources,
+          logHandler: (msg, payload) => ctx.log.push({ type: 'log', target: msg, payload }),
+          onResizeCallback: (id, size, format) => {
+            ctx.log.push({ type: 'resize', target: id, payload: { size, format } });
+          }
+        });
+
+        const hostExec = new WebGpuHostExecutor({
+          ir: ctx.ir,
+          compiledCode: compiled,
+          host: webGpuHost
+        });
+        ctx.result = await hostExec.execute(ctx.inputs);
+
+        // Readback, for tests!
+        for (const resourceId of ctx.resources.keys()) {
+          webGpuHost.executeSyncToCpu(resourceId);
+        }
+        for (const resourceId of ctx.resources.keys()) {
+          await webGpuHost.executeWaitCpuSync(resourceId);
+        }
       } else {
         throw new Error(`Entry point '${entryPoint}' must be 'cpu'`);
       }

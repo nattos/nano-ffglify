@@ -41,8 +41,7 @@ export function verifyLiteralsOrRefsExist(
     // Optional argument handling
     if (value === undefined) {
       // Check if there is an incoming edge for this port (data or execution)
-      const hasEdge = func?.edges?.some(e => e.to === node.id && e.portIn === key);
-      if (!argDef.optional && !hasEdge) {
+      if (!argDef.optional) {
         errors.push(`Missing required argument '${key}'`);
       }
       continue;
