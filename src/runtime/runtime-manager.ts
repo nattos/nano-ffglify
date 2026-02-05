@@ -8,6 +8,22 @@ import { PATCH_SIZE } from '../constants';
 
 export type TransportState = 'playing' | 'paused' | 'stopped';
 
+export type TextureSourceType = 'url' | 'file';
+
+export interface TextureSource {
+  type: TextureSourceType;
+  value: string | File;
+}
+
+interface InputSourceState {
+  id: string;
+  source: TextureSource;
+  videoElement?: HTMLVideoElement;
+  loadedImage?: VideoFrame;
+  isDirty: boolean;
+  isLoading: boolean;
+}
+
 /**
  * Runtime Manager - orchestrates the execution loop and state.
  */
@@ -29,6 +45,7 @@ export class RuntimeManager {
   private executor: WebGpuHostExecutor | null = null;
   private resources: Map<string, ResourceState> = new Map();
   private inputs: Map<string, RuntimeValue> = new Map();
+  private inputSources: Map<string, InputSourceState> = new Map();
 
   private lastFrameTime: number = 0;
   private frameId: number | null = null;
@@ -52,21 +69,13 @@ export class RuntimeManager {
       }
     }
 
-    // 1. Fetch and decode image using WebCodecs (ImageDecoder)
-    const response = await fetch('test.png');
-    if (!response.body) throw new Error("Failed to fetch test.png");
-
-    // @ts-ignore - ImageDecoder might not be in all type definitions yet
-    const decoder = new ImageDecoder({ data: response.body, type: 'image/png' });
-    const { image } = await decoder.decode();
-
     const ir = artifacts.ir;
 
     runInAction(() => {
       this.currentCompiled = artifacts;
       this.resources = makeResourceStates(ir);
 
-      // 2. Allocate all textures at PATCH_SIZE
+      // 1. Allocate all textures at PATCH_SIZE
       this.resources.forEach((state, id) => {
         if (state.def.type === 'texture2d') {
           state.width = PATCH_SIZE.width;
@@ -81,39 +90,18 @@ export class RuntimeManager {
         }
       });
 
-      // 3. Map inputs and apply defaults
+      // 2. Map inputs and apply defaults
       ir.inputs.forEach(inp => {
         if (inp.type === 'texture2d') {
-          const state = this.resources.get(inp.id);
-          if (state && image) {
-            // Upload source image to a temp texture using GPU queue
-            const tempTex = device.createTexture({
-              label: `Temp: ${inp.id}`,
-              size: [image.displayWidth, image.displayHeight],
-              format: 'rgba8unorm',
-              usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
-            });
-
-            device.queue.copyExternalImageToTexture(
-              { source: image },
-              { texture: tempTex },
-              [image.displayWidth, image.displayHeight]
-            );
-
-            // Blit and fit into our patch texture
-            if (state.gpuTexture) {
-              this.blitTexture(device, tempTex, state.gpuTexture);
-            }
-            tempTex.destroy();
+          // Initialize with test.png if not already set
+          if (!this.inputSources.has(inp.id)) {
+            this.setTextureSource(inp.id, { type: 'url', value: 'test.png' });
           }
           this.inputs.set(inp.id, inp.id);
         } else if (inp.default !== undefined) {
           this.inputs.set(inp.id, inp.default);
         }
       });
-
-      image.close();
-      decoder.close();
     });
 
     // We assume the device passed in is either a real GPUDevice or a mock
@@ -188,6 +176,9 @@ export class RuntimeManager {
     const startTime = performance.now();
 
     try {
+      // Sync dynamic inputs
+      this.syncInputsToGpu();
+
       // Execute the frame
       await this.executor.execute(this.inputs);
       runInAction(() => {
@@ -329,6 +320,118 @@ export class RuntimeManager {
     passEncoder.end();
 
     device.queue.submit([commandEncoder.finish()]);
+  }
+
+  public setTextureSource(id: string, source: TextureSource) {
+    let state = this.inputSources.get(id);
+    if (!state) {
+      state = { id, source, isDirty: true, isLoading: false };
+      this.inputSources.set(id, state);
+    } else {
+      state.source = source;
+      state.isDirty = true;
+      // Clean up previous
+      if (state.videoElement) {
+        state.videoElement.pause();
+        state.videoElement.src = "";
+        state.videoElement.load();
+        state.videoElement = undefined;
+      }
+      if (state.loadedImage) {
+        state.loadedImage.close();
+        state.loadedImage = undefined;
+      }
+    }
+    this.loadSource(state);
+  }
+
+  private async loadSource(state: InputSourceState) {
+    state.isLoading = true;
+    try {
+      if (state.source.type === 'url') {
+        const url = state.source.value as string;
+        if (url.match(/\.(mp4|webm|ogg|mov)$/i)) {
+          state.videoElement = this.createVideoElement(url);
+        } else {
+          const response = await fetch(url);
+          // @ts-ignore
+          const decoder = new ImageDecoder({ data: response.body, type: 'image/png' });
+          const { image } = await decoder.decode();
+          state.loadedImage = image;
+          state.isDirty = true;
+          decoder.close();
+        }
+      } else {
+        const file = state.source.value as File;
+        if (file.type.startsWith('video/')) {
+          const url = URL.createObjectURL(file);
+          state.videoElement = this.createVideoElement(url);
+        } else {
+          // @ts-ignore
+          const decoder = new ImageDecoder({ data: file.stream(), type: file.type });
+          const { image } = await decoder.decode();
+          state.loadedImage = image;
+          state.isDirty = true;
+          decoder.close();
+        }
+      }
+    } catch (e) {
+      console.error(`Failed to load source for ${state.id}:`, e);
+    } finally {
+      state.isLoading = false;
+    }
+  }
+
+  private createVideoElement(url: string): HTMLVideoElement {
+    const video = document.createElement('video');
+    video.src = url;
+    video.loop = true;
+    video.muted = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.play();
+    return video;
+  }
+
+  private syncInputsToGpu() {
+    if (!this.device) return;
+
+    for (const state of this.inputSources.values()) {
+      const resource = this.resources.get(state.id);
+      if (!resource || !resource.gpuTexture) continue;
+
+      let sourceObject: any = null;
+      let isVideo = false;
+
+      if (state.videoElement && state.videoElement.readyState >= 2) {
+        sourceObject = state.videoElement;
+        isVideo = true;
+      } else if (state.loadedImage) {
+        sourceObject = state.loadedImage;
+      }
+
+      if (sourceObject && (state.isDirty || isVideo)) {
+        const width = (sourceObject as any).displayWidth ?? (sourceObject as any).videoWidth ?? (sourceObject as any).width;
+        const height = (sourceObject as any).displayHeight ?? (sourceObject as any).videoHeight ?? (sourceObject as any).height;
+
+        const tempTex = this.device.createTexture({
+          label: `TempUpload: ${state.id}`,
+          size: [width, height],
+          format: 'rgba8unorm',
+          usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
+        });
+
+        this.device.queue.copyExternalImageToTexture(
+          { source: sourceObject },
+          { texture: tempTex },
+          [width, height]
+        );
+
+        this.blitTexture(this.device, tempTex, resource.gpuTexture);
+        tempTex.destroy();
+        state.isDirty = false;
+      }
+    }
   }
 
   public onNewFrame(cb: (texture: GPUTexture) => void) {
