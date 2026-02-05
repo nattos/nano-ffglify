@@ -106,7 +106,7 @@ export const IRSchema = defineSchema<IRDocument & { id: string }>({
           label: { type: 'string', description: 'UI Label', required: false },
           comment: { type: 'string', description: 'Description', required: false },
           format: { type: 'string', description: 'Format hint', required: false },
-          default: { type: 'any', description: 'Default value', required: false },
+          default: { type: 'any_value', description: 'Default value', required: false },
           ui: { type: 'object', description: 'UI Hint', required: false, properties: {} }
         }
       }
@@ -144,7 +144,7 @@ export const IRSchema = defineSchema<IRDocument & { id: string }>({
               clearOnResize: { type: 'boolean', description: 'Clear on resize', required: true },
               clearEveryFrame: { type: 'boolean', description: 'Clear every frame', required: true },
               cpuAccess: { type: 'boolean', description: 'Allow CPU access', required: true },
-              clearValue: { type: 'any', description: 'Value to clear to', required: false }
+              clearValue: { type: 'any_value', description: 'Value to clear to', required: false }
             }
           },
           sampler: {

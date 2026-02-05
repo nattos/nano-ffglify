@@ -29,9 +29,15 @@ function validateField(value: any, schema: FieldSchema, path: string, errors: Va
     return;
   }
 
-  // Type Check
   if (schema.type === 'any') {
     return; // Accept anything
+  }
+
+  if (schema.type === 'any_value') {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return;
+    if (Array.isArray(value) && value.every(v => typeof v === 'number')) return;
+    errors.push({ field: path, message: `Expected shader value (string, number, bool, or float array) at '${path}', got ${typeof value}`, severity: 'error' });
+    return;
   }
 
   if (schema.type === 'array') {
