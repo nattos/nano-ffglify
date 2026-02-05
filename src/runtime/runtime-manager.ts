@@ -4,7 +4,6 @@ import { WebGpuHostExecutor } from '../webgpu/webgpu-host-executor';
 import { WebGpuHost } from '../webgpu/webgpu-host';
 import { ResourceState, RuntimeValue } from '../webgpu/host-interface';
 import { makeResourceStates } from './resources';
-import { fetchAndDecodeImage } from '../utils/image-utils';
 import { PATCH_SIZE } from '../constants';
 
 export type TransportState = 'playing' | 'paused' | 'stopped';
@@ -53,14 +52,21 @@ export class RuntimeManager {
       }
     }
 
-    const testImage = await fetchAndDecodeImage('test.png');
+    // 1. Fetch and decode image using WebCodecs (ImageDecoder)
+    const response = await fetch('test.png');
+    if (!response.body) throw new Error("Failed to fetch test.png");
+
+    // @ts-ignore - ImageDecoder might not be in all type definitions yet
+    const decoder = new ImageDecoder({ data: response.body, type: 'image/png' });
+    const { image } = await decoder.decode();
+
     const ir = artifacts.ir;
 
     runInAction(() => {
       this.currentCompiled = artifacts;
       this.resources = makeResourceStates(ir);
 
-      // 1. Allocate all textures at PATCH_SIZE
+      // 2. Allocate all textures at PATCH_SIZE
       this.resources.forEach((state, id) => {
         if (state.def.type === 'texture2d') {
           state.width = PATCH_SIZE.width;
@@ -70,36 +76,28 @@ export class RuntimeManager {
             label: `Resource: ${id}`,
             size: [PATCH_SIZE.width, PATCH_SIZE.height],
             format: 'rgba8unorm', // Standard format for our internal patches
-            usage: 0x1F // RENDER_ATTACHMENT | TEXTURE_BINDING | STORAGE_BINDING | COPY_SRC | COPY_DST
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST
           });
         }
       });
 
-      // 2. Map inputs and apply defaults
+      // 3. Map inputs and apply defaults
       ir.inputs.forEach(inp => {
         if (inp.type === 'texture2d') {
           const state = this.resources.get(inp.id);
-          if (state && testImage) {
-            // Upload source image to a temp texture
+          if (state && image) {
+            // Upload source image to a temp texture using GPU queue
             const tempTex = device.createTexture({
-              size: [testImage.width, testImage.height],
+              label: `Temp: ${inp.id}`,
+              size: [image.displayWidth, image.displayHeight],
               format: 'rgba8unorm',
-              usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
+              usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
             });
 
-            // Note: testImage.data is number[][] (0.0 - 1.0 range)
-            const rgbaData = new Uint8Array(testImage.width * testImage.height * 4);
-            for (let i = 0; i < testImage.data.length; i++) {
-              rgbaData[i * 4 + 0] = Math.floor(testImage.data[i][0] * 255);
-              rgbaData[i * 4 + 1] = Math.floor(testImage.data[i][1] * 255);
-              rgbaData[i * 4 + 2] = Math.floor(testImage.data[i][2] * 255);
-              rgbaData[i * 4 + 3] = Math.floor(testImage.data[i][3] * 255);
-            }
-            device.queue.writeTexture(
+            device.queue.copyExternalImageToTexture(
+              { source: image },
               { texture: tempTex },
-              rgbaData,
-              { bytesPerRow: testImage.width * 4 },
-              [testImage.width, testImage.height]
+              [image.displayWidth, image.displayHeight]
             );
 
             // Blit and fit into our patch texture
@@ -113,6 +111,9 @@ export class RuntimeManager {
           this.inputs.set(inp.id, inp.default);
         }
       });
+
+      image.close();
+      decoder.close();
     });
 
     // We assume the device passed in is either a real GPUDevice or a mock

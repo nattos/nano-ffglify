@@ -4,41 +4,6 @@
  */
 
 /**
- * Fetches an image from a URL and decodes it into a flat array of float4 pixels [0-1 range].
- */
-export async function fetchAndDecodeImage(url: string): Promise<{ data: number[][], width: number, height: number }> {
-  const response = await fetch(url);
-  const blob = await response.blob();
-  const img = await createImageBitmap(blob);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Could not get canvas context');
-
-  ctx.drawImage(img, 0, 0);
-  const imageData = ctx.getImageData(0, 0, img.width, img.height);
-  const pixels = imageData.data;
-
-  const float4Data: number[][] = [];
-  for (let i = 0; i < pixels.length; i += 4) {
-    float4Data.push([
-      pixels[i] / 255.0,
-      pixels[i + 1] / 255.0,
-      pixels[i + 2] / 255.0,
-      pixels[i + 3] / 255.0
-    ]);
-  }
-
-  return {
-    data: float4Data,
-    width: img.width,
-    height: img.height
-  };
-}
-
-/**
  * Encodes an array of float4 pixels into a PNG and triggers a browser download.
  */
 export async function encodeAndDownloadImage(data: number[][], width: number, height: number, filename: string) {
