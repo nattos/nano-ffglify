@@ -5,6 +5,7 @@ import { WebGpuHost } from '../webgpu/webgpu-host';
 import { ResourceState, RuntimeValue } from '../webgpu/host-interface';
 import { makeResourceStates } from './resources';
 import { fetchAndDecodeImage } from '../utils/image-utils';
+import { PATCH_SIZE } from '../constants';
 
 export type TransportState = 'playing' | 'paused' | 'stopped';
 
@@ -34,28 +35,79 @@ export class RuntimeManager {
   private frameId: number | null = null;
   private onFrameCallbacks: Set<(texture: GPUTexture) => void> = new Set();
 
+  private blitPipeline: GPURenderPipeline | null = null;
+  private sampler: GPUSampler | null = null;
+  private blitUniformBuffer: GPUBuffer | null = null;
+
   constructor() {
     makeObservable(this);
   }
 
-  public async setCompiled(artifacts: CompilationArtifacts, device: GPUDevice | any) {
+  public async setCompiled(artifacts: CompilationArtifacts, device: GPUDevice) {
+    this.device = device;
+
+    // Initialize Blit Pipeline if we have a real device
+    if (device) {
+      if (!this.blitPipeline) {
+        this.initBlitPipeline(device);
+      }
+    }
+
     const testImage = await fetchAndDecodeImage('test.png');
+    const ir = artifacts.ir;
 
     runInAction(() => {
       this.currentCompiled = artifacts;
-      this.device = device;
-      this.resources = makeResourceStates(artifacts.ir);
+      this.resources = makeResourceStates(ir);
 
-      // [TEMP] Preload image inputs and apply defaults
-      artifacts.ir.inputs.forEach(inp => {
+      // 1. Allocate all textures at PATCH_SIZE
+      this.resources.forEach((state, id) => {
+        if (state.def.type === 'texture2d') {
+          state.width = PATCH_SIZE.width;
+          state.height = PATCH_SIZE.height;
+
+          state.gpuTexture = device.createTexture({
+            label: `Resource: ${id}`,
+            size: [PATCH_SIZE.width, PATCH_SIZE.height],
+            format: 'rgba8unorm', // Standard format for our internal patches
+            usage: 0x1F // RENDER_ATTACHMENT | TEXTURE_BINDING | STORAGE_BINDING | COPY_SRC | COPY_DST
+          });
+        }
+      });
+
+      // 2. Map inputs and apply defaults
+      ir.inputs.forEach(inp => {
         if (inp.type === 'texture2d') {
           const state = this.resources.get(inp.id);
-          if (state) {
-            state.width = testImage.width;
-            state.height = testImage.height;
-            state.data = testImage.data;
+          if (state && testImage) {
+            // Upload source image to a temp texture
+            const tempTex = device.createTexture({
+              size: [testImage.width, testImage.height],
+              format: 'rgba8unorm',
+              usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
+            });
+
+            // Note: testImage.data is number[][] (0.0 - 1.0 range)
+            const rgbaData = new Uint8Array(testImage.width * testImage.height * 4);
+            for (let i = 0; i < testImage.data.length; i++) {
+              rgbaData[i * 4 + 0] = Math.floor(testImage.data[i][0] * 255);
+              rgbaData[i * 4 + 1] = Math.floor(testImage.data[i][1] * 255);
+              rgbaData[i * 4 + 2] = Math.floor(testImage.data[i][2] * 255);
+              rgbaData[i * 4 + 3] = Math.floor(testImage.data[i][3] * 255);
+            }
+            device.queue.writeTexture(
+              { texture: tempTex },
+              rgbaData,
+              { bytesPerRow: testImage.width * 4 },
+              [testImage.width, testImage.height]
+            );
+
+            // Blit and fit into our patch texture
+            if (state.gpuTexture) {
+              this.blitTexture(device, tempTex, state.gpuTexture);
+            }
+            tempTex.destroy();
           }
-          // Texture inputs in the host expect the resource ID as the value
           this.inputs.set(inp.id, inp.id);
         } else if (inp.default !== undefined) {
           this.inputs.set(inp.id, inp.default);
@@ -163,6 +215,119 @@ export class RuntimeManager {
   @action
   private setFps(val: number) {
     this.fps = val;
+  }
+
+  private initBlitPipeline(device: GPUDevice) {
+    const shaderCode = `
+            struct Params {
+                scale: vec2<f32>,
+                offset: vec2<f32>,
+            }
+            @group(0) @binding(2) var<uniform> params: Params;
+
+            struct VertexOutput {
+                @builtin(position) position: vec4<f32>,
+                @location(0) uv: vec2<f32>,
+            }
+
+            @vertex
+            fn vert_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+                var pos = array<vec2<f32>, 4>(
+                    vec2<f32>(-1.0, -1.0),
+                    vec2<f32>(1.0, -1.0),
+                    vec2<f32>(-1.0, 1.0),
+                    vec2<f32>(1.0, 1.0)
+                );
+                var uv = array<vec2<f32>, 4>(
+                    vec2<f32>(0.0, 1.0),
+                    vec2<f32>(1.0, 1.0),
+                    vec2<f32>(0.0, 0.0),
+                    vec2<f32>(1.0, 0.0)
+                );
+                var out: VertexOutput;
+                out.position = vec4<f32>(pos[vertexIndex] * params.scale + params.offset, 0.0, 1.0);
+                out.uv = uv[vertexIndex];
+                return out;
+            }
+
+            @group(0) @binding(0) var t_src: texture_2d<f32>;
+            @group(0) @binding(1) var s_src: sampler;
+
+            @fragment
+            fn frag_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+                return textureSample(t_src, s_src, uv);
+            }
+        `;
+
+    const module = device.createShaderModule({ code: shaderCode });
+    this.blitPipeline = device.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vert_main' },
+      fragment: {
+        module,
+        entryPoint: 'frag_main',
+        targets: [{ format: 'rgba8unorm' }]
+      },
+      primitive: { topology: 'triangle-strip' }
+    });
+    this.sampler = device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+    });
+    this.blitUniformBuffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+  }
+
+  private blitTexture(device: GPUDevice, src: GPUTexture, dst: GPUTexture) {
+    if (!this.blitPipeline || !this.sampler || !this.blitUniformBuffer) return;
+
+    const sw = dst.width;
+    const sh = dst.height;
+    const tw = src.width;
+    const th = src.height;
+
+    const sRatio = sw / sh;
+    const tRatio = tw / th;
+
+    let scaleX = 1.0;
+    let scaleY = 1.0;
+
+    if (tRatio > sRatio) {
+      scaleY = sRatio / tRatio;
+    } else {
+      scaleX = tRatio / sRatio;
+    }
+
+    const params = new Float32Array([scaleX, scaleY, 0, 0]);
+    device.queue.writeBuffer(this.blitUniformBuffer, 0, params);
+
+    const commandEncoder = device.createCommandEncoder();
+    const passEncoder = commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: dst.createView(),
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        loadOp: 'clear',
+        storeOp: 'store',
+      }]
+    });
+
+    const bindGroup = device.createBindGroup({
+      layout: this.blitPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: src.createView() },
+        { binding: 1, resource: this.sampler },
+        { binding: 2, resource: { buffer: this.blitUniformBuffer } }
+      ]
+    });
+
+    passEncoder.setPipeline(this.blitPipeline);
+    passEncoder.setBindGroup(0, bindGroup);
+    passEncoder.draw(4);
+    passEncoder.end();
+
+    device.queue.submit([commandEncoder.finish()]);
   }
 
   public onNewFrame(cb: (texture: GPUTexture) => void) {

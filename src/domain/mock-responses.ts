@@ -74,7 +74,7 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
               nodes: [
                 { id: 'th_id', op: 'builtin_get', name: 'global_invocation_id' },
                 { id: 'idx', op: 'vec_get_element', vec: 'th_id', index: 0 },
-                { id: 'val', op: 'math_mul', a: 'idx', b: 0.1 },
+                { id: 'val', op: 'math_mul', a: 'idx', b: 0.01 },
                 { id: 'v_val', op: 'float4', x: 'val', y: 'val', z: 'val', w: 'val' },
                 { id: 'store', op: 'buffer_store', buffer: 'b_weights', index: 'idx', value: 'v_val' }
               ]
@@ -128,7 +128,8 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
                 { id: 'idx_offset_f', op: 'static_cast_float', val: 'idx_offset_i' },
 
                 // 2. Convert to UV Offset: offset / width
-                { id: 'u_offset', op: 'math_div', a: 'idx_offset_f', b: 'width_f' },
+                { id: 'u_offset_n', op: 'math_div', a: 'idx_offset_f', b: 'width_f' },
+                { id: 'u_offset', op: 'math_mul', a: 'u_offset_n', b: 1.8 },
                 { id: 'v_offset', op: 'float2', x: 'u_offset', y: 0.0 }, // Horizontal Blur
 
                 // 3. Sample UV

@@ -294,7 +294,7 @@ export class App extends MobxLitElement {
             <ui-button @click=${() => appController.validateCurrentIR()}>Validate</ui-button>
             <ui-button @click=${() => appController.compileCurrentIR()}>Compile</ui-button>
             <div class="divider" style="width: 1px; background: #333; margin: 0 0.5rem;"></div>
-            <ui-button icon="la-play" square @click=${() => appController.runtime.play()} .variant=${appController.runtime.transportState === 'playing' ? 'primary' : 'outline'} title="Play"></ui-button>
+            <ui-button icon="la-play" square @click=${() => appController.play()} .variant=${appController.runtime.transportState === 'playing' ? 'primary' : 'outline'} title="Play"></ui-button>
             <ui-button icon="la-pause" square @click=${() => appController.runtime.pause()} .variant=${appController.runtime.transportState === 'paused' ? 'primary' : 'outline'} title="Pause"></ui-button>
             <ui-button icon="la-stop" square @click=${() => appController.runtime.stop()} title="Stop"></ui-button>
             <ui-button icon="la-step-forward" square @click=${() => appController.runtime.step()} title="Step"></ui-button>

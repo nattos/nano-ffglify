@@ -13,3 +13,8 @@
 // -1 to play all lines.
 export const AUTO_PLAY_SCRIPT_LINES: number | undefined = -1;
 export const DEFAULT_LLM_MODEL = "gemini-3.0-flash";
+
+export const PATCH_SIZE = {
+  width: 1920,
+  height: 1080
+};

@@ -18,15 +18,7 @@ import { ChatMsg, LLMLogEntry, IRDocument } from '../domain/types';
 import { historyManager } from './history';
 import { settingsManager } from './settings';
 import { validateIR } from '../ir/validator';
-import { CpuJitCompiler } from '../webgpu/cpu-jit';
-import { WgslGenerator } from '../webgpu/wgsl-generator';
 import { getSharedDevice } from '../webgpu/gpu-device';
-import { fetchAndDecodeImage, encodeAndDownloadImage } from '../utils/image-utils';
-import { EvaluationContext } from '../interpreter/context';
-import { WebGpuHostExecutor } from '../webgpu/webgpu-host-executor';
-import { TextureFormat } from '../ir/types';
-import { WebGpuHost } from '../webgpu/webgpu-host';
-import { makeResourceStates } from '../runtime/resources';
 import { ReplManager } from '../runtime/repl-manager';
 import { RuntimeManager } from '../runtime/runtime-manager';
 
@@ -133,7 +125,15 @@ export class AppController {
     });
   }
 
-  public async compileCurrentIR() {
+  public async play() {
+    if (!this.repl.currentArtifacts) {
+      const success = await this.compileCurrentIR();
+      if (!success) return;
+    }
+    this.runtime.play();
+  }
+
+  public async compileCurrentIR(): Promise<boolean> {
     console.info("[AppController] Compiling IR...");
     const ir = appState.database.ir;
 
@@ -153,8 +153,10 @@ export class AppController {
         };
         this.setActiveTab('results');
       });
+      return true;
     } else {
       alert("Compilation failed: " + this.repl.lastError);
+      return false;
     }
   }
 
