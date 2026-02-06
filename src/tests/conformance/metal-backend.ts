@@ -89,21 +89,50 @@ export const MetalBackend: TestBackend = {
     fs.writeFileSync(sourceFile, mslCode);
 
     // 3. Build buffer definitions for command line
+    // Get binding indices from generator metadata
+    const resourceBindings = result.metadata.resourceBindings || new Map<string, number>();
     const bufferArgs: string[] = [];
+    const textureArgs: string[] = [];
     for (const res of ir.resources) {
+      const binding = resourceBindings.get(res.id) ?? 0;
       if (res.type === 'buffer') {
         const state = ctx.resources.get(res.id);
         if (state) {
           const data = state.data || [];
           const dataStr = '[' + data.map(v => String(v)).join(',') + ']';
-          bufferArgs.push(`${res.id}:${state.width}:${dataStr}`);
+          // Calculate actual float count based on element type
+          const elemCount = state.width || 1;
+          const dataType = (res as any).dataType || 'float';
+          let floatsPerElem = 1;
+          if (dataType.includes('4') || dataType === 'quat') floatsPerElem = 4;
+          else if (dataType.includes('3')) floatsPerElem = 3;
+          else if (dataType.includes('2')) floatsPerElem = 2;
+          const totalFloats = elemCount * floatsPerElem;
+          // Format: bufferId:binding:size:data
+          bufferArgs.push(`${res.id}:${binding}:${totalFloats}:${dataStr}`);
+        }
+      } else if (res.type === 'texture2d') {
+        const state = ctx.resources.get(res.id);
+        if (state) {
+          const width = state.width || 1;
+          const height = state.height || 1;
+          const data = state.data || [];
+          const dataStr = '[' + data.map(v => String(v)).join(',') + ']';
+          // Get sampler settings from resource definition
+          const sampler = (res as any).sampler || { filter: 'linear', wrap: 'clamp' };
+          const filter = sampler.filter || 'linear';
+          const wrap = sampler.wrap || 'clamp';
+          // Format: texId:binding:width:height:filter:wrap:data
+          textureArgs.push(`${res.id}:${binding}:${width}:${height}:${filter}:${wrap}:${dataStr}`);
         }
       }
     }
 
     // 4. Execute harness
     const globalsSize = result.metadata.globalBufferSize;
-    const cmd = `"${harness}" "${sourceFile}" ${globalsSize} ${bufferArgs.join(' ')}`;
+    // Pass buffers first, then textures with -t prefix
+    const allArgs = [...bufferArgs, ...textureArgs.map(t => `-t ${t}`)];
+    const cmd = `"${harness}" "${sourceFile}" ${globalsSize} ${allArgs.join(' ')}`;
 
     let output: string;
     try {

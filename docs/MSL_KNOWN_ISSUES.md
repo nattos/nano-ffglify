@@ -19,5 +19,11 @@
 - **Impact**: Metal's `tanh()` may return `1.0` exactly for large inputs where other backends return `0.99999...`
 - **Workaround**: None yet - may need explicit clamping or soft-saturation
 
+### 4. ~~Texture Sampling Tests~~ ✅ RESOLVED
+- **Status**: Working
+- Implemented texture and sampler binding in `metal-gpu-harness.mm`
+- Added TypeScript marshalling with binding indices in `metal-backend.ts`
+- **Test**: `18-texture-sampling-modes.test.ts` - 2/2 pass
+
 ---
 *Last updated: 2026-02-07*

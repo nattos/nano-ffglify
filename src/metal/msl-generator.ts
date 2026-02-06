@@ -287,6 +287,10 @@ export class MslGenerator {
       if (res?.type === 'buffer') {
         const elemType = this.irTypeToMsl(res.dataType || 'float');
         bufferParams.push(`device ${elemType}* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
+      } else if (res?.type === 'texture2d') {
+        // Add texture and sampler bindings with distinct names
+        bufferParams.push(`texture2d<float> ${this.sanitizeId(resId)}_tex [[texture(${binding})]]`);
+        bufferParams.push(`sampler ${this.sanitizeId(resId)}_sampler [[sampler(${binding})]]`);
       }
     }
 
@@ -716,6 +720,29 @@ export class MslGenerator {
           }
         }
         return `${this.sanitizeId(targetId, 'func')}(${argExprs.join(', ')})`;
+      }
+
+      case 'texture_sample': {
+        const texId = node['tex'] as string;
+        const uvVal = node['uv'];
+        let uvExpr: string;
+
+        if (Array.isArray(uvVal)) {
+          uvExpr = `float2(${this.formatFloat(uvVal[0])}, ${this.formatFloat(uvVal[1])})`;
+        } else if (typeof uvVal === 'string') {
+          const refNode = func.nodes.find(n => n.id === uvVal);
+          if (refNode) {
+            emitPure(uvVal);
+            uvExpr = this.nodeResId(uvVal);
+          } else {
+            uvExpr = this.getVariableExpr(uvVal, func, varMap);
+          }
+        } else {
+          uvExpr = 'float2(0.0f, 0.0f)';
+        }
+
+        // Metal sampling syntax: texture.sample(sampler, uv)
+        return `${this.sanitizeId(texId)}_tex.sample(${this.sanitizeId(texId)}_sampler, ${uvExpr})`;
       }
 
       default:

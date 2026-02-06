@@ -44,23 +44,66 @@ int main(int argc, const char *argv[]) {
     NSString *sourcePath = [NSString stringWithUTF8String:argv[1]];
     int globalsSize = std::atoi(argv[2]);
 
-    // Parse buffer definitions
+    // Parse buffer and texture definitions
     struct BufferDef {
       std::string id;
+      int binding; // Metal buffer index
       int size;
       std::vector<float> data;
     };
     std::vector<BufferDef> bufferDefs;
 
+    // texId:binding:width:height:filter:wrap:data
+    struct TextureDef {
+      std::string id;
+      int binding; // Metal texture index
+      int width;
+      int height;
+      std::string filter; // "linear" or "nearest"
+      std::string wrap;   // "clamp", "repeat", or "mirror"
+      std::vector<float> data;
+    };
+    std::vector<TextureDef> textureDefs;
+
     for (int i = 3; i < argc; i++) {
       std::string arg = argv[i];
+
+      // Check for -t prefix (texture)
+      if (arg == "-t" && i + 1 < argc) {
+        i++;
+        std::string texArg = argv[i];
+
+        // Parse: texId:binding:width:height:filter:wrap:data
+        size_t p1 = texArg.find(':');
+        size_t p2 = texArg.find(':', p1 + 1);
+        size_t p3 = texArg.find(':', p2 + 1);
+        size_t p4 = texArg.find(':', p3 + 1);
+        size_t p5 = texArg.find(':', p4 + 1);
+        size_t p6 = texArg.find(':', p5 + 1);
+        if (p1 != std::string::npos && p6 != std::string::npos) {
+          TextureDef def;
+          def.id = texArg.substr(0, p1);
+          def.binding = std::atoi(texArg.substr(p1 + 1, p2 - p1 - 1).c_str());
+          def.width = std::atoi(texArg.substr(p2 + 1, p3 - p2 - 1).c_str());
+          def.height = std::atoi(texArg.substr(p3 + 1, p4 - p3 - 1).c_str());
+          def.filter = texArg.substr(p4 + 1, p5 - p4 - 1);
+          def.wrap = texArg.substr(p5 + 1, p6 - p5 - 1);
+          def.data = parseFloatArray(texArg.substr(p6 + 1));
+          textureDefs.push_back(def);
+        }
+        continue;
+      }
+
+      // Parse buffer: bufferId:binding:size:data
       size_t p1 = arg.find(':');
       size_t p2 = arg.find(':', p1 + 1);
-      if (p1 != std::string::npos && p2 != std::string::npos) {
+      size_t p3 = arg.find(':', p2 + 1);
+      if (p1 != std::string::npos && p3 != std::string::npos) {
         BufferDef def;
         def.id = arg.substr(0, p1);
-        def.size = std::atoi(arg.substr(p1 + 1, p2 - p1 - 1).c_str());
-        def.data = parseFloatArray(arg.substr(p2 + 1));
+        def.binding = std::atoi(arg.substr(p1 + 1, p2 - p1 - 1).c_str());
+        def.size = std::atoi(arg.substr(p2 + 1, p3 - p2 - 1).c_str());
+        def.data = parseFloatArray(arg.substr(p3 + 1));
         bufferDefs.push_back(def);
       }
     }
@@ -131,6 +174,57 @@ int main(int argc, const char *argv[]) {
       resourceBuffers.push_back(buffer);
     }
 
+    // 7b. Create textures and samplers
+    std::vector<id<MTLTexture>> resourceTextures;
+    std::vector<id<MTLSamplerState>> resourceSamplers;
+    for (const auto &def : textureDefs) {
+      // Create texture descriptor
+      MTLTextureDescriptor *texDesc = [[MTLTextureDescriptor alloc] init];
+      texDesc.textureType = MTLTextureType2D;
+      texDesc.pixelFormat = MTLPixelFormatR32Float; // R32F format
+      texDesc.width = def.width;
+      texDesc.height = def.height;
+      texDesc.usage = MTLTextureUsageShaderRead;
+      texDesc.storageMode = MTLStorageModeShared;
+
+      id<MTLTexture> texture = [device newTextureWithDescriptor:texDesc];
+
+      // Upload texture data
+      MTLRegion region = MTLRegionMake2D(0, 0, def.width, def.height);
+      [texture replaceRegion:region
+                 mipmapLevel:0
+                   withBytes:def.data.data()
+                 bytesPerRow:def.width * sizeof(float)];
+
+      resourceTextures.push_back(texture);
+
+      // Create sampler
+      MTLSamplerDescriptor *samplerDesc = [[MTLSamplerDescriptor alloc] init];
+
+      // Parse filter mode
+      if (def.filter == "nearest") {
+        samplerDesc.minFilter = MTLSamplerMinMagFilterNearest;
+        samplerDesc.magFilter = MTLSamplerMinMagFilterNearest;
+      } else {
+        samplerDesc.minFilter = MTLSamplerMinMagFilterLinear;
+        samplerDesc.magFilter = MTLSamplerMinMagFilterLinear;
+      }
+
+      // Parse wrap mode
+      MTLSamplerAddressMode addressMode = MTLSamplerAddressModeClampToEdge;
+      if (def.wrap == "repeat") {
+        addressMode = MTLSamplerAddressModeRepeat;
+      } else if (def.wrap == "mirror") {
+        addressMode = MTLSamplerAddressModeMirrorRepeat;
+      }
+      samplerDesc.sAddressMode = addressMode;
+      samplerDesc.tAddressMode = addressMode;
+
+      id<MTLSamplerState> sampler =
+          [device newSamplerStateWithDescriptor:samplerDesc];
+      resourceSamplers.push_back(sampler);
+    }
+
     // 8. Create command queue and buffer
     id<MTLCommandQueue> commandQueue = [device newCommandQueue];
     id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
@@ -140,10 +234,20 @@ int main(int argc, const char *argv[]) {
         [commandBuffer computeCommandEncoder];
     [encoder setComputePipelineState:pipeline];
 
-    // Set buffers: binding 0 = globals, then resource buffers in order
+    // Set buffers: binding 0 = globals, then resource buffers at their binding
+    // indices
     [encoder setBuffer:globalsBuffer offset:0 atIndex:0];
-    for (size_t i = 0; i < resourceBuffers.size(); i++) {
-      [encoder setBuffer:resourceBuffers[i] offset:0 atIndex:i + 1];
+    for (size_t i = 0; i < bufferDefs.size(); i++) {
+      [encoder setBuffer:resourceBuffers[i]
+                  offset:0
+                 atIndex:bufferDefs[i].binding];
+    }
+
+    // Set textures and samplers at their binding indices
+    for (size_t i = 0; i < textureDefs.size(); i++) {
+      [encoder setTexture:resourceTextures[i] atIndex:textureDefs[i].binding];
+      [encoder setSamplerState:resourceSamplers[i]
+                       atIndex:textureDefs[i].binding];
     }
 
     // Dispatch single thread
