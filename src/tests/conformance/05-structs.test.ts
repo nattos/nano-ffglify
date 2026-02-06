@@ -15,7 +15,7 @@ describe('Conformance: Structs and Arrays', () => {
     // 1. Construct { pos: [1,2], vel: [0,0] }
     { id: 'v1', op: 'float2', x: 1, y: 2 },
     { id: 'v2', op: 'float2', x: 0, y: 0 },
-    { id: 's1', op: 'struct_construct', type: 'Particle', pos: 'v1', vel: 'v2' },
+    { id: 's1', op: 'struct_construct', type: 'Particle', values: { pos: 'v1', vel: 'v2' } },
 
     // 2. Extract 'pos'
     { id: 'pos', op: 'struct_extract', struct: 's1', field: 'pos' },
@@ -29,8 +29,8 @@ describe('Conformance: Structs and Arrays', () => {
     const res = ctx.getResource('b_result');
     expect(res.data?.[0]).toBe(1);
   }, [bufferDef], [
-    { from: 'v1', portOut: 'val', to: 's1', portIn: 'pos', type: 'data' },
-    { from: 'v2', portOut: 'val', to: 's1', portIn: 'vel', type: 'data' },
+    { from: 'v1', portOut: 'val', to: 's1', portIn: 'values.pos', type: 'data' },
+    { from: 'v2', portOut: 'val', to: 's1', portIn: 'values.vel', type: 'data' },
     { from: 's1', portOut: 'val', to: 'pos', portIn: 'struct', type: 'data' },
     { from: 'pos', portOut: 'val', to: 'x', portIn: 'vec', type: 'data' },
     { from: 'x', portOut: 'val', to: 'store', portIn: 'value', type: 'data' },
@@ -66,11 +66,11 @@ describe('Conformance: Structs and Arrays', () => {
 
   runParametricTest('should Construct and Extract Nested Structs', [
     // 1. Create inner structs
-    { id: 'v_pos', op: 'struct_construct', type: 'Vector2', x: 10, y: 20 },
-    { id: 'v_scale', op: 'struct_construct', type: 'Vector2', x: 2, y: 2 },
+    { id: 'v_pos', op: 'struct_construct', type: 'Vector2', values: { x: 10, y: 20 } },
+    { id: 'v_scale', op: 'struct_construct', type: 'Vector2', values: { x: 2, y: 2 } },
 
     // 2. Create outer struct
-    { id: 't1', op: 'struct_construct', type: 'Transform', pos: 'v_pos', scale: 'v_scale' },
+    { id: 't1', op: 'struct_construct', type: 'Transform', values: { pos: 'v_pos', scale: 'v_scale' } },
 
     // 3. Extract Nested: t1.pos.y
     { id: 'pos', op: 'struct_extract', struct: 't1', field: 'pos' },
@@ -80,8 +80,8 @@ describe('Conformance: Structs and Arrays', () => {
   ], (ctx) => {
     expect(ctx.getResource('b_result').data?.[0]).toBe(20);
   }, [bufferDef], [
-    { from: 'v_pos', portOut: 'val', to: 't1', portIn: 'pos', type: 'data' },
-    { from: 'v_scale', portOut: 'val', to: 't1', portIn: 'scale', type: 'data' },
+    { from: 'v_pos', portOut: 'val', to: 't1', portIn: 'values.pos', type: 'data' },
+    { from: 'v_scale', portOut: 'val', to: 't1', portIn: 'values.scale', type: 'data' },
     { from: 't1', portOut: 'val', to: 'pos', portIn: 'struct', type: 'data' },
     { from: 'pos', portOut: 'val', to: 'y', portIn: 'struct', type: 'data' },
     { from: 'y', portOut: 'val', to: 'store', portIn: 'value', type: 'data' }

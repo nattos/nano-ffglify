@@ -43,10 +43,10 @@ describe('Edge Reconstruction Parity', () => {
     localVars: [],
     nodes: [
       { id: 'p1', op: 'math_add', a: 0, b: 0 },
-      { id: 's1', op: 'struct_construct', type: 'Point', x: 'p1', y: 10 }
+      { id: 's1', op: 'struct_construct', type: 'Point', values: { x: 'p1', y: 10 } }
     ]
   }, [
-    { from: 'p1', portOut: 'val', to: 's1', portIn: 'x', type: 'data' }
+    { from: 'p1', portOut: 'val', to: 's1', portIn: 'values.x', type: 'data' }
   ]);
 
   // 3. Array Construction (Indexed Ports)

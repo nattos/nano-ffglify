@@ -24,6 +24,33 @@ if (process.env.TEST_BACKEND && availableBackends.length === 0) {
 export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [], extraEdges: any[] = [], localVars: any[] = [{ id: 'res', type: 'float' }], structs: any[] = [], globalVars: any[] = [], functionType: FunctionType = 'cpu'): IRDocument => {
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
+  // Helper to set nested property (e.g. "values.pos" or "values[0]")
+  const setNested = (obj: any, path: string, value: any) => {
+    const parts = path.split(/\.|(?=\[)/);
+    let curr = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      let part = parts[i];
+      if (part.endsWith(']')) { // shouldn't happen for intermediate
+        part = part.slice(0, -1);
+      }
+      if (part.startsWith('[')) {
+        const idx = parseInt(part.slice(1, -1));
+        if (!curr[idx]) curr[idx] = {};
+        curr = curr[idx];
+      } else {
+        if (!curr[part]) curr[part] = {};
+        curr = curr[part];
+      }
+    }
+    const last = parts[parts.length - 1];
+    if (last.startsWith('[')) {
+      const idx = parseInt(last.slice(1, -1));
+      curr[idx] = value;
+    } else {
+      curr[last] = value;
+    }
+  };
+
   // Apply extra edges (execution or manual data) back to node properties
   extraEdges.forEach(e => {
     const from = nodeMap.get(e.from);
@@ -33,7 +60,7 @@ export const buildSimpleIR = (name: string, nodes: any[], resources: any[] = [],
     if (e.type === 'execution') {
       from[e.portOut || 'exec_out'] = e.to;
     } else if (e.type === 'data') {
-      to[e.portIn] = e.from;
+      setNested(to, e.portIn, e.from);
     }
   });
 

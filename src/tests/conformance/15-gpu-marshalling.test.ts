@@ -264,7 +264,7 @@ describe('Conformance: GPU Marshalling', () => {
             localVars: [],
             nodes: [
               { id: 'v2', op: 'float2', x: 20, y: 30 },
-              { id: 's', op: 'struct_construct', type: 'Simple', a: 10, b: 'v2' },
+              { id: 's', op: 'struct_construct', type: 'Simple', values: { a: 10, b: 'v2' } },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], args: { data: 's' } }
             ]
           },
@@ -437,8 +437,8 @@ describe('Conformance: GPU Marshalling', () => {
             outputs: [],
             localVars: [],
             nodes: [
-              { id: 'p1', op: 'struct_construct', type: 'Point', val: 123 },
-              { id: 'p2', op: 'struct_construct', type: 'Point', val: 456 },
+              { id: 'p1', op: 'struct_construct', type: 'Point', values: { val: 123 } },
+              { id: 'p2', op: 'struct_construct', type: 'Point', values: { val: 456 } },
               { id: 'arr', op: 'array_construct', length: 2, fill: 'p1', next: 'set' },
               { id: 'set', op: 'array_set', array: 'arr', index: 1, value: 'p2', exec_out: 'disp' },
               { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], args: { points: 'arr' } }

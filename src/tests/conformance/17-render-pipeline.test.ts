@@ -41,7 +41,7 @@ describe('17-render-pipeline', () => {
       { id: 'idx_2_1', op: 'math_add', a: 'idx_2', b: 1 },
       { id: 'y', op: 'array_extract', array: 'positions', index: 'idx_2_1' },
       { id: 'pos', op: 'float4', x: 'x', y: 'y', z: 0.0, w: 1.0 },
-      { id: 'ret_struct', op: 'struct_construct', type: 'VertexOutput', pos: 'pos' },
+      { id: 'ret_struct', op: 'struct_construct', type: 'VertexOutput', values: { pos: 'pos' } },
       { id: 'ret', op: 'func_return', value: 'ret_struct' }
     ],
     localVars: []

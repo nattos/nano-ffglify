@@ -67,17 +67,7 @@ export function verifyLiteralsOrRefsExist(
       if (op === 'call_func' || op === 'cmd_dispatch') {
         errors.push(`Unknown argument(s) '${key}' in operation '${op}'. Top-level function arguments are no longer supported; please move them to the consolidated 'args' field.`);
       } else if (op === 'struct_construct') {
-        // Flattened members must exist in the struct definition if available
-        const typeId = nodeProps['type'] as string;
-        const structDef = ir?.structs?.find(s => s.id === typeId);
-        if (structDef) {
-          if (!structDef.members.some(m => m.name === key)) {
-            errors.push(`Unknown member '${key}' in struct construction of '${typeId}'`);
-          }
-        } else if (ir) {
-          // If IR is provided but struct not found, we still warn/error about unknown keys
-          errors.push(`Unknown member '${key}' (Struct '${typeId}' not found)`);
-        }
+        errors.push(`Unknown argument(s) '${key}' in operation '${op}'. Top-level struct members are no longer supported; please move them to the consolidated 'values' field.`);
       } else if (op === 'array_construct') {
         // Only allow numeric indices as extra keys
         if (!/^\d+$/.test(key)) {
