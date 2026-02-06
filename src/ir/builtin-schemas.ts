@@ -498,7 +498,7 @@ export interface ArraySetArgs { array: any; index: any; value: any;[key: string]
 export const ArraySetDef = defineOp<ArraySetArgs>({
   doc: "Set an element in an array.",
   isExecutable: true,
-  args: { array: { type: z.string(), doc: "Array variable name", requiredRef: true, refType: 'var', isIdentifier: true }, index: { type: IntSchema, doc: "Index", refable: true }, value: { type: z.any(), doc: "Value", refable: true } }
+  args: { array: { type: z.any(), doc: "Array instance", refable: true, refType: 'data' }, index: { type: IntSchema, doc: "Index", refable: true }, value: { type: z.any(), doc: "Value", refable: true } }
 });
 
 export interface ArrayExtractArgs { array: any; index: any;[key: string]: any; }
@@ -697,7 +697,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'var_get': VarGetDef,
   'builtin_get': BuiltinGetDef,
   'const_get': defineOp<ConstGetArgs>({ doc: "Get constant", args: { name: { type: z.string(), doc: "Name", refType: 'const' } } }),
-  'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true, refType: 'loop' } } }),
+  'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true, refType: 'loop', isIdentifier: true } } }),
   'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", isExecutable: true, args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, exec_true: { type: z.string(), doc: "Node ID for true", requiredRef: true, optional: true, refType: 'exec' }, exec_false: { type: z.string(), doc: "Node ID for false", requiredRef: true, optional: true, refType: 'exec' } } }),
   'flow_loop': FlowLoopDef,
   'call_func': defineOp<CallFuncArgs>({

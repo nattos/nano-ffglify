@@ -312,6 +312,12 @@ export class InterpretedExecutor {
     for (const edge of incomingEdges) {
       if (edge.from === node.id) continue; // Safety: skip self-references
 
+      // If the target port is marked as an identifier, we DON'T pull the value.
+      // The handler expects the metadata string (ID/name) already present in args.
+      const portBase = edge.portIn.split(/[\.\[]/)[0];
+      const argDef = def?.args[portBase];
+      if (argDef?.isIdentifier || argDef?.isPrimaryResource) continue;
+
       const sourceValue = this.resolveNodeValue(edge.from, func, edges);
       if (sourceValue !== undefined) {
         this.assignValueToPort(args, edge.portIn, sourceValue);
