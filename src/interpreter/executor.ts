@@ -305,7 +305,7 @@ export class InterpretedExecutor {
       if (INTERNAL_KEYS.has(key)) continue;
 
       const argDef = def?.args[key];
-      if (argDef || def?.isDynamic) {
+      if (argDef) {
         args[key] = this.resolveLiteralValue(val, argDef?.refType || 'data', func);
       }
     }

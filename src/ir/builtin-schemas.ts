@@ -27,7 +27,6 @@ export interface OpArg<T = any> {
 export interface OpDef<T = any> {
   doc: string;
   args: { [K in keyof T]: OpArg<T[K]> };
-  isDynamic?: boolean; // For nodes with arbitrary arguments (call_func, struct_construct)
 }
 
 /**
@@ -57,7 +56,7 @@ export function makeZodSchema(def: OpDef<any>): z.ZodObject<any> {
     shape[key] = schema;
   }
   const schema = z.object(shape);
-  return def.isDynamic ? schema.passthrough() : schema;
+  return schema;
 }
 
 

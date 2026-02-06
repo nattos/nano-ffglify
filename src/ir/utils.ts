@@ -58,9 +58,8 @@ export function reconstructEdges(func: FunctionDef): Edge[] {
         }
       }
 
-      // Handle Dynamic Nodes (e.g. call_func, struct_construct) or nested paths in schema
-      // Handle Dynamic Nodes (e.g. call_func, struct_construct) or consolidated containers
-      if (def.isDynamic || (node as any).args !== undefined || (node as any).values !== undefined) {
+      // Handle or consolidated containers (e.g. call_func, struct_construct)
+      if ((node as any).args !== undefined || (node as any).values !== undefined) {
         const definedKeys = new Set(Object.keys(def.args));
         const traverse = (obj: any, path: string) => {
           if (obj === null || obj === undefined) return;

@@ -174,8 +174,6 @@ describe('Schema Verifier', () => {
         x: 5 // Top-level arg
       };
       const result = verifyLiteralsOrRefsExist(node as any);
-      // After refactor, this should probably be invalid OR at least ignored.
-      // If we remove isDynamic: true and just have an 'args' field, it will fail validation.
       expect(result.valid).toBe(false);
     });
   });
