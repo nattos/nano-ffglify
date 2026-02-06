@@ -3,6 +3,7 @@ import { BuiltinOp } from './types';
 export type ValidationType =
   | 'float'  // Generic scalar (float)
   | 'int'     // Integer (for loops, strict checks)
+  | 'uint'    // Unsigned Integer
   | 'boolean'
   | 'string'
   | 'float2'
@@ -148,14 +149,21 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { val: 'int' }, output: 'float' },
     { inputs: { val: 'boolean' }, output: 'float' }
   ],
+  'static_cast_uint': [
+    { inputs: { val: 'float' }, output: 'uint' },
+    { inputs: { val: 'int' }, output: 'uint' },
+    { inputs: { val: 'boolean' }, output: 'uint' }
+  ],
   'static_cast_bool': [
     { inputs: { val: 'int' }, output: 'boolean' },
+    { inputs: { val: 'uint' }, output: 'boolean' },
     { inputs: { val: 'float' }, output: 'boolean' }
   ],
 
   // Scalar Constructors
   'float': [{ inputs: { val: 'float' }, output: 'float' }],
   'int': [{ inputs: { val: 'int' }, output: 'int' }],
+  'uint': [{ inputs: { val: 'int' }, output: 'uint' }],
   'bool': [{ inputs: { val: 'boolean' }, output: 'boolean' }],
 
   // Vector Constructors
@@ -208,7 +216,9 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   'mat_identity': [{ inputs: { size: 'int' }, output: 'float4x4' }],
   'float4x4': [{ inputs: { '*': 'any' }, output: 'float4x4' }],
   'float3x3': [{ inputs: { '*': 'any' }, output: 'float3x3' }],
+  'mat_transpose': [{ inputs: { val: 'any' }, output: 'any' }],
   'mat_inverse': [{ inputs: { val: 'any' }, output: 'any' }],
+  'mat_extract': [{ inputs: { mat: 'any', col: 'int', row: 'int' }, output: 'float' }],
   'mat_mul': [
     { inputs: { a: 'float4x4', b: 'float4x4' }, output: 'float4x4' },
     { inputs: { a: 'float3x3', b: 'float3x3' }, output: 'float3x3' },
@@ -257,7 +267,12 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   ],
   'math_pi': [{ inputs: {}, output: 'float' }],
   'math_e': [{ inputs: {}, output: 'float' }],
-  'math_ldexp': [{ inputs: { val: 'any', exp: 'any' }, output: 'any' }], // Dynamic types
+  'math_ldexp': [{ inputs: { val: 'any', exp: 'any' }, output: 'any' }],
+  'math_frexp_mantissa': [{ inputs: { val: 'any' }, output: 'any' }],
+  'math_frexp_exponent': [{ inputs: { val: 'any' }, output: 'any' }],
+  'math_flush_subnormal': [{ inputs: { val: 'any' }, output: 'any' }],
+  'math_mantissa': [{ inputs: { val: 'any' }, output: 'any' }],
+  'math_exponent': [{ inputs: { val: 'any' }, output: 'any' }],
 
   // --- Quaternions ---
   'quat': [
@@ -286,9 +301,19 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   ],
 
   // Structs & Arrays
-  'struct_construct': [{ inputs: { '*': 'any' }, output: 'any' }],
+  'struct_construct': [
+    { inputs: { type: 'string', values: 'any' }, output: 'any' },
+    { inputs: { type: 'string', '*': 'any' }, output: 'any' },
+    { inputs: { type: 'string' }, output: 'any' }
+  ],
 
-  'array_construct': [{ inputs: { '*': 'any' }, output: 'any' }],
+  'array_construct': [
+    { inputs: { values: 'array' }, output: 'any' },
+    { inputs: { values: 'array', type: 'string' }, output: 'any' },
+    { inputs: { type: 'string', length: 'int', fill: 'any' }, output: 'any' },
+    { inputs: { type: 'string', values: 'array' }, output: 'any' },
+    { inputs: { '*': 'any' }, output: 'any' }
+  ],
   'array_set': [{ inputs: { array: 'any', index: 'int', value: 'any' }, output: 'any' }],
   'array_extract': [{ inputs: { array: 'any', index: 'int' }, output: 'any' }],
   'array_length': [{ inputs: { array: 'any' }, output: 'int' }],
@@ -296,11 +321,11 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   // Control Flow
   'call_func': [
     { inputs: { func: 'string' }, output: 'any' },
+    { inputs: { func: 'string', args: 'any' }, output: 'any' },
     { inputs: { func: 'string', '*': 'any' }, output: 'any' }
   ],
 
   'func_return': [
-    { inputs: { value: 'any' }, output: 'any' },
     { inputs: { val: 'any' }, output: 'any' },
     { inputs: {}, output: 'any' }
   ],
@@ -310,19 +335,30 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   // Resources
   'resource_get_size': [{ inputs: { resource: 'string' }, output: 'float2' }],
   'resource_get_format': [{ inputs: { resource: 'string' }, output: 'int' }], // Fixed: id -> resource
-  'texture_sample': [{ inputs: { tex: 'string', uv: 'float2' }, output: 'float4' }],
+  'texture_sample': [
+    { inputs: { tex: 'string', uv: 'float2' }, output: 'float4' },
+    { inputs: { tex: 'string', coords: 'float2' }, output: 'float4' }
+  ],
   'texture_load': [{ inputs: { tex: 'string', coords: 'float2' }, output: 'float4' }],
   'texture_store': [{ inputs: { tex: 'string', coords: 'float2', value: 'float4' }, output: 'any' }],
 
   // Commands
   'cmd_dispatch': [
+    { inputs: { func: 'string' }, output: 'any' },
+    { inputs: { func: 'string', dispatch: 'float3' }, output: 'any' },
+    { inputs: { func: 'string', dispatch: 'int' }, output: 'any' },
+    { inputs: { func: 'string', dispatch: 'any', args: 'any' }, output: 'any' },
+    { inputs: { func: 'string', args: 'any' }, output: 'any' },
     { inputs: { func: 'string', '*': 'any' }, output: 'any' }
   ],
   'cmd_resize_resource': [
     { inputs: { resource: 'string', size: 'any' }, output: 'any' },
     { inputs: { resource: 'string', size: 'any', clear: 'any' }, output: 'any' } // Added optional clear
   ],
-  'cmd_draw': [{ inputs: { target: 'string', vertex: 'string', fragment: 'string', count: 'int' }, output: 'any' }],
+  'cmd_draw': [
+    { inputs: { target: 'string', vertex: 'string', fragment: 'string', count: 'int', pipeline: 'any' }, output: 'any' },
+    { inputs: { target: 'string', vertex: 'string', fragment: 'string', count: 'int' }, output: 'any' }
+  ],
   'cmd_sync_to_cpu': [{ inputs: { resource: 'string' }, output: 'any' }],
   'cmd_wait_cpu_sync': [{ inputs: { resource: 'string' }, output: 'any' }]
 };
