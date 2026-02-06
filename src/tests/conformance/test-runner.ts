@@ -5,8 +5,9 @@ import { TestBackend } from './types';
 import { InterpreterBackend } from './interpreter-backend';
 import { BrowserCpuBackend, BrowserGpuBackend } from './puppeteer-backend';
 import { CppMetalBackend } from './cppmetal-backend';
+import { MetalBackend } from './metal-backend';
 
-const backends = [InterpreterBackend, BrowserCpuBackend, BrowserGpuBackend, CppMetalBackend];
+const backends = [InterpreterBackend, BrowserCpuBackend, BrowserGpuBackend, CppMetalBackend, MetalBackend];
 
 export const availableBackends = process.env.TEST_BACKEND
   ? backends.filter(b => b.name === process.env.TEST_BACKEND)
