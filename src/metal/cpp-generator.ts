@@ -6,9 +6,15 @@
 import { IRDocument, FunctionDef, Node, Edge } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
 
+export interface ShaderFunctionInfo {
+  id: string;
+  inputs: { id: string; type: string }[];
+}
+
 export interface CppCompileResult {
   code: string;
   resourceIds: string[];
+  shaderFunctions: ShaderFunctionInfo[];
 }
 
 /**
@@ -30,6 +36,7 @@ export class CppGenerator {
     // Collect all required functions via call graph traversal
     const requiredFuncs = new Set<string>();
     const callStack: string[] = [];
+    const shaderFuncs = new Map<string, FunctionDef>();
 
     const collectFunctions = (funcId: string) => {
       // Check for recursion
@@ -41,14 +48,26 @@ export class CppGenerator {
       const func = allFunctions.find((f: FunctionDef) => f.id === funcId);
       if (!func) throw new Error(`Function '${funcId}' not found`);
 
+      // Skip shader functions from C++ emission (they run on GPU)
+      if (func.type === 'shader') return;
+
       requiredFuncs.add(funcId);
       callStack.push(funcId);
 
-      // Find all call_func nodes in this function
+      // Find all call_func and cmd_dispatch nodes in this function
       for (const node of func.nodes) {
         if (node.op === 'call_func') {
           const targetFunc = node['func'];
           if (targetFunc) collectFunctions(targetFunc);
+        } else if (node.op === 'cmd_dispatch') {
+          // Track shader function for Metal compilation
+          const targetFunc = node['func'];
+          if (targetFunc) {
+            const shaderFunc = allFunctions.find((f: FunctionDef) => f.id === targetFunc);
+            if (shaderFunc && shaderFunc.type === 'shader') {
+              shaderFuncs.set(targetFunc, shaderFunc);
+            }
+          }
         }
       }
 
@@ -105,9 +124,16 @@ export class CppGenerator {
       lines.push('');
     }
 
+    // Build shader function info for Metal compilation
+    const shaderFunctions: ShaderFunctionInfo[] = Array.from(shaderFuncs.entries()).map(([id, func]) => ({
+      id,
+      inputs: (func.inputs || []).map(i => ({ id: i.id, type: i.type || 'float' }))
+    }));
+
     return {
       code: lines.join('\n'),
       resourceIds,
+      shaderFunctions,
     };
   }
 
@@ -396,6 +422,39 @@ export class CppGenerator {
       const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
       const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges);
       lines.push(`${indent}${varName}[static_cast<size_t>(${idx})] = ${val};`);
+    } else if (node.op === 'cmd_dispatch') {
+      // Emit dispatch to Metal compute shader
+      const targetFunc = node['func'];
+      const dispatch = node['dispatch'] || [1, 1, 1];
+
+      // Build dispatch dimensions
+      const dims = dispatch.map((d: number | string) => {
+        if (typeof d === 'number') return d.toString();
+        // For string references, resolve the argument
+        return this.resolveArg(node, 'dispatch', func, allFunctions, emitPure, edges);
+      });
+      const dimX = typeof dispatch[0] === 'number' ? dispatch[0] : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_x']: dispatch[0] } as Node, 'dispatch_x', func, allFunctions, emitPure, edges);
+      const dimY = typeof dispatch[1] === 'number' ? dispatch[1] : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_y']: dispatch[1] } as Node, 'dispatch_y', func, allFunctions, emitPure, edges);
+      const dimZ = typeof dispatch[2] === 'number' ? dispatch[2] : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_z']: dispatch[2] } as Node, 'dispatch_z', func, allFunctions, emitPure, edges);
+
+      // Build args array for shader inputs
+      const targetFuncDef = allFunctions.find(f => f.id === targetFunc);
+      const argParts: string[] = [];
+      if (targetFuncDef?.inputs) {
+        for (const input of targetFuncDef.inputs) {
+          if (node['args'] && node['args'][input.id]) {
+            const argId = node['args'][input.id];
+            argParts.push(this.resolveArg({ ...node, [input.id]: argId } as Node, input.id, func, allFunctions, emitPure, edges));
+          } else if (node[input.id] !== undefined) {
+            argParts.push(this.resolveArg(node, input.id, func, allFunctions, emitPure, edges));
+          } else {
+            argParts.push('0.0f'); // Default
+          }
+        }
+      }
+      const argsStr = argParts.length > 0 ? `, {${argParts.join(', ')}}` : '';
+
+      lines.push(`${indent}ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}${argsStr});`);
     } else if (this.hasResult(node.op)) {
       // Executable nodes with results (like call_func) need auto declarations
       const expr = this.compileExpression(node, func, allFunctions, true, emitPure, edges);

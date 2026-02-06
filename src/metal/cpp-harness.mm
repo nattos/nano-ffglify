@@ -8,6 +8,8 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 // =====================
@@ -179,11 +181,157 @@ struct ResourceState {
   }
 };
 
-// Context passed to generated code
+// Context passed to generated code - includes Metal dispatch support
 struct EvalContext {
   std::vector<ResourceState *> resources;
+
+  // Metal infrastructure
+  id<MTLDevice> device = nil;
+  id<MTLLibrary> library = nil;
+  id<MTLCommandQueue> commandQueue = nil;
+  std::unordered_map<std::string, id<MTLComputePipelineState>> pipelines;
+  std::vector<id<MTLBuffer>> metalBuffers;
+
   ResourceState *getResource(size_t idx) {
     return idx < resources.size() ? resources[idx] : nullptr;
+  }
+
+  // Initialize Metal if not already done
+  void initMetal() {
+    if (!device) {
+      device = MTLCreateSystemDefaultDevice();
+      commandQueue = [device newCommandQueue];
+    }
+  }
+
+  // Load a .metallib file
+  bool loadMetalLib(const char *path) {
+    initMetal();
+    NSError *error = nil;
+    NSString *nsPath = [NSString stringWithUTF8String:path];
+    library = [device newLibraryWithFile:nsPath error:&error];
+    if (!library) {
+      std::cerr << "Failed to load metallib: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown")
+                << std::endl;
+      return false;
+    }
+    return true;
+  }
+
+  // Get or create pipeline for a shader function
+  id<MTLComputePipelineState> getPipeline(const std::string &funcName) {
+    auto it = pipelines.find(funcName);
+    if (it != pipelines.end())
+      return it->second;
+
+    NSString *name = [NSString stringWithUTF8String:funcName.c_str()];
+    id<MTLFunction> func = [library newFunctionWithName:name];
+    if (!func) {
+      std::cerr << "Shader function not found: " << funcName << std::endl;
+      return nil;
+    }
+
+    NSError *error = nil;
+    id<MTLComputePipelineState> pipeline =
+        [device newComputePipelineStateWithFunction:func error:&error];
+    if (!pipeline) {
+      std::cerr << "Failed to create pipeline: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown")
+                << std::endl;
+      return nil;
+    }
+
+    pipelines[funcName] = pipeline;
+    return pipeline;
+  }
+
+  // Sync CPU data to Metal buffers
+  void syncToMetal() {
+    metalBuffers.clear();
+    for (auto *res : resources) {
+      size_t byteSize = res->data.size() * sizeof(float);
+      id<MTLBuffer> buffer =
+          [device newBufferWithBytes:res->data.data()
+                              length:byteSize
+                             options:MTLResourceStorageModeShared];
+      metalBuffers.push_back(buffer);
+    }
+  }
+
+  // Sync Metal buffers back to CPU
+  void syncFromMetal() {
+    for (size_t i = 0; i < metalBuffers.size() && i < resources.size(); ++i) {
+      float *ptr = (float *)[metalBuffers[i] contents];
+      size_t count = resources[i]->data.size();
+      for (size_t j = 0; j < count; ++j) {
+        resources[i]->data[j] = ptr[j];
+      }
+    }
+  }
+
+  // Dispatch a compute shader (no args version)
+  void dispatchShader(const char *funcName, int dimX, int dimY, int dimZ) {
+    dispatchShaderImpl(funcName, dimX, dimY, dimZ, nullptr, 0);
+  }
+
+  // Dispatch with args
+  void dispatchShader(const char *funcName, int dimX, int dimY, int dimZ,
+                      std::initializer_list<float> args) {
+    std::vector<float> argsVec(args);
+    dispatchShaderImpl(funcName, dimX, dimY, dimZ, argsVec.data(),
+                       argsVec.size());
+  }
+
+  void dispatchShaderImpl(const char *funcName, int dimX, int dimY, int dimZ,
+                          float *args, size_t argCount) {
+    id<MTLComputePipelineState> pipeline = getPipeline(funcName);
+    if (!pipeline)
+      return;
+
+    // Sync CPU data to GPU if not done yet
+    if (metalBuffers.empty()) {
+      syncToMetal();
+    }
+
+    id<MTLCommandBuffer> cmdBuffer = [commandQueue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder = [cmdBuffer computeCommandEncoder];
+    [encoder setComputePipelineState:pipeline];
+
+    // Bind uniform buffer with args (binding 0)
+    if (argCount > 0) {
+      id<MTLBuffer> argsBuffer =
+          [device newBufferWithBytes:args
+                              length:argCount * sizeof(float)
+                             options:MTLResourceStorageModeShared];
+      [encoder setBuffer:argsBuffer offset:0 atIndex:0];
+    } else {
+      // Empty uniform buffer
+      float dummy = 0;
+      id<MTLBuffer> argsBuffer =
+          [device newBufferWithBytes:&dummy
+                              length:sizeof(float)
+                             options:MTLResourceStorageModeShared];
+      [encoder setBuffer:argsBuffer offset:0 atIndex:0];
+    }
+
+    // Bind resource buffers (starting at binding 1)
+    for (size_t i = 0; i < metalBuffers.size(); ++i) {
+      [encoder setBuffer:metalBuffers[i] offset:0 atIndex:i + 1];
+    }
+
+    MTLSize gridSize = MTLSizeMake(dimX, dimY, dimZ);
+    MTLSize threadGroupSize = MTLSizeMake(1, 1, 1);
+    [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadGroupSize];
+    [encoder endEncoding];
+
+    [cmdBuffer commit];
+    [cmdBuffer waitUntilCompleted];
+
+    // Sync back to CPU
+    syncFromMetal();
   }
 };
 
@@ -198,14 +346,27 @@ struct EvalContext {
 
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
-    // Parse arguments: <buffer_sizes...>
-    // Each argument is either a size (for buffers) or "0" (placeholder)
+    // Parse arguments: [metallib_path] <buffer_sizes...>
+    // If first arg ends with .metallib, it's the shader library path
+    // Each other argument is a buffer size (for buffers) or "0" (placeholder)
 
     EvalContext ctx;
     std::vector<ResourceState> resourceStorage;
 
-    // Parse resource sizes from command line
-    for (int i = 1; i < argc; ++i) {
+    int argStart = 1;
+
+    // Check if first argument is a metallib path
+    if (argc > 1) {
+      std::string firstArg = argv[1];
+      if (firstArg.size() > 9 &&
+          firstArg.substr(firstArg.size() - 9) == ".metallib") {
+        ctx.loadMetalLib(argv[1]);
+        argStart = 2;
+      }
+    }
+
+    // Parse resource sizes from remaining command line args
+    for (int i = argStart; i < argc; ++i) {
       size_t size = std::stoull(argv[i]);
       resourceStorage.push_back(
           ResourceState{std::vector<float>(size, 0.0f), size, 1});
