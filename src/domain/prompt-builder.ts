@@ -45,11 +45,11 @@ EXAMPLES:
 
     // 3. Construct System Prompt
     return `You are the WebGPU IR Assistant.
-      Current Date: ${new Date().toISOString().split('T')[0]}
+Current Date: ${new Date().toISOString().split('T')[0]}
 
 ${EXAMPLES}
 
-    INSTRUCTIONS:
+INSTRUCTIONS:
 1. Analyze the user's request and the current IR state.
 2. Use 'upsertIR' to create or update the shader graph.
 3. Use 'patchIR' for small updates like changing defaults or adding nodes/properties.
@@ -81,9 +81,8 @@ ${EXAMPLES}
     }).join('\n');
 
     return `
-    CONTEXT(Full State JSON):
-    - Today: ${today}
-    - State:
+CONTEXT(Full State JSON):
+- State:
 ${JSON.stringify(cleanState, null, 2)}
 
 RECENT HISTORY:

@@ -309,10 +309,10 @@ export class MslGenerator {
     resourceBindings: Map<string, number>,
     edges: Edge[]
   ) {
-    // Declare local variables
+    // Declare local variables with initial values
     for (const v of func.localVars || []) {
       const type = this.irTypeToMsl(v.type || 'float');
-      lines.push(`    ${type} ${this.sanitizeId(v.id)};`);
+      lines.push(`    ${this.formatLocalVarDecl(v.id, type, v.initialValue as number | undefined)};`);
     }
     if ((func.localVars || []).length > 0) lines.push('');
 
@@ -353,26 +353,102 @@ export class MslGenerator {
     varMap: Map<string, number>,
     resourceBindings: Map<string, number>,
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    visited: Set<string> = new Set(),
+    indent: string = '    '
   ) {
-    // Emit data dependencies
-    for (const edge of edges) {
-      if (edge.to === node.id && edge.type === 'data') {
-        emitPure(edge.from);
-      }
-    }
+    let curr: Node | undefined = node;
 
-    // Emit this node
-    this.emitNode(node, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges);
-
-    // Follow execution edges
-    const nextEdge = edges.find(e => e.from === node.id && e.type === 'execution' && e.portOut === 'exec_out');
-    if (nextEdge) {
-      const nextNode = func.nodes.find(n => n.id === nextEdge.to);
-      if (nextNode) {
-        this.emitChain(nextNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges);
+    while (curr) {
+      if (visited.has(curr.id)) {
+        if (curr.op !== 'flow_loop') break;
       }
+      visited.add(curr.id);
+
+      // Emit data dependencies
+      for (const edge of edges) {
+        if (edge.to === curr.id && edge.type === 'data') {
+          emitPure(edge.from);
+        }
+      }
+      // Also emit inline references
+      for (const k in curr) {
+        if (['id', 'op', 'metadata', 'func', 'args', 'dispatch'].includes(k)) continue;
+        const val = (curr as any)[k];
+        if (typeof val === 'string' && func.nodes.some(n => n.id === val)) emitPure(val);
+      }
+
+      // Handle control flow
+      if (curr.op === 'flow_branch') {
+        this.emitBranch(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited));
+        return;
+      } else if (curr.op === 'flow_loop') {
+        this.emitLoop(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited));
+        return;
+      } else if (curr.op === 'func_return') {
+        const val = this.resolveArg(curr, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        lines.push(`${indent}return ${val};`);
+        return;
+      } else {
+        // Emit this node
+        this.emitNode(curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, indent);
+      }
+
+      // Follow execution edges
+      const nextEdge = edges.find(e => e.from === curr!.id && e.type === 'execution' && e.portOut === 'exec_out');
+      curr = nextEdge ? func.nodes.find(n => n.id === nextEdge.to) : undefined;
     }
+  }
+
+  private emitBranch(
+    indent: string,
+    node: Node,
+    func: FunctionDef,
+    lines: string[],
+    allFunctions: FunctionDef[],
+    varMap: Map<string, number>,
+    resourceBindings: Map<string, number>,
+    emitPure: (id: string) => void,
+    edges: Edge[],
+    visited: Set<string>
+  ) {
+    const cond = this.resolveArg(node, 'cond', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+    lines.push(`${indent}if (${cond}) {`);
+    const trueEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_true' && e.type === 'execution');
+    const trueNode = trueEdge ? func.nodes.find(n => n.id === trueEdge.to) : undefined;
+    if (trueNode) this.emitChain(trueNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited), indent + '  ');
+    lines.push(`${indent}} else {`);
+    const falseEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_false' && e.type === 'execution');
+    const falseNode = falseEdge ? func.nodes.find(n => n.id === falseEdge.to) : undefined;
+    if (falseNode) this.emitChain(falseNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited), indent + '  ');
+    lines.push(`${indent}}`);
+  }
+
+  private emitLoop(
+    indent: string,
+    node: Node,
+    func: FunctionDef,
+    lines: string[],
+    allFunctions: FunctionDef[],
+    varMap: Map<string, number>,
+    resourceBindings: Map<string, number>,
+    emitPure: (id: string) => void,
+    edges: Edge[],
+    visited: Set<string>
+  ) {
+    const start = this.resolveArg(node, 'start', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+    const end = this.resolveArg(node, 'end', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+    const loopVar = `loop_${this.sanitizeId(node.id, 'var')}`;
+    lines.push(`${indent}for (int ${loopVar} = int(${start}); ${loopVar} < int(${end}); ${loopVar}++) {`);
+
+    const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
+    const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;
+    if (bodyNode) this.emitChain(bodyNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited), indent + '  ');
+    lines.push(`${indent}}`);
+
+    const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
+    const nextNode = compEdge ? func.nodes.find(n => n.id === compEdge.to) : undefined;
+    if (nextNode) this.emitChain(nextNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, visited, indent);
   }
 
   private emitNode(
@@ -383,25 +459,39 @@ export class MslGenerator {
     varMap: Map<string, number>,
     resourceBindings: Map<string, number>,
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    indent: string = '    '
   ) {
     if (node.op === 'var_set') {
-      const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const valNodeRef = node['val'];
       const varId = node['var'];
-      const offset = varMap.get(varId);
-      if (offset !== undefined) {
-        lines.push(`    b_globals[${offset}] = ${val};`);
+      const varExpr = this.getVariableExpr(varId, func, varMap);
+
+      // Check if the value is an array_construct - use loop-based init
+      const valNode = typeof valNodeRef === 'string' ? func.nodes.find(n => n.id === valNodeRef) : null;
+      if (valNode && valNode.op === 'array_construct') {
+        const length = valNode['length'] as number || 1;
+        const fill = valNode['fill'];
+        const fillVal = fill !== undefined ? String(fill) : '0';
+        // Emit loop-based initialization
+        lines.push(`${indent}for (int _i = 0; _i < ${length}; _i++) ${varExpr}[_i] = ${fillVal};`);
+      } else {
+        const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        lines.push(`${indent}${varExpr} = ${val};`);
       }
+    } else if (node.op === 'array_set') {
+      const arrayNodeRef = node['array'];
+      const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      // Get the array expression - could be a var_get reference
+      const arrExpr = this.resolveArg(node, 'array', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      lines.push(`${indent}${arrExpr}[int(${idx})] = ${val};`);
     } else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'];
       const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges);
       const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges);
       const bufName = this.sanitizeId(bufferId, 'buffer');
-      lines.push(`    ${bufName}[int(${idx})] = ${val};`);
-    } else if (node.op === 'var_set') {
-      const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
-      const varId = node['var'];
-      lines.push(`    ${this.getVariableExpr(varId, func, varMap)} = ${val};`);
+      lines.push(`${indent}${bufName}[int(${idx})] = ${val};`);
     } else if (node.op === 'func_return') {
       const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
       lines.push(`    return ${val};`);
@@ -431,6 +521,11 @@ export class MslGenerator {
         return `${node['val']}`;
       case 'bool':
         return node['val'] ? '1.0f' : '0.0f';
+
+      case 'loop_index': {
+        const loopId = node['loop'];
+        return `loop_${this.sanitizeId(loopId, 'var')}`;
+      }
 
       case 'var_get': {
         const varId = node['var'];
@@ -538,6 +633,90 @@ export class MslGenerator {
       case 'static_cast_float': return `float(${a('val')})`;
       case 'static_cast_int': return `int(${a('val')})`;
       case 'static_cast_bool': return `(${a('val')} != 0.0f ? 1.0f : 0.0f)`;
+
+      // Struct operations
+      case 'struct_construct': {
+        const structType = node['type'] as string;
+        const valuesObj = node['values'] as Record<string, any> || {};
+        const structDef = this.ir?.structs.find(s => s.id === structType);
+        if (!structDef) throw new Error(`MslGenerator: Struct '${structType}' not found`);
+
+        // Build constructor with members in order
+        const memberExprs: string[] = [];
+        for (const m of structDef.members || []) {
+          const val = valuesObj[m.name];
+          if (val !== undefined) {
+            if (typeof val === 'number') {
+              memberExprs.push(this.formatFloat(val));
+            } else if (typeof val === 'string') {
+              const refNode = func.nodes.find(n => n.id === val);
+              if (refNode) {
+                emitPure(val);
+                memberExprs.push(this.nodeResId(val));
+              } else {
+                memberExprs.push(this.getVariableExpr(val, func, varMap));
+              }
+            } else {
+              memberExprs.push(String(val));
+            }
+          } else {
+            memberExprs.push('{}'); // Default init
+          }
+        }
+        return `${this.sanitizeId(structType, 'struct')}{${memberExprs.join(', ')}}`;
+      }
+
+      case 'struct_extract': {
+        const structExpr = this.resolveArg(node, 'struct', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        const field = node['field'] as string;
+        return `${structExpr}.${this.sanitizeId(field, 'field')}`;
+      }
+
+      // Array operations
+      case 'array_construct': {
+        const length = node['length'] as number || 1;
+        const fill = node['fill'];
+        const fillVal = fill !== undefined ? this.formatFloat(fill as number) : '0.0f';
+        // Use Metal array syntax
+        const elements = new Array(length).fill(fillVal);
+        return `{ ${elements.join(', ')} }`;
+      }
+
+      case 'array_extract': {
+        const arrExpr = this.resolveArg(node, 'array', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        return `${arrExpr}[int(${idx})]`;
+      }
+
+      case 'call_func': {
+        const targetId = node['func'] as string;
+        const targetFunc = allFunctions.find(f => f.id === targetId);
+        if (!targetFunc) throw new Error(`MslGenerator: Function '${targetId}' not found`);
+
+        // Build args list matching target function's inputs
+        const argExprs: string[] = ['b_globals'];
+        for (const inp of targetFunc.inputs || []) {
+          const argVal = node['args']?.[inp.id];
+          if (argVal !== undefined) {
+            if (typeof argVal === 'number') {
+              argExprs.push(this.formatFloat(argVal));
+            } else if (typeof argVal === 'string') {
+              const refNode = func.nodes.find(n => n.id === argVal);
+              if (refNode) {
+                emitPure(argVal);
+                argExprs.push(this.nodeResId(argVal));
+              } else {
+                argExprs.push(this.getVariableExpr(argVal, func, varMap));
+              }
+            } else {
+              argExprs.push(String(argVal));
+            }
+          } else {
+            argExprs.push('0.0f');
+          }
+        }
+        return `${this.sanitizeId(targetId, 'func')}(${argExprs.join(', ')})`;
+      }
 
       default:
         throw new Error(`MSL Generator: Unsupported op '${node.op}'`);
@@ -661,11 +840,32 @@ export class MslGenerator {
       case 'float4': return 'float4';
       default:
         if (irType.startsWith('array<')) {
-          // arrays in Metal use different syntax but for buffers we use pointers
-          return 'float';
+          // Parse array<elem, len> and return Metal array type
+          const match = irType.match(/array<([^,]+),\s*(\d+)>/);
+          if (match) {
+            const elemType = this.irTypeToMsl(match[1].trim());
+            const len = match[2];
+            // Return special marker that caller handles for local vars
+            return `__array_${elemType}_${len}`;
+          }
+          return 'float'; // fallback
         }
         return this.sanitizeId(irType, 'struct');
     }
+  }
+
+  // Helper to format local var declaration with array handling
+  private formatLocalVarDecl(varId: string, type: string, init?: number): string {
+    if (type.startsWith('__array_')) {
+      // Parse __array_elemType_len - strip prefix, then split
+      const stripped = type.substring('__array_'.length); // e.g., "int_3"
+      const lastUnderscore = stripped.lastIndexOf('_');
+      const elemType = stripped.substring(0, lastUnderscore);
+      const len = stripped.substring(lastUnderscore + 1);
+      return `${elemType} ${this.sanitizeId(varId)}[${len}]`;
+    }
+    const initStr = init !== undefined ? ` = ${this.formatFloat(init)}` : '';
+    return `${type} ${this.sanitizeId(varId)}${initStr}`;
   }
 
   private getTypeSize(type: string | undefined): number {
