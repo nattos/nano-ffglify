@@ -12,6 +12,7 @@ import { RuntimeValue, EvaluationContext } from '../../interpreter/context';
 import { IRDocument } from '../../ir/types';
 import { TestBackend } from './types';
 import { CppGenerator } from '../../metal/cpp-generator';
+import { MslGenerator } from '../../metal/msl-generator';
 import { makeResourceStates } from '../../runtime/resources';
 
 function getCppMetalBuildDir(): string {
@@ -46,130 +47,14 @@ export const CppMetalBackend: TestBackend = {
     // 3. Generate MSL for shader functions if any exist
     let metallibPath = '';
     if (shaderFunctions.length > 0) {
-      const { MslGenerator } = await import('../../metal/msl-generator');
+      const mslGen = new MslGenerator();
 
-      // Generate MSL for each shader function
-      const mslParts: string[] = [
-        '#include <metal_stdlib>',
-        'using namespace metal;',
-        '',
-        '// Helper functions',
-        'inline float safe_div(float a, float b) { return b != 0.0f ? a / b : 0.0f; }',
-        ''
-      ];
-
-      for (const shaderInfo of shaderFunctions) {
-        const shaderFunc = ir.functions.find(f => f.id === shaderInfo.id);
-        if (!shaderFunc) continue;
-
-        // Build inputs struct if shader has inputs
-        const inputsStruct = shaderInfo.inputs.length > 0 ? `
-struct ${shaderInfo.id}_Inputs {
-${shaderInfo.inputs.map((inp, i) => `  float ${inp.id};`).join('\n')}
-};
-` : '';
-
-        // Generate kernel function
-        // Binding 0: uniform inputs, Bindings 1+: resource buffers
-        const resourceParams = ir.resources.map((r, i) =>
-          `device float* ${r.id} [[buffer(${i + 1})]]`
-        ).join(',\n    ');
-
-        const inputParam = shaderInfo.inputs.length > 0
-          ? `constant ${shaderInfo.id}_Inputs& inputs [[buffer(0)]],`
-          : 'constant float& _unused [[buffer(0)]],';
-
-        mslParts.push(inputsStruct);
-        mslParts.push(`kernel void ${shaderInfo.id}(`);
-        mslParts.push(`    ${inputParam}`);
-        mslParts.push(`    ${resourceParams},`);
-        mslParts.push(`    uint3 gid [[thread_position_in_grid]]) {`);
-
-        // Build expression map for resolving node references
-        const exprMap = new Map<string, string>();
-        const formatFloat = (n: number) => {
-          const s = n.toString();
-          return s.includes('.') ? s + 'f' : s + '.0f';
-        };
-
-        // Helper to resolve a value reference
-        const resolveValue = (value: string | number | undefined): string => {
-          if (value === undefined) return '0.0f';
-          if (typeof value === 'number') return formatFloat(value);
-
-          // Check if it's an input reference
-          if (shaderInfo.inputs.some(i => i.id === value)) {
-            return `inputs.${value}`;
-          }
-
-          // Check if it's already in expression map
-          if (exprMap.has(value)) {
-            return exprMap.get(value)!;
-          }
-
-          // Try to find and compile the referenced node
-          const refNode = shaderFunc.nodes.find(n => n.id === value);
-          if (refNode) {
-            const expr = compileNode(refNode);
-            if (expr) {
-              exprMap.set(value, expr);
-              return expr;
-            }
-          }
-
-          return `0.0f /* unresolved: ${value} */`;
-        };
-
-        // Compile a node to an MSL expression
-        const compileNode = (node: any): string | null => {
-          switch (node.op) {
-            case 'float':
-              return formatFloat(node['val']);
-            case 'resource_get_size': {
-              // Return buffer size as a float3 (for compatibility with vec_get_element)
-              const resId = node['resource'];
-              const resDef = ir.resources.find(r => r.id === resId);
-              const size = resDef?.size && typeof resDef.size === 'object' && 'value' in resDef.size
-                ? resDef.size.value : 1;
-              // For buffers, return (size, 1, 1)
-              if (typeof size === 'number') {
-                return `float3(${formatFloat(size)}, 1.0f, 1.0f)`;
-              }
-              return 'float3(1.0f, 1.0f, 1.0f)';
-            }
-            case 'vec_get_element': {
-              const vec = resolveValue(node['vec']);
-              const idx = node['index'];
-              if (typeof idx === 'number') {
-                const components = ['x', 'y', 'z', 'w'];
-                return `${vec}.${components[idx] || 'x'}`;
-              }
-              return `${vec}[${resolveValue(idx)}]`;
-            }
-            default:
-              return null;
-          }
-        };
-
-        // Process all nodes, emitting statements for side-effect nodes
-        for (const node of shaderFunc.nodes) {
-          if (node.op === 'buffer_store') {
-            const bufferId = node['buffer'];
-            const bufIdx = node['index'];
-            const value = node['value'];
-            const valueExpr = resolveValue(value);
-            const idxExpr = typeof bufIdx === 'number' ? bufIdx : resolveValue(bufIdx);
-            mslParts.push(`  ${bufferId}[${idxExpr}] = ${valueExpr};`);
-          }
-        }
-
-        mslParts.push('}');
-        mslParts.push('');
-      }
+      // Generate MSL for all shader functions in one go
+      const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map(s => s.id));
 
       // Write MSL source
       const mslPath = path.join(buildDir, 'shaders.metal');
-      fs.writeFileSync(mslPath, mslParts.join('\n'));
+      fs.writeFileSync(mslPath, mslCode);
 
       // Compile to .metallib
       metallibPath = path.join(buildDir, 'shaders.metallib');
@@ -186,7 +71,7 @@ ${shaderInfo.inputs.map((inp, i) => `  float ${inp.id};`).join('\n')}
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (e: any) {
-        console.error('MSL source:', mslParts.join('\n'));
+        console.error('MSL source:', mslCode);
         throw new Error(`Metal shader compilation failed: ${e.stderr || e.message}`);
       }
     }

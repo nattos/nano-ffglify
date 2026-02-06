@@ -10,6 +10,10 @@ export interface MslOptions {
   globalBufferBinding?: number;
   varMap?: Map<string, number>;
   resourceBindings?: Map<string, number>;
+  /** Custom kernel function name (default: 'main_kernel') */
+  kernelName?: string;
+  /** Skip Metal header (include, namespace) */
+  skipHeader?: boolean;
 }
 
 export interface MslCompilationResult {
@@ -29,9 +33,11 @@ export class MslGenerator {
     const lines: string[] = [];
 
     // Metal header
-    lines.push('#include <metal_stdlib>');
-    lines.push('using namespace metal;');
-    lines.push('');
+    if (!options.skipHeader) {
+      lines.push('#include <metal_stdlib>');
+      lines.push('using namespace metal;');
+      lines.push('');
+    }
 
     // Find entry function and collect dependencies
     const entryFunc = ir.functions.find(f => f.id === entryPointId);
@@ -43,8 +49,10 @@ export class MslGenerator {
     const varMap = options.varMap || new Map<string, number>();
     let varOffset = 0;
 
-    // Allocate space for inputs
-    ir.inputs?.forEach(input => {
+    // Allocate space for inputs.
+    // If it's a shader function, use its own inputs. Otherwise use IR-global inputs.
+    const inputs = (entryFunc.type === 'shader' ? entryFunc.inputs : ir.inputs) || [];
+    inputs.forEach(input => {
       if (!varMap.has(input.id)) {
         varMap.set(input.id, varOffset);
         varOffset += this.getTypeSize(input.type);
@@ -103,13 +111,85 @@ export class MslGenerator {
     }
 
     // Emit entry point as kernel
-    this.emitKernel(entryFunc, lines, allFunctions, varMap, resourceBindings);
+    this.emitKernel(entryFunc, lines, allFunctions, varMap, resourceBindings, options);
 
     return {
       code: lines.join('\n'),
       metadata: {
         resourceBindings,
         globalBufferSize,
+        varMap
+      }
+    };
+  }
+
+  /**
+   * Compiles multiple entry points into a single Metal library source string.
+   */
+  compileLibrary(ir: IRDocument, entryPointIds: string[], options: MslOptions = {}): MslCompilationResult {
+    this.ir = ir;
+    const lines: string[] = [];
+
+    // Metal header
+    if (!options.skipHeader) {
+      lines.push('#include <metal_stdlib>');
+      lines.push('using namespace metal;');
+      lines.push('');
+    }
+
+    // Emit helper functions
+    lines.push('// Helper functions');
+    lines.push('inline float safe_div(float a, float b) { return b != 0.0f ? a / b : 0.0f; }');
+    lines.push('inline float2 safe_div(float2 a, float b) { return b != 0.0f ? a / b : float2(0.0f); }');
+    lines.push('inline float3 safe_div(float3 a, float b) { return b != 0.0f ? a / b : float3(0.0f); }');
+    lines.push('inline float4 safe_div(float4 a, float b) { return b != 0.0f ? a / b : float4(0.0f); }');
+    lines.push('inline float2 safe_div(float2 a, float2 b) { return float2(safe_div(a.x, b.x), safe_div(a.y, b.y)); }');
+    lines.push('inline float3 safe_div(float3 a, float3 b) { return float3(safe_div(a.x, b.x), safe_div(a.y, b.y), safe_div(a.z, b.z)); }');
+    lines.push('inline float4 safe_div(float4 a, float4 b) { return float4(safe_div(a.x, b.x), safe_div(a.y, b.y), safe_div(a.z, b.z), safe_div(a.w, b.w)); }');
+    lines.push('');
+
+    // Emit struct definitions
+    this.emitStructs(ir.structs || [], lines);
+
+    const emittedFunctions = new Set<string>();
+    const varMap = options.varMap || new Map<string, number>();
+    const resourceBindings = options.resourceBindings || new Map<string, number>();
+
+    // Default resource bindings if not provided
+    if (!options.resourceBindings) {
+      let bindingCounter = 1;
+      for (const res of ir.resources || []) {
+        if (!resourceBindings.has(res.id)) {
+          resourceBindings.set(res.id, bindingCounter++);
+        }
+      }
+    }
+
+    for (const entryId of entryPointIds) {
+      const entryFunc = ir.functions.find(f => f.id === entryId);
+      if (!entryFunc) continue;
+
+      const allFunctions = this.collectFunctions(entryFunc, ir.functions);
+
+      // Emit non-entry functions
+      for (const func of allFunctions) {
+        if (func.id !== entryId && !emittedFunctions.has(func.id)) {
+          this.emitFunction(func, false, lines, allFunctions, varMap, resourceBindings);
+          emittedFunctions.add(func.id);
+        }
+      }
+
+      // Emit entry point as kernel
+      const kernelOptions = { ...options, kernelName: entryId };
+      this.emitKernel(entryFunc, lines, allFunctions, varMap, resourceBindings, kernelOptions);
+      lines.push('');
+    }
+
+    return {
+      code: lines.join('\n'),
+      metadata: {
+        resourceBindings,
+        globalBufferSize: 0,
         varMap
       }
     };
@@ -180,13 +260,27 @@ export class MslGenerator {
     lines: string[],
     allFunctions: FunctionDef[],
     varMap: Map<string, number>,
-    resourceBindings: Map<string, number>
+    resourceBindings: Map<string, number>,
+    options: MslOptions = {}
   ) {
     lines.push('// Kernel entry point');
 
     // Build kernel signature with buffer bindings
     const bufferParams: string[] = [];
-    bufferParams.push('device float* b_globals [[buffer(0)]]');
+
+    if (func.type === 'shader' && func.inputs && func.inputs.length > 0) {
+      // Emit inputs struct definition before kernel
+      lines.push(`struct ${this.sanitizeId(func.id, 'struct')}_Inputs {`);
+      for (const input of func.inputs) {
+        const type = this.irTypeToMsl(input.type || 'float');
+        lines.push(`  ${type} ${this.sanitizeId(input.id, 'field')};`);
+      }
+      lines.push('};');
+      lines.push('');
+      bufferParams.push(`constant ${this.sanitizeId(func.id, 'struct')}_Inputs& inputs [[buffer(0)]]`);
+    } else {
+      bufferParams.push('device float* b_globals [[buffer(0)]]');
+    }
 
     for (const [resId, binding] of resourceBindings) {
       const res = this.ir?.resources.find(r => r.id === resId);
@@ -196,7 +290,10 @@ export class MslGenerator {
       }
     }
 
-    lines.push(`kernel void main_kernel(${bufferParams.join(', ')}) {`);
+    const kernelName = options.kernelName || 'main_kernel';
+    lines.push(`kernel void ${kernelName}(`);
+    lines.push(`    ${bufferParams.join(',\n    ')},`);
+    lines.push('    uint3 gid [[thread_position_in_grid]]) {');
 
     const edges = reconstructEdges(func);
     this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges);
@@ -212,6 +309,13 @@ export class MslGenerator {
     resourceBindings: Map<string, number>,
     edges: Edge[]
   ) {
+    // Declare local variables
+    for (const v of func.localVars || []) {
+      const type = this.irTypeToMsl(v.type || 'float');
+      lines.push(`    ${type} ${this.sanitizeId(v.id)};`);
+    }
+    if ((func.localVars || []).length > 0) lines.push('');
+
     // Track emitted pure nodes
     const emittedPure = new Set<string>();
     const emitPure = (nodeId: string) => {
@@ -294,6 +398,10 @@ export class MslGenerator {
       const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges);
       const bufName = this.sanitizeId(bufferId, 'buffer');
       lines.push(`    ${bufName}[int(${idx})] = ${val};`);
+    } else if (node.op === 'var_set') {
+      const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const varId = node['var'];
+      lines.push(`    ${this.getVariableExpr(varId, func, varMap)} = ${val};`);
     } else if (node.op === 'func_return') {
       const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
       lines.push(`    return ${val};`);
@@ -326,11 +434,7 @@ export class MslGenerator {
 
       case 'var_get': {
         const varId = node['var'];
-        const offset = varMap.get(varId);
-        if (offset !== undefined) {
-          return `b_globals[${offset}]`;
-        }
-        throw new Error(`Variable '${varId}' is not defined`);
+        return this.getVariableExpr(varId, func, varMap);
       }
 
       case 'buffer_load': {
@@ -410,6 +514,20 @@ export class MslGenerator {
         return `${vec}.${channels}`;
       }
 
+      case 'resource_get_size': {
+        // Return buffer size as a float3 (for compatibility with vec_get_element)
+        // TODO: We _must_ support dynamically sized resources! This doesn't work yet.
+        const resId = node['resource'];
+        const resDef = this.ir?.resources.find(r => r.id === resId);
+        const size = resDef?.size && typeof resDef.size === 'object' && 'value' in resDef.size
+          ? resDef.size.value : 1;
+        // For buffers, return (size, 1, 1)
+        if (typeof size === 'number') {
+          return `float3(${this.formatFloat(size)}, 1.0f, 1.0f)`;
+        }
+        return 'float3(1.0f, 1.0f, 1.0f)';
+      }
+
       case 'vec_get_element': {
         const vec = this.resolveArg(node, 'vec', func, allFunctions, varMap, resourceBindings, emitPure, edges);
         const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges);
@@ -424,6 +542,25 @@ export class MslGenerator {
       default:
         throw new Error(`MSL Generator: Unsupported op '${node.op}'`);
     }
+  }
+
+  private getVariableExpr(varId: string, func: FunctionDef, varMap: Map<string, number>): string {
+    // Check if it's a shader function input
+    if (func.type === 'shader' && func.inputs?.some(i => i.id === varId)) {
+      return `inputs.${this.sanitizeId(varId, 'field')}`;
+    }
+
+    // Check if it's a local variable
+    if (func.localVars?.some(v => v.id === varId)) {
+      return this.sanitizeId(varId, 'var');
+    }
+
+    const offset = varMap.get(varId);
+    if (offset !== undefined) {
+      return `b_globals[${offset}]`;
+    }
+
+    return this.sanitizeId(varId, 'var'); // Default to local
   }
 
   private resolveArg(
@@ -466,6 +603,9 @@ export class MslGenerator {
         emitPure(val);
         return this.nodeResId(val);
       }
+
+      // Variable reference (input or local)
+      return this.getVariableExpr(val, func, varMap);
     }
     return String(val);
   }
