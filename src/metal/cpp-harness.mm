@@ -76,6 +76,82 @@ inline std::array<T, N> vec_normalize(const std::array<T, N> &v) {
   return result;
 }
 
+// Element-wise math function overloads for std::array
+#define DEFINE_ELEMENTWISE_UNARY(NAME, FN)                                     \
+  template <typename T, size_t N>                                              \
+  inline std::array<T, N> NAME(const std::array<T, N> &v) {                    \
+    std::array<T, N> result;                                                   \
+    for (size_t i = 0; i < N; ++i)                                             \
+      result[i] = FN(v[i]);                                                    \
+    return result;                                                             \
+  }
+
+#define DEFINE_ELEMENTWISE_BINARY(NAME, FN)                                    \
+  template <typename T, size_t N>                                              \
+  inline std::array<T, N> NAME(const std::array<T, N> &a,                      \
+                               const std::array<T, N> &b) {                    \
+    std::array<T, N> result;                                                   \
+    for (size_t i = 0; i < N; ++i)                                             \
+      result[i] = FN(a[i], b[i]);                                              \
+    return result;                                                             \
+  }                                                                            \
+  template <typename T, size_t N>                                              \
+  inline std::array<T, N> NAME(const std::array<T, N> &a, T b) {               \
+    std::array<T, N> result;                                                   \
+    for (size_t i = 0; i < N; ++i)                                             \
+      result[i] = FN(a[i], b);                                                 \
+    return result;                                                             \
+  }                                                                            \
+  template <typename T, size_t N>                                              \
+  inline std::array<T, N> NAME(T a, const std::array<T, N> &b) {               \
+    std::array<T, N> result;                                                   \
+    for (size_t i = 0; i < N; ++i)                                             \
+      result[i] = FN(a, b[i]);                                                 \
+    return result;                                                             \
+  }
+
+namespace elem {
+DEFINE_ELEMENTWISE_UNARY(abs, std::abs)
+DEFINE_ELEMENTWISE_UNARY(sin, std::sin)
+DEFINE_ELEMENTWISE_UNARY(cos, std::cos)
+DEFINE_ELEMENTWISE_UNARY(tan, std::tan)
+DEFINE_ELEMENTWISE_UNARY(asin, std::asin)
+DEFINE_ELEMENTWISE_UNARY(acos, std::acos)
+DEFINE_ELEMENTWISE_UNARY(atan, std::atan)
+DEFINE_ELEMENTWISE_UNARY(sqrt, std::sqrt)
+DEFINE_ELEMENTWISE_UNARY(exp, std::exp)
+DEFINE_ELEMENTWISE_UNARY(log, std::log)
+DEFINE_ELEMENTWISE_UNARY(ceil, std::ceil)
+DEFINE_ELEMENTWISE_UNARY(floor, std::floor)
+DEFINE_ELEMENTWISE_UNARY(trunc, std::trunc)
+
+DEFINE_ELEMENTWISE_BINARY(fmod, std::fmod)
+DEFINE_ELEMENTWISE_BINARY(pow, std::pow)
+DEFINE_ELEMENTWISE_BINARY(min, std::min)
+DEFINE_ELEMENTWISE_BINARY(max, std::max)
+DEFINE_ELEMENTWISE_BINARY(atan2, std::atan2)
+} // namespace elem
+
+// re-export into global namespace for simpler generated code
+using elem::abs;
+using elem::acos;
+using elem::asin;
+using elem::atan;
+using elem::atan2;
+using elem::ceil;
+using elem::cos;
+using elem::exp;
+using elem::floor;
+using elem::fmod;
+using elem::log;
+using elem::max;
+using elem::min;
+using elem::pow;
+using elem::sin;
+using elem::sqrt;
+using elem::tan;
+using elem::trunc;
+
 // Resource state structure
 struct ResourceState {
   std::vector<float> data;

@@ -15,7 +15,9 @@ import { CppGenerator } from '../../metal/cpp-generator';
 import { makeResourceStates } from '../../runtime/resources';
 
 function getCppMetalBuildDir(): string {
-  const dir = path.join(os.tmpdir(), 'nano-ffglify-cppmetal-build');
+  // Use unique subdirectory for each call to avoid parallel test conflicts
+  const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const dir = path.join(os.tmpdir(), 'nano-ffglify-cppmetal-build', uniqueId);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

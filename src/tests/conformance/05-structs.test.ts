@@ -101,7 +101,7 @@ describe('Conformance: Structs and Arrays', () => {
     // Try to extract field 'x' from it (expecting it to be a struct)
     { id: 'ex', op: 'struct_extract', struct: 'load', field: 'x' },
     { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'ex' }
-  ], /Runtime Error: buffer_load OOB|cannot index into expression|WGSL Compilation Failed|Static OOB Access/, [bufferDef],
+  ], /Runtime Error: buffer_load OOB|cannot index into expression|WGSL Compilation Failed|Static OOB Access|C\+\+ compilation failed/, [bufferDef],
     [{ id: 'S1', members: [{ name: 'x', type: 'float' }] }], // Arg 5 Structs
     [] // Arg 6 LocalVars
   );

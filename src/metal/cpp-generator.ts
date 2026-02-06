@@ -62,6 +62,20 @@ export class CppGenerator {
     lines.push('// Entry point: ' + entryFunc.id);
     lines.push('');
 
+    // Emit struct definitions
+    if (ir.structs && ir.structs.length > 0) {
+      lines.push('// Struct definitions');
+      for (const s of ir.structs) {
+        lines.push(`struct ${this.sanitizeId(s.id, 'struct')} {`);
+        for (const m of s.members || []) {
+          const cppType = this.irTypeToCpp(m.type);
+          lines.push(`    ${cppType} ${this.sanitizeId(m.name, 'field')};`);
+        }
+        lines.push('};');
+      }
+      lines.push('');
+    }
+
     // Forward declarations
     for (const funcId of requiredFuncs) {
       const func = allFunctions.find((f: FunctionDef) => f.id === funcId)!;
@@ -118,11 +132,37 @@ export class CppGenerator {
     return s + '.0f';
   }
 
-  private sanitizeId(id: string, type: 'input' | 'var' | 'func' = 'var'): string {
+  private sanitizeId(id: string, type: 'input' | 'var' | 'func' | 'struct' | 'field' = 'var'): string {
     const clean = id.replace(/[^a-zA-Z0-9_]/g, '_');
     if (type === 'input') return `i_${clean}`;
     if (type === 'func') return `func_${clean}`;
+    if (type === 'struct') return `S_${clean}`;
+    if (type === 'field') return `f_${clean}`;
     return `v_${clean}`;
+  }
+
+  /**
+   * Convert IR type to C++ type
+   */
+  private irTypeToCpp(irType: string): string {
+    switch (irType) {
+      case 'float': return 'float';
+      case 'int': case 'i32': return 'int';
+      case 'uint': case 'u32': return 'unsigned int';
+      case 'bool': return 'bool';
+      case 'float2': return 'std::array<float, 2>';
+      case 'float3': return 'std::array<float, 3>';
+      case 'float4': return 'std::array<float, 4>';
+      default:
+        // Check for array types like array<i32, 3>
+        const arrayMatch = irType.match(/array<([^,]+),\s*(\d+)>/);
+        if (arrayMatch) {
+          const elemType = this.irTypeToCpp(arrayMatch[1]);
+          return `std::array<${elemType}, ${arrayMatch[2]}>`;
+        }
+        // Assume it's a struct type
+        return this.sanitizeId(irType, 'struct');
+    }
   }
 
   private nodeResId(id: string): string {
@@ -137,8 +177,11 @@ export class CppGenerator {
 
     // Declare local variables
     for (const v of f.localVars) {
-      const init = v.initialValue !== undefined ? String(v.initialValue) : '0.0f';
-      lines.push(`    float ${this.sanitizeId(v.id, 'var')} = ${init};`);
+      const cppType = this.irTypeToCpp(v.type || 'float');
+      const init = v.initialValue !== undefined
+        ? (typeof v.initialValue === 'number' ? this.formatFloat(v.initialValue) : String(v.initialValue))
+        : '{}';
+      lines.push(`    ${cppType} ${this.sanitizeId(v.id, 'var')} = ${init};`);
     }
 
     const edges = reconstructEdges(f);
@@ -183,13 +226,15 @@ export class CppGenerator {
       'static_cast_float', 'static_cast_int',
       'var_get', 'buffer_load', 'vec_swizzle',
       'vec_get_element', 'call_func',
+      'struct_construct', 'struct_extract',
+      'array_construct', 'array_extract',
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
 
   private isExecutable(op: string): boolean {
     return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
-      op === 'buffer_store' || op === 'func_return' || op === 'call_func';
+      op === 'buffer_store' || op === 'func_return' || op === 'call_func' || op === 'array_set';
   }
 
   private inferCppType(node: Node): string {
@@ -325,6 +370,24 @@ export class CppGenerator {
       // Find buffer index in resources
       const bufferIdx = this.ir?.resources.findIndex(r => r.id === bufferId) ?? -1;
       lines.push(`${indent}ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})] = ${val};`);
+    } else if (node.op === 'array_set') {
+      // array_set modifies a variable in-place, need to find the actual variable name
+      // Trace back through the data edge to find the var_get node
+      const arrayEdge = edges.find(e => e.to === node.id && e.portIn === 'array' && e.type === 'data');
+      let varName: string | undefined;
+      if (arrayEdge) {
+        const sourceNode = func.nodes.find(n => n.id === arrayEdge.from);
+        if (sourceNode && sourceNode.op === 'var_get') {
+          varName = this.sanitizeId(sourceNode['var'], 'var');
+        }
+      }
+      if (!varName) {
+        // Fallback: resolve normally (might create a copy issue)
+        varName = this.resolveArg(node, 'array', func, allFunctions, emitPure, edges);
+      }
+      const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
+      const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges);
+      lines.push(`${indent}${varName}[static_cast<size_t>(${idx})] = ${val};`);
     } else if (this.hasResult(node.op)) {
       // Executable nodes with results (like call_func) need auto declarations
       const expr = this.compileExpression(node, func, allFunctions, true, emitPure, edges);
@@ -390,7 +453,7 @@ export class CppGenerator {
         const varId = node['var'];
         if (func.localVars.some(v => v.id === varId)) return this.sanitizeId(varId, 'var');
         if (func.inputs.some(i => i.id === varId)) return this.sanitizeId(varId, 'input');
-        throw new Error(`C++ Generator: Variable '${varId}' not found`);
+        throw new Error(`Variable '${varId}' is not defined`);
       }
       case 'literal': {
         const v = node['val'];
@@ -412,40 +475,40 @@ export class CppGenerator {
         return `ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})]`;
       }
 
-      // Math ops
-      case 'math_neg': return `applyUnary(${val()}, [](float v) { return -v; })`;
-      case 'math_abs': return `applyUnary(${val()}, [](float v) { return std::abs(v); })`;
-      case 'math_sign': return `applyUnary(${val()}, [](float v) { return v > 0 ? 1.0f : (v < 0 ? -1.0f : 0.0f); })`;
-      case 'math_sin': return `applyUnary(${val()}, [](float v) { return std::sin(v); })`;
-      case 'math_cos': return `applyUnary(${val()}, [](float v) { return std::cos(v); })`;
-      case 'math_tan': return `applyUnary(${val()}, [](float v) { return std::tan(v); })`;
-      case 'math_asin': return `applyUnary(${val()}, [](float v) { return std::asin(v); })`;
-      case 'math_acos': return `applyUnary(${val()}, [](float v) { return std::acos(v); })`;
-      case 'math_atan': return `applyUnary(${val()}, [](float v) { return std::atan(v); })`;
-      case 'math_sqrt': return `applyUnary(${val()}, [](float v) { return std::sqrt(v); })`;
-      case 'math_exp': return `applyUnary(${val()}, [](float v) { return std::exp(v); })`;
-      case 'math_log': return `applyUnary(${val()}, [](float v) { return std::log(v); })`;
-      case 'math_ceil': return `applyUnary(${val()}, [](float v) { return std::ceil(v); })`;
-      case 'math_floor': return `applyUnary(${val()}, [](float v) { return std::floor(v); })`;
-      case 'math_trunc': return `applyUnary(${val()}, [](float v) { return std::trunc(v); })`;
-      case 'math_fract': return `applyUnary(${val()}, [](float v) { return v - std::floor(v); })`;
+      // Math ops - inlined for simpler code
+      case 'math_neg': return `(-(${val()}))`;
+      case 'math_abs': return `abs(${val()})`;
+      case 'math_sign': { const v = val(); return `((${v}) > 0.0f ? 1.0f : ((${v}) < 0.0f ? -1.0f : 0.0f))`; }
+      case 'math_sin': return `sin(${val()})`;
+      case 'math_cos': return `cos(${val()})`;
+      case 'math_tan': return `tan(${val()})`;
+      case 'math_asin': return `asin(${val()})`;
+      case 'math_acos': return `acos(${val()})`;
+      case 'math_atan': return `atan(${val()})`;
+      case 'math_sqrt': return `sqrt(${val()})`;
+      case 'math_exp': return `exp(${val()})`;
+      case 'math_log': return `log(${val()})`;
+      case 'math_ceil': return `ceil(${val()})`;
+      case 'math_floor': return `floor(${val()})`;
+      case 'math_trunc': return `trunc(${val()})`;
+      case 'math_fract': { const v = val(); return `((${v}) - floor(${v}))`; }
 
-      case 'math_add': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x + y; })`;
-      case 'math_sub': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x - y; })`;
-      case 'math_mul': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x * y; })`;
-      case 'math_div': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x / y; })`;
-      case 'math_mod': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return std::fmod(x, y); })`;
-      case 'math_pow': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return std::pow(x, y); })`;
-      case 'math_min': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return std::min(x, y); })`;
-      case 'math_max': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return std::max(x, y); })`;
-      case 'math_atan2': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return std::atan2(x, y); })`;
+      case 'math_add': return `((${a()}) + (${b()}))`;
+      case 'math_sub': return `((${a()}) - (${b()}))`;
+      case 'math_mul': return `((${a()}) * (${b()}))`;
+      case 'math_div': return `((${a()}) / (${b()}))`;
+      case 'math_mod': return `fmod(${a()}, ${b()})`;
+      case 'math_pow': return `pow(${a()}, ${b()})`;
+      case 'math_min': return `std::min(${a()}, ${b()})`;
+      case 'math_max': return `std::max(${a()}, ${b()})`;
+      case 'math_atan2': return `atan2(${a()}, ${b()})`;
 
-      case 'math_gt': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x > y ? 1.0f : 0.0f; })`;
-      case 'math_lt': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x < y ? 1.0f : 0.0f; })`;
-      case 'math_ge': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x >= y ? 1.0f : 0.0f; })`;
-      case 'math_le': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x <= y ? 1.0f : 0.0f; })`;
-      case 'math_eq': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x == y ? 1.0f : 0.0f; })`;
-      case 'math_neq': return `applyBinary(${a()}, ${b()}, [](float x, float y) { return x != y ? 1.0f : 0.0f; })`;
+      case 'math_gt': return `((${a()}) > (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_lt': return `((${a()}) < (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_ge': return `((${a()}) >= (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_le': return `((${a()}) <= (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_eq': return `((${a()}) == (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_neq': return `((${a()}) != (${b()}) ? 1.0f : 0.0f)`;
 
       case 'float': return `static_cast<float>(${val()})`;
       case 'static_cast_float': return `static_cast<float>(${val()})`;
@@ -465,6 +528,12 @@ export class CppGenerator {
         const idxs = channels.split('').map((c: string) => map[c]);
         if (idxs.length === 1) return `${vec}[${idxs[0]}]`;
         return `std::array<float, ${idxs.length}>{${idxs.map((i: number) => `${vec}[${i}]`).join(', ')}}`;
+      }
+
+      case 'vec_get_element': {
+        const vec = this.resolveArg(node, 'vec', func, allFunctions, emitPure, edges);
+        const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
+        return `${vec}[static_cast<size_t>(${idx})]`;
       }
 
       case 'call_func': {
@@ -503,6 +572,61 @@ export class CppGenerator {
 
         const argsStr = args.length > 0 ? ', ' + args.join(', ') : '';
         return `${this.sanitizeId(targetFunc, 'func')}(ctx${argsStr})`;
+      }
+
+      // Struct ops
+      case 'struct_construct': {
+        const typeName = node['type'];
+        const structDef = this.ir?.structs?.find(s => s.id === typeName);
+        if (!structDef) throw new Error(`C++ Generator: Struct type '${typeName}' not found`);
+
+        const cppTypeName = this.sanitizeId(typeName, 'struct');
+        const values = node['values'] || {};
+
+        // Build initializer list in member order
+        const initItems: string[] = [];
+        for (const member of structDef.members || []) {
+          const fieldVal = values[member.name];
+          if (fieldVal !== undefined) {
+            if (typeof fieldVal === 'number') {
+              initItems.push(this.formatFloat(fieldVal));
+            } else if (typeof fieldVal === 'string') {
+              // Node reference
+              emitPure(fieldVal);
+              initItems.push(this.nodeResId(fieldVal));
+            } else {
+              initItems.push(String(fieldVal));
+            }
+          } else {
+            initItems.push('{}'); // Default initialize
+          }
+        }
+        return `${cppTypeName}{${initItems.join(', ')}}`;
+      }
+
+      case 'struct_extract': {
+        const structExpr = this.resolveArg(node, 'struct', func, allFunctions, emitPure, edges);
+        const fieldName = node['field'];
+        return `${structExpr}.${this.sanitizeId(fieldName, 'field')}`;
+      }
+
+      // Array ops
+      case 'array_construct': {
+        const length = node['length'] || 0;
+        const fill = node['fill'];
+        // Determine element type based on fill value
+        const isInt = fill !== undefined && typeof fill === 'number' && Number.isInteger(fill);
+        const elemType = isInt ? 'int' : 'float';
+        const fillExpr = fill !== undefined
+          ? (typeof fill === 'number' ? (isInt ? String(fill) : this.formatFloat(fill)) : String(fill))
+          : (isInt ? '0' : '0.0f');
+        return `({auto _arr = std::array<${elemType}, ${length}>{}; for(auto& _e : _arr) _e = ${fillExpr}; _arr;})`;
+      }
+
+      case 'array_extract': {
+        const arrExpr = this.resolveArg(node, 'array', func, allFunctions, emitPure, edges);
+        const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
+        return `${arrExpr}[static_cast<size_t>(${idx})]`;
       }
 
       default:
