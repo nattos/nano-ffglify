@@ -42,7 +42,7 @@ describe('17-render-pipeline', () => {
       { id: 'y', op: 'array_extract', array: 'positions', index: 'idx_2_1' },
       { id: 'pos', op: 'float4', x: 'x', y: 'y', z: 0.0, w: 1.0 },
       { id: 'ret_struct', op: 'struct_construct', type: 'VertexOutput', values: { pos: 'pos' } },
-      { id: 'ret', op: 'func_return', value: 'ret_struct' }
+      { id: 'ret', op: 'func_return', val: 'ret_struct' }
     ],
     localVars: []
   };
@@ -80,7 +80,7 @@ describe('17-render-pipeline', () => {
     nodes: [
       { id: 'red', op: 'literal', val: 1.0 },
       { id: 'col', op: 'float4', x: 'red', y: 0.0, z: 0.0, w: 1.0 },
-      { id: 'ret', op: 'func_return', value: 'col' }
+      { id: 'ret', op: 'func_return', val: 'col' }
     ],
     localVars: []
   };

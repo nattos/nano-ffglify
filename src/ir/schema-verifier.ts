@@ -50,31 +50,13 @@ export function verifyLiteralsOrRefsExist(
   }
 
   // Check for unexpected extra keys
-  const internalKeys = ['op', 'id', 'metadata', 'type', 'comment', 'next', '_next', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', 'dataType', 'const_data', 'target'];
+  const internalKeys = ['op', 'id', 'metadata', 'type', 'comment', 'next', '_next', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', 'dataType', 'const_data'];
   const definedKeys = Object.keys(def.args);
 
-  if (!def.isDynamic) {
-    for (const key of Object.keys(nodeProps)) {
-      if (!internalKeys.includes(key) && !definedKeys.includes(key)) {
-        errors.push(`Unknown argument(s) '${key}' in operation '${op}'`);
-      }
-    }
-  } else {
-    // Semi-strict validation for dynamic ops to support transition but forbid random noise
-    for (const key of Object.keys(nodeProps)) {
-      if (internalKeys.includes(key) || definedKeys.includes(key)) continue;
-
-      if (op === 'call_func' || op === 'cmd_dispatch') {
-        errors.push(`Unknown argument(s) '${key}' in operation '${op}'. Top-level function arguments are no longer supported; please move them to the consolidated 'args' field.`);
-      } else if (op === 'struct_construct') {
-        errors.push(`Unknown argument(s) '${key}' in operation '${op}'. Top-level struct members are no longer supported; please move them to the consolidated 'values' field.`);
-      } else if (op === 'array_construct') {
-        // Only allow numeric indices as extra keys
-        if (!/^\d+$/.test(key)) {
-          errors.push(`Unknown argument(s) '${key}' in operation '${op}'`);
-        }
-      }
-    }
+  // Check for unexpected extra keys
+  for (const key of Object.keys(nodeProps)) {
+    if (internalKeys.includes(key) || definedKeys.includes(key)) continue;
+    errors.push(`Unknown argument(s) '${key}' in operation '${op}'.`);
   }
 
   // Special handling for consolidated dynamic args: 'args' or 'values'
@@ -82,6 +64,31 @@ export function verifyLiteralsOrRefsExist(
   const dynamicKeys = ['args', 'values'];
   for (const dKey of dynamicKeys) {
     if (nodeProps[dKey] && typeof nodeProps[dKey] === 'object' && !Array.isArray(nodeProps[dKey])) {
+      if (op === 'call_func' || op === 'cmd_dispatch') {
+        const funcId = nodeProps['func'] as string;
+        const targetFunc = ir?.functions?.find(f => f.id === funcId);
+        if (targetFunc && nodeProps['args']) {
+          const args = nodeProps['args'] as Record<string, any>;
+          for (const [argKey, argVal] of Object.entries(args)) {
+            const isInput = targetFunc.inputs.some(i => i.id === argKey);
+            if (!isInput) {
+              errors.push(`Unknown argument '${argKey}' in consolidated 'args' for function '${funcId}'`);
+            }
+          }
+        }
+      } else if (op === 'struct_construct') {
+        const typeId = nodeProps['type'] as string;
+        const structDef = ir?.structs?.find(s => s.id === typeId);
+        if (structDef && nodeProps['values']) {
+          const values = nodeProps['values'] as Record<string, any>;
+          for (const [fieldKey, fieldVal] of Object.entries(values)) {
+            if (!structDef.members.some(m => m.name === fieldKey)) {
+              errors.push(`Unknown member '${fieldKey}' in consolidated 'values' for struct '${typeId}'`);
+            }
+          }
+        }
+      }
+
       const dict = nodeProps[dKey] as Record<string, unknown>;
       for (const [key, val] of Object.entries(dict)) {
         // Here we assume these are 'refable' by default as they are dynamic input args

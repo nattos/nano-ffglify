@@ -630,8 +630,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
     args: {
       type: { type: z.string(), doc: "Struct type", refType: 'struct' },
       values: { type: z.any(), doc: "Struct fields", optional: true }
-    },
-    isDynamic: true
+    }
   }),
   'struct_extract': StructExtractDef,
   'array_construct': defineOp<ArrayConstructArgs>({
@@ -641,8 +640,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
       type: { type: z.string(), doc: "Explicit array type", optional: true, refType: 'struct' },
       length: { type: z.any(), doc: "Array length", optional: true, refable: true },
       fill: { type: z.any(), doc: "Fill value", optional: true, refable: true }
-    },
-    isDynamic: true
+    }
   }),
   'array_set': ArraySetDef,
   'array_extract': ArrayExtractDef,
@@ -656,8 +654,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
       func: { type: z.string(), doc: "Shader function ID", requiredRef: true, refType: 'func' },
       dispatch: { type: z.any(), doc: "Dispatch dimensions (vec3<u32> or scalar)", optional: true, refable: true },
       args: { type: z.any(), doc: "Shader arguments", optional: true }
-    },
-    isDynamic: true
+    }
   }),
   'cmd_resize_resource': defineOp<CmdResizeResourceArgs>({ doc: "Resize a resource", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' }, size: { type: AnyData, doc: "New size [w, h] or scalar", refable: true, literalTypes: ['float', 'int', 'float2'] }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
   'cmd_sync_to_cpu': defineOp<CmdSyncToCpuArgs>({ doc: "Initiate async readback", args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource' } } }),
@@ -676,10 +673,9 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
     args: {
       func: { type: z.string(), doc: "Function ID", requiredRef: true, refType: 'func' },
       args: { type: z.any(), doc: "Function arguments", optional: true }
-    },
-    isDynamic: true
+    }
   }),
-  'func_return': defineOp<FuncReturnArgs>({ doc: "Return from function", args: { val: { type: z.any(), doc: "Return value", optional: true, refable: true }, value: { type: z.any(), doc: "Return value (alias)", optional: true, refable: true } } }),
+  'func_return': defineOp<FuncReturnArgs>({ doc: "Return from function", args: { val: { type: z.any(), doc: "Return value", optional: true, refable: true } } }),
 };
 
 /**

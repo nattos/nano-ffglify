@@ -59,7 +59,9 @@ export function reconstructEdges(func: FunctionDef): Edge[] {
       }
 
       // Handle Dynamic Nodes (e.g. call_func, struct_construct) or nested paths in schema
-      if (def.isDynamic) {
+      // Handle Dynamic Nodes (e.g. call_func, struct_construct) or consolidated containers
+      if (def.isDynamic || (node as any).args !== undefined || (node as any).values !== undefined) {
+        const definedKeys = new Set(Object.keys(def.args));
         const traverse = (obj: any, path: string) => {
           if (obj === null || obj === undefined) return;
           if (typeof obj === 'string') {
@@ -71,15 +73,14 @@ export function reconstructEdges(func: FunctionDef): Edge[] {
           } else if (typeof obj === 'object') {
             for (const [k, v] of Object.entries(obj)) {
               if (path === '' && (INTERNAL_KEYS.has(k) || k.startsWith('exec_') || k === 'next' || k === '_next')) continue;
+              // If we are at root, and it's a defined non-refable key, we still might want to traverse IF it's args or values
+              if (path === '' && definedKeys.has(k) && k !== 'args' && k !== 'values') continue;
+
               traverse(v, path === '' ? k : `${path}.${k}`);
             }
           }
         };
 
-        // If it's dynamic, we might have consolidated args or flattened.
-        // If we have consolidated 'args' or 'values' field, we should also check them even if they are in schema.
-        // Actually, let's just traverse the whole node but skip schema-defined ones to avoid duplicates?
-        // Or just traverse the whole node and let the deduplication at the end handle it.
         traverse(node, '');
       }
     }

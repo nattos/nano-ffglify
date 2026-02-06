@@ -605,7 +605,7 @@ export class WgslGenerator {
         else if (t.includes('f32') || t.includes('float')) elemType = 'f32';
       }
 
-      const arr = this.resolveArg(node, 'array' in node ? 'array' : 'vec', func, options, ir, 'any', edges);
+      const arr = this.resolveArg(node, 'array', func, options, ir, 'any', edges);
       const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
       const val = this.resolveArg(node, 'value', func, options, ir, elemType, edges);
       lines.push(`${indent}${arr}[u32(${idx})] = ${val};`);
@@ -776,12 +776,6 @@ export class WgslGenerator {
           curr = curr[p];
         }
         val = curr;
-
-        // Fallback for transition: if args.FOO or values.FOO is missing, check top level FOO
-        if (val === undefined) {
-          if (k.startsWith('args.')) val = node[k.substring(5)];
-          else if (k.startsWith('values.')) val = node[k.substring(7)];
-        }
       } else {
         val = node[k];
       }
@@ -907,7 +901,7 @@ export class WgslGenerator {
     }
     if (node.op === 'texture_sample') {
       const tex = node['tex'];
-      const uv = (node['uv'] !== undefined) ? this.resolveArg(node, 'uv', func, options, ir, 'any', edges) : this.resolveArg(node, 'coords', func, options, ir, 'any', edges);
+      const uv = this.resolveArg(node, 'uv', func, options, ir, 'any', edges);
       return `sample_${tex}(${uv})`;
     }
     if (node.op === 'texture_load') {

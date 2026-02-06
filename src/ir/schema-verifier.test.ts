@@ -92,6 +92,47 @@ describe('Schema Verifier', () => {
       const validNode = { id: 'n2', op: 'math_add', a: 5.5, b: [1, 2] };
       expect(verifyLiteralsOrRefsExist(validNode as any).valid).toBe(true);
     });
+
+    it('should forbid top-level arguments in call_func', () => {
+      const node = { id: 'n1', op: 'call_func', func: 'f', arg_x: 5 };
+      const result = verifyLiteralsOrRefsExist(node as any);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain("Unknown argument(s) 'arg_x'");
+    });
+
+    it('should forbid top-level members in struct_construct', () => {
+      const node = { id: 'n1', op: 'struct_construct', type: 'S', x: 5 };
+      const result = verifyLiteralsOrRefsExist(node as any);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain("Unknown argument(s) 'x'");
+    });
+
+    it('should forbid target alias in cmd_dispatch', () => {
+      const node = { id: 'n1', op: 'cmd_dispatch', target: 'f' };
+      const result = verifyLiteralsOrRefsExist(node as any);
+      expect(result.valid).toBe(false);
+      expect(result.errors.find(e => e.includes("Unknown argument(s) 'target'"))).toBeDefined();
+    });
+
+    it('should forbid value alias in func_return', () => {
+      const node = { id: 'n1', op: 'func_return', value: 5 };
+      const result = verifyLiteralsOrRefsExist(node as any);
+      expect(result.valid).toBe(false);
+      expect(result.errors.find(e => e.includes("Unknown argument(s) 'value'"))).toBeDefined();
+    });
+
+    it('should validate consolidated args against function inputs', () => {
+      const ir = {
+        functions: [{ id: 'f1', inputs: [{ id: 'x', type: 'float' }] }]
+      };
+      const validNode = { id: 'n1', op: 'call_func', func: 'f1', args: { x: 5 } };
+      expect(verifyLiteralsOrRefsExist(validNode as any, ir as any).valid).toBe(true);
+
+      const invalidNode = { id: 'n2', op: 'call_func', func: 'f1', args: { y: 5 } };
+      const result = verifyLiteralsOrRefsExist(invalidNode as any, ir as any);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain("Unknown argument 'y' in consolidated 'args'");
+    });
   });
 
   describe('isArgumentAReference', () => {

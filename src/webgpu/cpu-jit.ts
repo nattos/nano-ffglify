@@ -462,20 +462,8 @@ require('./intrinsics.js');
         curr = curr[p];
       }
       val = curr;
-
-      // Fallback for transition: if args.FOO or values.FOO is missing, check top-level FOO
-      if (val === undefined) {
-        if (key.startsWith('args.')) val = node[key.substring(5)];
-        else if (key.startsWith('values.')) val = node[key.substring(7)];
-        else if (key.startsWith('values[')) {
-          const match = key.match(/values\[(\d+)\]/);
-          if (match) val = node[match[1]]; // Old format might have used indices as keys or just array?
-          // Actually array_construct usually had values as an array.
-        }
-      }
     } else {
       val = node[key];
-      if (val === undefined && key === 'val') val = node['value'];
     }
 
     if (val !== undefined) {
