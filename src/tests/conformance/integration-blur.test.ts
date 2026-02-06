@@ -63,7 +63,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
           { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [4, 1, 1], comment: 'Generate weights in parallel', exec_in: 'cmd_init' },
 
           // 4. Dispatch Blur (1 Thread for test)
-          { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1], u_kernel_size: 'u_kernel_size', exec_in: 'cmd_gen' }
+          { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1], args: { u_kernel_size: 'u_kernel_size' }, exec_in: 'cmd_gen' }
         ]
       },
       {

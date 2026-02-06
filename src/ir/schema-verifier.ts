@@ -65,15 +65,7 @@ export function verifyLiteralsOrRefsExist(
       if (internalKeys.includes(key) || definedKeys.includes(key)) continue;
 
       if (op === 'call_func' || op === 'cmd_dispatch') {
-        // Allow keys that match target function inputs OR start with arg_ prefix OR start with u_ (uniforms)
-        const funcId = (nodeProps['func'] || nodeProps['target']) as string;
-        const targetFunc = ir?.functions?.find(f => f.id === funcId);
-        const isInput = targetFunc?.inputs.some(i => i.id === key);
-        const isLegacyArg = key.startsWith('arg_') || key.startsWith('u_');
-
-        if (!isInput && !isLegacyArg) {
-          errors.push(`Unknown argument(s) '${key}' in operation '${op}'. Flattened arguments must match function inputs or start with 'arg_' or 'u_'.`);
-        }
+        errors.push(`Unknown argument(s) '${key}' in operation '${op}'. Top-level function arguments are no longer supported; please move them to the consolidated 'args' field.`);
       } else if (op === 'struct_construct') {
         // Flattened members must exist in the struct definition if available
         const typeId = nodeProps['type'] as string;

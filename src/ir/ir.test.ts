@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateIR } from './schema';
-import { IRDocument } from './types';
+import { IRDocument, TextureFormat } from './types';
 
 describe('IR Validation', () => {
   it('should validate a minimal IR document', () => {
@@ -18,8 +18,7 @@ describe('IR Validation', () => {
           inputs: [],
           outputs: [],
           localVars: [],
-          nodes: [],
-          edges: []
+          nodes: []
         }
       ]
     };
@@ -47,7 +46,7 @@ describe('IR Validation', () => {
         {
           id: 't_output',
           type: 'texture2d',
-          format: 'rgba8',
+          format: TextureFormat.RGBA8,
           size: { mode: 'reference', ref: 't_input' },
           persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
         },
@@ -73,10 +72,6 @@ describe('IR Validation', () => {
             { id: 'get_size', op: 'resource_get_size', resource: 't_input' },
             { id: 'calc_groups', op: 'math_div_scalar', val: 'get_size', scalar: 8 },
             { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1] }
-          ],
-          edges: [
-            { from: 'resize_w', portOut: 'exec_out', to: 'cmd_gen', portIn: 'exec_in', type: 'execution' },
-            { from: 'get_size', portOut: 'val', to: 'calc_groups', portIn: 'val', type: 'data' }
           ]
         },
         {
@@ -89,8 +84,7 @@ describe('IR Validation', () => {
             { id: 'loop', op: 'flow_loop', start: 0, end: 16 },
             { id: 'idx', op: 'loop_index', loop: 'loop' },
             { id: 'store', op: 'buffer_store', buffer: 'b_weights', index: 'idx', value: 1.0 }
-          ],
-          edges: []
+          ]
         },
         {
           id: 'fn_blur',
@@ -104,8 +98,7 @@ describe('IR Validation', () => {
             { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 'idx' },
             { id: 'uv', op: 'float2', x: 0.5, y: 0.5 },
             { id: 'tex_val', op: 'texture_sample', tex: 't_input', uv: 'uv' }
-          ],
-          edges: []
+          ]
         }
       ]
     };
@@ -149,7 +142,6 @@ describe('IR Validation', () => {
           inputs: [],
           outputs: [],
           localVars: [],
-          edges: [],
           nodes: [
             // 't_missing' does not exist
             { id: 'n1', op: 'texture_sample', tex: 't_missing' }
@@ -180,7 +172,6 @@ describe('IR Validation', () => {
         inputs: [],
         outputs: [],
         localVars: [],
-        edges: [],
         nodes: [
           { id: 'n1', op: 'math_add' },
           { id: 'n1', op: 'math_sub' } // Duplicate
@@ -237,8 +228,8 @@ describe('IR Validation', () => {
       resources: [],
       structs: [],
       functions: [
-        { id: 'fn_1', type: 'cpu', inputs: [], outputs: [], localVars: [], nodes: [], edges: [] },
-        { id: 'fn_1', type: 'shader', inputs: [], outputs: [], localVars: [], nodes: [], edges: [] }
+        { id: 'fn_1', type: 'cpu', inputs: [], outputs: [], localVars: [], nodes: [] },
+        { id: 'fn_1', type: 'shader', inputs: [], outputs: [], localVars: [], nodes: [] }
       ]
     };
     const result = validateIR(invalid);

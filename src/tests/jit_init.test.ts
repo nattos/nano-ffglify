@@ -17,7 +17,7 @@ describe('JIT Initialization', () => {
           outputs: [],
           localVars: [],
           nodes: [
-            { id: 'n1', op: 'call_func', func: 'shader', x: 1, y: 1, z: 1 }
+            { id: 'n1', op: 'call_func', func: 'shader', args: { x: 1, y: 1, z: 1 } }
           ]
         },
         {

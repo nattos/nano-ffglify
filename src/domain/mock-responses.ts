@@ -66,7 +66,7 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
                 { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', x: 'u_kernel_size', y: 1, z: 1, exec_in: 'resize_w' },
 
                 // 4. Dispatch Blur using dynamic dimensions
-                { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', x: 'out_w', y: 'out_h', z: 1, u_kernel_size: 'u_kernel_size', exec_in: 'cmd_gen' }
+                { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', x: 'out_w', y: 'out_h', z: 1, args: { u_kernel_size: 'u_kernel_size' }, exec_in: 'cmd_gen' }
               ]
             },
             {

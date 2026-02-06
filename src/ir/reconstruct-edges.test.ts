@@ -109,10 +109,10 @@ describe('Edge Reconstruction Parity', () => {
     localVars: [],
     nodes: [
       { id: 'arg1', op: 'float', val: 5 },
-      { id: 'c1', op: 'call_func', func: 'some_fn', arg_x: 'arg1' }
+      { id: 'c1', op: 'call_func', func: 'some_fn', args: { arg_x: 'arg1' } }
     ]
   }, [
-    { from: 'arg1', portOut: 'val', to: 'c1', portIn: 'arg_x', type: 'data' }
+    { from: 'arg1', portOut: 'val', to: 'c1', portIn: 'args.arg_x', type: 'data' }
   ]);
 
   // 7. Loop Flow

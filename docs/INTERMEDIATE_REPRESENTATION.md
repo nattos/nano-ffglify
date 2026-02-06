@@ -180,7 +180,7 @@ interface VariableDef {
 
         // False Path: n * factorial(n-1)
         { "id": "n_sub", "op": "math_sub", "a": "n", "b": 1 },
-        { "id": "recurse", "op": "call_func", "func": "fn_factorial", "n": "n_sub" },
+        { "id": "recurse", "op": "call_func", "func": "fn_factorial", "args": { "n": "n_sub" } },
         { "id": "mult", "op": "math_mul", "a": "n", "b": "recurse" },
         { "id": "ret_res", "op": "func_return", "val": "mult", "exec_in": "n_sub" }
       ]

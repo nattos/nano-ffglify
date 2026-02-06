@@ -130,7 +130,7 @@ describe('Conformance: Bind Group Layouts', () => {
           localVars: [],
           nodes: [
             { id: 'v', op: 'float', val: 789.0 },
-            { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], val: 'v' }
+            { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], args: { val: 'v' } }
           ]
         },
         {

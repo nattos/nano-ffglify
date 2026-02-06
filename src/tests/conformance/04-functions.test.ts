@@ -27,7 +27,7 @@ describe('Conformance: Functions', () => {
         outputs: [],
         localVars: [],
         nodes: [
-          { id: 'c1', op: 'call_func', func: 'fn_square', arg_x: 5 }, // Call square(5)
+          { id: 'c1', op: 'call_func', func: 'fn_square', args: { arg_x: 5 } }, // Call square(5)
           { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'c1', exec_in: 'c1' } // Store result
         ]
       },
@@ -64,7 +64,7 @@ describe('Conformance: Functions', () => {
         outputs: [],
         localVars: [],
         nodes: [
-          { id: 'c1', op: 'call_func', func: 'fn_abs', arg: -10 },
+          { id: 'c1', op: 'call_func', func: 'fn_abs', args: { arg: -10 } },
           { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'c1', exec_in: 'c1' }
         ]
       },
