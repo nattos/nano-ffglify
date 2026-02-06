@@ -24,26 +24,86 @@ export class CppGenerator {
   compile(ir: IRDocument, entryPointId: string): CppCompileResult {
     this.ir = ir;
     const allFunctions = ir.functions;
-    const func = allFunctions.find((f: FunctionDef) => f.id === entryPointId);
-    if (!func) throw new Error(`Entry point '${entryPointId}' not found`);
+    const entryFunc = allFunctions.find((f: FunctionDef) => f.id === entryPointId);
+    if (!entryFunc) throw new Error(`Entry point '${entryPointId}' not found`);
+
+    // Collect all required functions via call graph traversal
+    const requiredFuncs = new Set<string>();
+    const callStack: string[] = [];
+
+    const collectFunctions = (funcId: string) => {
+      // Check for recursion
+      if (callStack.includes(funcId)) {
+        throw new Error(`Recursion detected: ${callStack.join(' -> ')} -> ${funcId}`);
+      }
+      if (requiredFuncs.has(funcId)) return;
+
+      const func = allFunctions.find((f: FunctionDef) => f.id === funcId);
+      if (!func) throw new Error(`Function '${funcId}' not found`);
+
+      requiredFuncs.add(funcId);
+      callStack.push(funcId);
+
+      // Find all call_func nodes in this function
+      for (const node of func.nodes) {
+        if (node.op === 'call_func') {
+          const targetFunc = node['func'];
+          if (targetFunc) collectFunctions(targetFunc);
+        }
+      }
+
+      callStack.pop();
+    };
+
+    collectFunctions(entryPointId);
 
     const lines: string[] = [];
-
-    // Note: We don't emit headers or intrinsic helpers - the harness provides them
     lines.push('// Generated C++ code from IR');
-    lines.push('// Entry point: ' + func.id);
+    lines.push('// Entry point: ' + entryFunc.id);
+    lines.push('');
+
+    // Forward declarations
+    for (const funcId of requiredFuncs) {
+      const func = allFunctions.find((f: FunctionDef) => f.id === funcId)!;
+      const hasReturn = func.outputs && func.outputs.length > 0;
+      const returnType = hasReturn ? 'float' : 'void';
+      const params = this.buildFuncParams(func);
+      lines.push(`${returnType} ${this.sanitizeId(funcId, 'func')}(EvalContext& ctx${params});`);
+    }
     lines.push('');
 
     // Collect resource IDs for the harness
     const resourceIds = ir.resources.map(r => r.id);
 
-    // Emit function
-    this.emitFunction(func, lines, allFunctions);
+    // Emit all required functions (reverse order so dependencies come first)
+    const funcList = Array.from(requiredFuncs).reverse();
+    for (const funcId of funcList) {
+      const func = allFunctions.find((f: FunctionDef) => f.id === funcId)!;
+      this.emitFunction(func, lines, allFunctions);
+      lines.push('');
+    }
+
+    // Emit func_main wrapper if entry point has a different name
+    const entryFuncName = this.sanitizeId(entryPointId, 'func');
+    if (entryFuncName !== 'func_main') {
+      lines.push('// Entry point wrapper for harness');
+      lines.push(`void func_main(EvalContext& ctx) { ${entryFuncName}(ctx); }`);
+      lines.push('');
+    }
 
     return {
       code: lines.join('\n'),
       resourceIds,
     };
+  }
+
+  /**
+   * Build function parameter list string
+   */
+  private buildFuncParams(func: FunctionDef): string {
+    if (!func.inputs || func.inputs.length === 0) return '';
+    const params = func.inputs.map(inp => `float ${this.sanitizeId(inp.id, 'input')}`);
+    return ', ' + params.join(', ');
   }
 
   /**
@@ -70,7 +130,10 @@ export class CppGenerator {
   }
 
   private emitFunction(f: FunctionDef, lines: string[], allFunctions: FunctionDef[]) {
-    lines.push(`void ${this.sanitizeId(f.id, 'func')}(EvalContext& ctx) {`);
+    const hasReturn = f.outputs && f.outputs.length > 0;
+    const returnType = hasReturn ? 'float' : 'void';
+    const params = this.buildFuncParams(f);
+    lines.push(`${returnType} ${this.sanitizeId(f.id, 'func')}(EvalContext& ctx${params}) {`);
 
     // Declare local variables
     for (const v of f.localVars) {
@@ -119,14 +182,14 @@ export class CppGenerator {
       'float2', 'float3', 'float4',
       'static_cast_float', 'static_cast_int',
       'var_get', 'buffer_load', 'vec_swizzle',
-      'vec_get_element',
+      'vec_get_element', 'call_func',
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
 
   private isExecutable(op: string): boolean {
     return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
-      op === 'buffer_store' || op === 'func_return';
+      op === 'buffer_store' || op === 'func_return' || op === 'call_func';
   }
 
   private inferCppType(node: Node): string {
@@ -178,7 +241,13 @@ export class CppGenerator {
         this.emitLoop(indent, curr, func, lines, visited, allFunctions, emitPure, edges);
         return;
       } else if (curr.op === 'func_return') {
-        lines.push(`${indent}return;`);
+        // Get return value if any
+        const retVal = this.resolveArg(curr, 'val', func, allFunctions, emitPure, edges);
+        if (retVal && retVal !== '0.0f') {
+          lines.push(`${indent}return ${retVal};`);
+        } else {
+          lines.push(`${indent}return;`);
+        }
         return;
       } else {
         this.emitNode(indent, curr, func, lines, allFunctions, emitPure, edges);
@@ -257,8 +326,9 @@ export class CppGenerator {
       const bufferIdx = this.ir?.resources.findIndex(r => r.id === bufferId) ?? -1;
       lines.push(`${indent}ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})] = ${val};`);
     } else if (this.hasResult(node.op)) {
+      // Executable nodes with results (like call_func) need auto declarations
       const expr = this.compileExpression(node, func, allFunctions, true, emitPure, edges);
-      lines.push(`${indent}${this.nodeResId(node.id)} = ${expr};`);
+      lines.push(`${indent}auto ${this.nodeResId(node.id)} = ${expr};`);
     }
   }
 
@@ -395,6 +465,44 @@ export class CppGenerator {
         const idxs = channels.split('').map((c: string) => map[c]);
         if (idxs.length === 1) return `${vec}[${idxs[0]}]`;
         return `std::array<float, ${idxs.length}>{${idxs.map((i: number) => `${vec}[${i}]`).join(', ')}}`;
+      }
+
+      case 'call_func': {
+        const targetFunc = node['func'];
+        const targetFuncDef = allFunctions.find((f: FunctionDef) => f.id === targetFunc);
+        if (!targetFuncDef) throw new Error(`C++ Generator: Function '${targetFunc}' not found`);
+
+        // Build argument list from 'args' property
+        const args: string[] = [];
+        const argsObj = node['args'] || {};
+        for (const input of targetFuncDef.inputs || []) {
+          const argValue = argsObj[input.id];
+          if (argValue !== undefined) {
+            if (typeof argValue === 'number') {
+              args.push(this.formatFloat(argValue));
+            } else if (typeof argValue === 'string') {
+              // Could be a node ref or variable
+              const refNode = func.nodes.find(n => n.id === argValue);
+              if (refNode) {
+                emitPure(argValue);
+                args.push(this.nodeResId(argValue));
+              } else if (func.localVars.some(v => v.id === argValue)) {
+                args.push(this.sanitizeId(argValue, 'var'));
+              } else if (func.inputs.some(i => i.id === argValue)) {
+                args.push(this.sanitizeId(argValue, 'input'));
+              } else {
+                args.push(argValue);
+              }
+            } else {
+              args.push(String(argValue));
+            }
+          } else {
+            args.push('0.0f');
+          }
+        }
+
+        const argsStr = args.length > 0 ? ', ' + args.join(', ') : '';
+        return `${this.sanitizeId(targetFunc, 'func')}(ctx${argsStr})`;
       }
 
       default:
