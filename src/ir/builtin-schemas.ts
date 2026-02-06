@@ -638,7 +638,9 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
     doc: "Construct array",
     args: {
       values: { type: z.array(z.any()), doc: "Array elements", refable: true, isArray: true, optional: true },
-      type: { type: z.string(), doc: "Explicit array type", optional: true, refType: 'struct' }
+      type: { type: z.string(), doc: "Explicit array type", optional: true, refType: 'struct' },
+      length: { type: z.any(), doc: "Array length", optional: true, refable: true },
+      fill: { type: z.any(), doc: "Fill value", optional: true, refable: true }
     },
     isDynamic: true
   }),

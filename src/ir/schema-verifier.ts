@@ -49,13 +49,48 @@ export function verifyLiteralsOrRefsExist(
     validateArg(key, value, argDef, errors, ir, func);
   }
 
-  // Check for unexpected extra keys if NOT dynamic
+  // Check for unexpected extra keys
+  const internalKeys = ['op', 'id', 'metadata', 'type', 'comment', 'next', '_next', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', 'dataType', 'const_data', 'target'];
+  const definedKeys = Object.keys(def.args);
+
   if (!def.isDynamic) {
-    const internalKeys = ['op', 'id', 'metadata', 'type', 'comment', 'next', '_next', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', 'dataType'];
-    const definedKeys = Object.keys(def.args);
     for (const key of Object.keys(nodeProps)) {
       if (!internalKeys.includes(key) && !definedKeys.includes(key)) {
         errors.push(`Unknown argument(s) '${key}' in operation '${op}'`);
+      }
+    }
+  } else {
+    // Semi-strict validation for dynamic ops to support transition but forbid random noise
+    for (const key of Object.keys(nodeProps)) {
+      if (internalKeys.includes(key) || definedKeys.includes(key)) continue;
+
+      if (op === 'call_func' || op === 'cmd_dispatch') {
+        // Allow keys that match target function inputs OR start with arg_ prefix OR start with u_ (uniforms)
+        const funcId = (nodeProps['func'] || nodeProps['target']) as string;
+        const targetFunc = ir?.functions?.find(f => f.id === funcId);
+        const isInput = targetFunc?.inputs.some(i => i.id === key);
+        const isLegacyArg = key.startsWith('arg_') || key.startsWith('u_');
+
+        if (!isInput && !isLegacyArg) {
+          errors.push(`Unknown argument(s) '${key}' in operation '${op}'. Flattened arguments must match function inputs or start with 'arg_' or 'u_'.`);
+        }
+      } else if (op === 'struct_construct') {
+        // Flattened members must exist in the struct definition if available
+        const typeId = nodeProps['type'] as string;
+        const structDef = ir?.structs?.find(s => s.id === typeId);
+        if (structDef) {
+          if (!structDef.members.some(m => m.name === key)) {
+            errors.push(`Unknown member '${key}' in struct construction of '${typeId}'`);
+          }
+        } else if (ir) {
+          // If IR is provided but struct not found, we still warn/error about unknown keys
+          errors.push(`Unknown member '${key}' (Struct '${typeId}' not found)`);
+        }
+      } else if (op === 'array_construct') {
+        // Only allow numeric indices as extra keys
+        if (!/^\d+$/.test(key)) {
+          errors.push(`Unknown argument(s) '${key}' in operation '${op}'`);
+        }
       }
     }
   }
