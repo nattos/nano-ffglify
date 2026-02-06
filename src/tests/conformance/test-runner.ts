@@ -4,8 +4,9 @@ import { IRDocument, FunctionType } from '../../ir/types';
 import { TestBackend } from './types';
 import { InterpreterBackend } from './interpreter-backend';
 import { BrowserCpuBackend, BrowserGpuBackend } from './puppeteer-backend';
+import { CppMetalBackend } from './cppmetal-backend';
 
-const backends = [InterpreterBackend, BrowserCpuBackend, BrowserGpuBackend];
+const backends = [InterpreterBackend, BrowserCpuBackend, BrowserGpuBackend, CppMetalBackend];
 
 export const availableBackends = process.env.TEST_BACKEND
   ? backends.filter(b => b.name === process.env.TEST_BACKEND)
