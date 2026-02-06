@@ -12,8 +12,8 @@ const backends = [InterpreterBackend, BrowserCpuBackend, BrowserGpuBackend, CppM
 export const availableBackends = process.env.TEST_BACKEND
   ? backends.filter(b => b.name === process.env.TEST_BACKEND)
   : backends;
-export const cpuBackends = availableBackends.filter(backend => [InterpreterBackend, BrowserCpuBackend].includes(backend));
-export const gpuBackends = availableBackends.filter(backend => [BrowserGpuBackend].includes(backend));
+export const cpuBackends = availableBackends.filter(backend => [InterpreterBackend, BrowserCpuBackend, CppMetalBackend].includes(backend));
+export const gpuBackends = availableBackends.filter(backend => [BrowserGpuBackend, MetalBackend].includes(backend));
 
 if (process.env.TEST_BACKEND && availableBackends.length === 0) {
   console.warn(`[TestRunner] Warning: No backend found matching TEST_BACKEND='${process.env.TEST_BACKEND}'. Available: ${backends.map(b => b.name).join(', ')}`);
