@@ -1,9 +1,9 @@
 import { IRDocument, FunctionDef, BuiltinOp } from './types';
 import { OpSignatures, OpSignature, ValidationType } from './signatures';
-import { OpSchemas } from './builtin-schemas';
+import { OpSchemas, OpDefs } from './builtin-schemas';
 import { verifyLiteralsOrRefsExist } from './schema-verifier';
 
-import { TextureFormat, Edge } from './types';
+import { TextureFormat, Edge, PRIMITIVE_TYPES } from './types';
 import { reconstructEdges } from './utils';
 
 // Local Error Type (Internal to logic validator, mapped by schema.ts)
@@ -146,8 +146,8 @@ const resolveNodeType = (
       const refInput = func.inputs.find(i => i.id === val);
       const refGlobal = doc.inputs.find(i => i.id === val);
 
-      const nameProperties = ['var', 'buffer', 'tex', 'resource', 'field', 'loop', 'name', 'func', 'member', 'channels', 'swizzle', 'target', 'vertex', 'fragment', 'mask', 'type', 'dataType'];
-      const isNameProperty = nameProperties.includes(key);
+      const def = OpDefs[node.op as BuiltinOp];
+      const isNameProperty = def?.args[key]?.isIdentifier ?? false;
 
       if (refNode && !isNameProperty) {
         inputTypes[key] = resolveNodeType(val, func, doc, cache, resourceIds, errors, edges);
@@ -352,7 +352,7 @@ const resolveNodeType = (
 };
 
 const validateDataType = (type: string, doc: IRDocument, errors: LogicValidationError[], contextMsg: string) => {
-  if (['float', 'int', 'bool', 'float2', 'float3', 'float4', 'float3x3', 'float4x4', 'texture2d', 'sampler'].includes(type as any)) return;
+  if (PRIMITIVE_TYPES.includes(type as any)) return;
   const isStruct = doc.structs?.some(s => s.id === type);
   if (isStruct) return;
 
@@ -495,23 +495,30 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       }
     }
 
-    // Forbidden Ops in Shader Context
+    // Forbidden Ops in Shader Context (CPU-only commands)
     if (func.type !== 'cpu') {
-      const forbiddenOps = ['cmd_dispatch', 'cmd_draw', 'cmd_resize_resource'];
-      if (forbiddenOps.includes(node.op)) {
+      const opDef = OpDefs[node.op as BuiltinOp];
+      if (opDef?.cpuOnly) {
         errors.push({
           nodeId: node.id,
-          message: `Operation '${node.op}' is not allowed in shader functions (function type '${func.type || 'shader'}')`,
+          message: `Operation '${node.op}' is not allowed in shader functions (must be executed in CPU context)`,
           severity: 'error'
         });
       }
     }
 
-    if (node.op.startsWith('buffer_') || node.op.startsWith('texture_') || node.op === 'cmd_resize_resource') {
-      let resId = node['buffer'] || node['tex'] || node['resource'];
-      // Fallback for consolidated args
-      if (resId === undefined && node['args']) {
-        resId = node['args']['buffer'] || node['args']['tex'] || node['args']['resource'];
+    const opDef = OpDefs[node.op as BuiltinOp];
+    if (opDef) {
+      let resId: string | undefined;
+      // 1. Find primary resource arg via schema
+      for (const [key, arg] of Object.entries(opDef.args)) {
+        if (arg.isPrimaryResource) {
+          resId = node[key];
+          if (resId === undefined && node['args']) {
+            resId = node['args'][key];
+          }
+          break;
+        }
       }
 
       if (typeof resId === 'string' && !resourceIds.has(resId)) {

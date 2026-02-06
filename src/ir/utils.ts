@@ -1,5 +1,5 @@
 import { FunctionDef, Edge, Node } from './types';
-import { OpDefs } from './builtin-schemas';
+import { OpDefs, INTERNAL_KEYS } from './builtin-schemas';
 
 /**
  * Reconstructs virtual Edge objects from Node properties.
@@ -14,19 +14,7 @@ export function reconstructEdges(func: FunctionDef): Edge[] {
   const isNodeId = (id: any): id is string => typeof id === 'string' && id.length > 0 && nodeIds.has(id);
 
   // Helper to determine if an op is executable (side-effecting)
-  // consistent with InterpretedExecutor and wgsl-generator
-  const isExecutableOp = (op: string) =>
-    op.startsWith('cmd_') ||
-    op.startsWith('flow_') ||
-    op.startsWith('var_set') ||
-    op.startsWith('array_set') ||
-    op.startsWith('buffer_store') ||
-    op.startsWith('texture_store') ||
-    op === 'call_func' ||
-    op === 'func_return';
-
-  // Standard metadata/internal keys to ignore if not in schema
-  const INTERNAL_KEYS = new Set(['id', 'op', 'metadata', 'comment', 'const_data', 'dataType']);
+  const isExecutableOp = (op: string) => OpDefs[op as keyof typeof OpDefs]?.isExecutable ?? false;
 
   for (const node of func.nodes) {
     const def = OpDefs[node.op as keyof typeof OpDefs];

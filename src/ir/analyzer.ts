@@ -1,5 +1,6 @@
 import { IRDocument, FunctionDef, Node, PRIMITIVE_TYPES, PortDef, VariableDef, DataType } from './types';
 import { reconstructEdges } from './utils';
+import { RESERVED_KEYS } from './builtin-schemas';
 import { inferFunctionTypes, InferredTypes } from './validator';
 
 export interface IRLinePart {
@@ -222,8 +223,7 @@ const analyzeNode = (
   parts.push({ type: 'op', text: node.op });
   parts.push({ type: 'separator', text: '(' });
 
-  const reservedKeys = new Set(['id', 'op', 'metadata', 'comment', 'const_data', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', 'next', '_next']);
-  const args = Object.keys(node).filter(k => !reservedKeys.has(k));
+  const args = Object.keys(node).filter(k => !RESERVED_KEYS.has(k));
 
   args.forEach((key, i) => {
     parts.push({ type: 'keyword', text: key });
