@@ -196,8 +196,8 @@ export class AppController {
 
       runInAction(() => {
         appState.local.compilationResult = {
-          js: artifacts.compiled.task.toString(),
-          jsInit: artifacts.compiled.init.toString(),
+          js: artifacts.compiled.taskCode,
+          jsInit: artifacts.compiled.initCode,
           wgsl: artifacts.wgsl
         };
       });

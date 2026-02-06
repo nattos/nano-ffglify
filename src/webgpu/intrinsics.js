@@ -241,6 +241,7 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
         });
         pass.setBindGroup(0, bindGroup);
       }
+      console.error(dim);
       pass.dispatchWorkgroups(dim[0], dim[1], dim[2]);
       pass.end();
       device.queue.submit([encoder.finish()]);

@@ -8,6 +8,8 @@ import { CompiledTaskFunction, CompiledInitFunction } from './jit-types';
 import { precomputeShaderInfo, precomputeResourceLayout } from './precompute';
 
 export interface CompiledJitResult {
+  initCode: string;
+  taskCode: string;
   init: CompiledInitFunction;
   task: CompiledTaskFunction;
 }
@@ -19,17 +21,17 @@ export class CpuJitCompiler {
   private ir?: IRDocument;
 
   compile(ir: IRDocument, entryPointId: string): CompiledJitResult {
-    let body = this.compileToSource(ir, entryPointId);
-    body = body.replace(`require('./intrinsics.js');`, intrinsicsRaw);
+    const rawBody = this.compileToSource(ir, entryPointId);
+    const body = rawBody.replace(`require('./intrinsics.js');`, intrinsicsRaw);
 
-    let initBody = this.compileInitToSource(ir);
-    initBody = initBody.replace(`require('./intrinsics.js');`, intrinsicsRaw);
+    const rawInitBody = this.compileInitToSource(ir);
+    const initBody = rawInitBody.replace(`require('./intrinsics.js');`, intrinsicsRaw);
 
     try {
       const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
       const task = new AsyncFunction('ctx', body);
       const init = new AsyncFunction('device', initBody);
-      return { task, init };
+      return { taskCode: rawBody, initCode: rawInitBody, task, init };
 
     } catch (e) {
       console.error("JIT Compilation Failed:\n", body);
