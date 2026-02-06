@@ -469,14 +469,21 @@ require('./intrinsics.js');
     }
 
     if (val !== undefined) {
-      if (typeof val === 'string' && !['var', 'func', 'resource', 'buffer'].includes(key)) {
-        if (func.localVars.some(v => v.id === val)) return sanitizeId(val, 'var');
-        if (func.inputs.some(i => i.id === val)) return sanitizeId(val, 'input');
-        if (this.ir?.inputs.some((i: any) => i.id === val)) return `ctx.inputs.get('${val}')`;
-        const targetNode = func.nodes.find(n => n.id === val);
-        if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure, edges);
+      const resolveString = (s: any) => {
+        if (typeof s === 'string' && !['var', 'func', 'resource', 'buffer'].includes(key)) {
+          if (func.localVars.some(v => v.id === s)) return sanitizeId(s, 'var');
+          if (func.inputs.some(i => i.id === s)) return sanitizeId(s, 'input');
+          if (this.ir?.inputs.some((i: any) => i.id === s)) return `ctx.inputs.get('${s}')`;
+          const targetNode = func.nodes.find(n => n.id === s);
+          if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure, edges);
+        }
+        return JSON.stringify(s);
+      };
+
+      if (Array.isArray(val)) {
+        return `[${val.map(v => resolveString(v)).join(', ')}]`;
       }
-      return JSON.stringify(val);
+      return resolveString(val);
     }
     return '0';
   }
