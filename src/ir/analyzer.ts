@@ -25,7 +25,7 @@ export interface AnalyzedFunction {
 export const analyzeFunction = (func: FunctionDef, doc: IRDocument): AnalyzedFunction => {
   const lines: IRLine[] = [];
   const refs = new Map<string, string[]>();
-  const edges = reconstructEdges(func);
+  const edges = reconstructEdges(func, doc);
   const inferredTypes = inferFunctionTypes(func, doc);
 
   // Helper to add a reference

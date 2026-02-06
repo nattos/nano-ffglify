@@ -53,7 +53,7 @@ export const inferFunctionTypes = (func: FunctionDef, ir: IRDocument): InferredT
   ]);
   const cache: InferredTypes = new Map();
   const errors: LogicValidationError[] = [];
-  const edges = reconstructEdges(func);
+  const edges = reconstructEdges(func, ir);
   func.nodes.forEach(node => {
     resolveNodeType(node.id, func, ir, cache, resourceIds, errors, edges);
   });
@@ -435,10 +435,18 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
   func.inputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' input '${param.id}'`));
   func.outputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' output '${param.id}'`));
   func.localVars.forEach(v => validateDataType(v.type, doc, errors, `Function '${func.id}' variable '${v.id}'`));
-  const edges = reconstructEdges(func);
+  const edges = reconstructEdges(func, doc);
   const nodeIds = new Set(func.nodes.map(n => n.id));
+  const validSources = new Set([
+    ...nodeIds,
+    ...func.inputs.map(i => i.id),
+    ...func.localVars.map(v => v.id),
+    ...doc.inputs.map(i => i.id),
+    ...doc.resources.map(r => r.id)
+  ]);
+
   edges.forEach(edge => {
-    if (!nodeIds.has(edge.from)) errors.push({ message: `Edge source '${edge.from}' not found`, severity: 'error' });
+    if (!validSources.has(edge.from)) errors.push({ message: `Edge source '${edge.from}' not found`, severity: 'error' });
     if (!nodeIds.has(edge.to)) errors.push({ message: `Edge target '${edge.to}' not found`, severity: 'error' });
   });
 

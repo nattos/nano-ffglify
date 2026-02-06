@@ -1,4 +1,4 @@
-import { FunctionDef, Edge, Node } from './types';
+import { IRDocument, FunctionDef, Edge, Node } from './types';
 import { OpDefs, INTERNAL_KEYS } from './builtin-schemas';
 
 /**
@@ -6,11 +6,19 @@ import { OpDefs, INTERNAL_KEYS } from './builtin-schemas';
  * This is used during the transition to a property-based flow/data representation.
  * Now driven by OpDefs schemas for robustness.
  */
-export function reconstructEdges(func: FunctionDef): Edge[] {
+export function reconstructEdges(func: FunctionDef, doc?: IRDocument): Edge[] {
   const edges: Edge[] = [];
   const nodeIds = new Set(func.nodes.map(n => n.id));
+  const inputIds = new Set(func.inputs.map(i => i.id));
+  const localVarIds = new Set(func.localVars.map(v => v.id));
+  const globalResourceIds = new Set(doc?.resources?.map(r => r.id) || []);
+  const globalInputIds = new Set(doc?.inputs?.map(i => i.id) || []);
 
-  // Helper to verify if a string is a valid node reference within this function
+  // Helper to verify if a string is a valid reference within this function context
+  const isRefId = (id: any): id is string =>
+    typeof id === 'string' && id.length > 0 &&
+    (nodeIds.has(id) || inputIds.has(id) || localVarIds.has(id) || globalResourceIds.has(id) || globalInputIds.has(id));
+
   const isNodeId = (id: any): id is string => typeof id === 'string' && id.length > 0 && nodeIds.has(id);
 
   // Helper to determine if an op is executable (side-effecting)
@@ -22,7 +30,7 @@ export function reconstructEdges(func: FunctionDef): Edge[] {
     // 1. Schema-Driven Resolution
     if (def) {
       for (const [key, arg] of Object.entries(def.args)) {
-        const val = node[key];
+        const val = node[key] ?? (node['args'] ? (node['args'] as any)[key] : undefined);
         if (val === undefined) continue;
 
         if (arg.refable || arg.requiredRef) {
@@ -33,14 +41,16 @@ export function reconstructEdges(func: FunctionDef): Edge[] {
               edges.push({ from: node.id, portOut: key, to: val, portIn: 'exec_in', type: 'execution' });
             }
           } else if (refType === 'data' || refType === 'var' || refType === 'func' || refType === 'resource') {
-            if (arg.isArray && Array.isArray(val)) {
-              val.forEach((item, index) => {
-                if (isNodeId(item)) {
-                  edges.push({ from: item, portOut: 'val', to: node.id, portIn: `${key}[${index}]`, type: 'data' });
-                }
-              });
-            } else if (isNodeId(val)) {
-              edges.push({ from: val, portOut: 'val', to: node.id, portIn: key, type: 'data' });
+            const processRef = (v: any, portSuffix: string = '') => {
+              if (isRefId(v)) {
+                edges.push({ from: v, portOut: 'val', to: node.id, portIn: key + portSuffix, type: 'data' });
+              }
+            };
+
+            if (Array.isArray(val)) {
+              val.forEach((item, index) => processRef(item, `[${index}]`));
+            } else {
+              processRef(val);
             }
           }
         }
@@ -52,7 +62,7 @@ export function reconstructEdges(func: FunctionDef): Edge[] {
         const traverse = (obj: any, path: string) => {
           if (obj === null || obj === undefined) return;
           if (typeof obj === 'string') {
-            if (isNodeId(obj)) {
+            if (isRefId(obj)) {
               edges.push({ from: obj, portOut: 'val', to: node.id, portIn: path, type: 'data' });
             }
           } else if (Array.isArray(obj)) {

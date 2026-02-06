@@ -126,41 +126,106 @@ function validateArg(
   func?: FunctionDef
 ) {
   const isString = typeof value === 'string';
+  const isArray = Array.isArray(value);
 
-  if (argDef.requiredRef) {
-    if (!isString) {
-      errors.push(`Argument '${key}' must be a reference (string), but got ${typeof value}`);
-    } else if (ir || func) {
-      if (!checkReferenceExists(value, ir, func)) {
-        errors.push(`Variable '${value}' is not defined`);
-      }
-    }
-  } else {
-    // It's either refable or a strict literal.
-    if (isString && argDef.refable) {
-      // It's a reference.
+  // Helper to check if a single value is a valid reference
+  const checkRef = (v: any, portSuffix: string = '') => {
+    if (typeof v === 'string' && (argDef.refable || argDef.requiredRef)) {
       if (ir || func) {
-        if (!checkReferenceExists(value, ir, func)) {
-          errors.push(`Argument '${key}' references unknown ID '${value}'`);
+        if (!checkReferenceExists(v, ir, func)) {
+          errors.push(`Argument '${key}${portSuffix}' references unknown ID '${v}'`);
+          return false; // Reference does not exist
         }
+      }
+      return true; // Is a string and is refable/requiredRef, and exists if IR/func provided
+    }
+    return false; // Not a string, or not refable/requiredRef
+  };
+
+  // Helper to check if a literal value (or element) matches literalTypes
+  const checkLiteral = (v: any, portSuffix: string = '') => {
+    if (argDef.requiredRef) {
+      errors.push(`Argument '${key}${portSuffix}' must be a reference (string), but got ${typeof v}`);
+      return false;
+    }
+
+    if (!argDef.literalTypes) {
+      if (!argDef.refable && typeof v === 'string') {
+        const isActuallyStringLiteral = (argDef.type instanceof z.ZodString) || (argDef.type instanceof z.ZodEnum);
+        if (!isActuallyStringLiteral) {
+          errors.push(`Argument '${key}${portSuffix}' does not support references, but got string '${v}'`);
+        }
+      }
+      return true;
+    };
+
+    const type = getLiteralType(v);
+
+    // If we're checking an element of an array, and the schema expects vector types,
+    // we should allow scalars (float/int) as elements.
+    if (portSuffix !== '') {
+      const expectsVector = argDef.literalTypes.some((t: string) => t.startsWith('float') && t.length > 5);
+      if (expectsVector && (type === 'float' || type === 'int')) return true;
+    }
+
+    if (matchesLiteralTypes(type, argDef.literalTypes)) return true;
+
+    errors.push(`Argument '${key}${portSuffix}' has invalid literal type: expected one of [${argDef.literalTypes.join(', ')}], but got ${type}`);
+    return false;
+  };
+
+  // 1. requiredRef Case (must be reference(s))
+  if (argDef.requiredRef) {
+    if (argDef.isArray) {
+      if (!isArray) {
+        errors.push(`Argument '${key}' must be an array of references, but got ${typeof value}`);
+      } else {
+        (value as any[]).forEach((v, idx) => {
+          if (!checkRef(v, `[${idx}]`)) {
+            // If checkRef returns false, it means it's not a string or reference doesn't exist.
+            // If it's not a string, we add a more specific error.
+            if (typeof v !== 'string') {
+              errors.push(`Element at index ${idx} in '${key}' must be a reference (string), but got ${typeof v}`);
+            }
+          }
+        });
       }
     } else {
-      // It's a literal value.
-      if (argDef.literalTypes) {
-        const type = getLiteralType(value);
-        if (!matchesLiteralTypes(type, argDef.literalTypes)) {
-          errors.push(`Argument '${key}' has invalid literal type: expected one of [${argDef.literalTypes.join(', ')}], but got ${type}`);
-        }
-      } else if (!argDef.refable && isString) {
-        const isActuallyStringLiteral = (argDef.literalTypes as any)?.includes('string') ||
-          (argDef.type instanceof z.ZodString) ||
-          (argDef.type instanceof z.ZodEnum);
-
-        if (!isActuallyStringLiteral) {
-          errors.push(`Argument '${key}' does not support references, but got string '${value}'`);
-        }
+      if (!isString) {
+        errors.push(`Argument '${key}' must be a reference (string), but got ${typeof value}`);
+      } else {
+        checkRef(value);
       }
     }
+    return;
+  }
+
+  // 2. Refable / Literal Case
+  // 2.1 Check if the WHOLE value is a reference
+  if (isString && argDef.refable) {
+    checkRef(value);
+    return;
+  }
+
+  // 2.2 Check if the WHOLE value is a valid literal (matches schema)
+  if (argDef.literalTypes) {
+    const wholeType = getLiteralType(value);
+    if (matchesLiteralTypes(wholeType, argDef.literalTypes)) {
+      return;
+    }
+  }
+
+  // 2.3 Handle arrays (mixed refs/literals or implicit arrays)
+  if (isArray) {
+    (value as any[]).forEach((v, idx) => {
+      const wasRef = checkRef(v, `[${idx}]`);
+      if (!wasRef) {
+        checkLiteral(v, `[${idx}]`);
+      }
+    });
+  } else {
+    // 2.4 Single literal value
+    checkLiteral(value);
   }
 }
 
