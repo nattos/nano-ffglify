@@ -367,9 +367,17 @@ export class CppGenerator {
       const bufferId = node['buffer'];
       const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
       const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges);
-      // Find buffer index in resources
+      // Find buffer index and data type in resources
       const bufferIdx = this.ir?.resources.findIndex(r => r.id === bufferId) ?? -1;
-      lines.push(`${indent}ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})] = ${val};`);
+      const bufferDef = this.ir?.resources.find(r => r.id === bufferId);
+      const dataType = bufferDef?.dataType || 'float';
+
+      // For vector buffers, store the complete vector at the index
+      if (dataType === 'float4' || dataType === 'float3' || dataType === 'float2') {
+        lines.push(`${indent}ctx.resources[${bufferIdx}]->storeVec(${idx}, ${val});`);
+      } else {
+        lines.push(`${indent}ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})] = ${val};`);
+      }
     } else if (node.op === 'array_set') {
       // array_set modifies a variable in-place, need to find the actual variable name
       // Trace back through the data edge to find the var_get node

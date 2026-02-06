@@ -80,11 +80,23 @@ export const CppMetalBackend: TestBackend = {
 
     // 8. Update EvaluationContext with results
     result.resources.forEach((res: { data: number[] }, i: number) => {
-      const resId = ir.resources[i]?.id;
+      const resDef = ir.resources[i];
+      const resId = resDef?.id;
       if (resId) {
         const state = ctx.resources.get(resId);
         if (state) {
-          state.data = res.data;
+          // For typed buffers (float2/3/4), restructure flat data into nested arrays
+          const dataType = resDef?.dataType;
+          if (dataType === 'float4' || dataType === 'float3' || dataType === 'float2') {
+            const stride = dataType === 'float4' ? 4 : dataType === 'float3' ? 3 : 2;
+            const chunks: number[][] = [];
+            for (let j = 0; j < res.data.length; j += stride) {
+              chunks.push(res.data.slice(j, j + stride));
+            }
+            state.data = chunks as any;
+          } else {
+            state.data = res.data;
+          }
         }
       }
     });

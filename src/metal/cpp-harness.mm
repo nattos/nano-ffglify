@@ -157,6 +157,26 @@ struct ResourceState {
   std::vector<float> data;
   size_t width = 0;
   size_t height = 0;
+
+  // Store a vector at the given index (vec stored as contiguous floats)
+  template <size_t N>
+  void storeVec(size_t idx, const std::array<float, N> &vec) {
+    size_t base = idx * N;
+    if (base + N > data.size())
+      data.resize(base + N);
+    for (size_t i = 0; i < N; ++i)
+      data[base + i] = vec[i];
+  }
+
+  // Load a vector from the given index
+  template <size_t N> std::array<float, N> loadVec(size_t idx) const {
+    std::array<float, N> result = {};
+    size_t base = idx * N;
+    for (size_t i = 0; i < N && base + i < data.size(); ++i) {
+      result[i] = data[base + i];
+    }
+    return result;
+  }
 };
 
 // Context passed to generated code
