@@ -41,10 +41,11 @@ EXAMPLES:
        "patches": [{ "op": "replace", "path": "/inputs/1/default", "value": "32" }]
      }
    }
-`;
+`.trim();
 
     // 3. Construct System Prompt
-    return `You are the WebGPU IR Assistant.
+    return `
+You are the WebGPU IR Assistant.
 Current Date: ${new Date().toISOString().split('T')[0]}
 
 ${EXAMPLES}
@@ -55,7 +56,7 @@ INSTRUCTIONS:
 3. Use 'patchIR' for small updates like changing defaults or adding nodes/properties.
    - Use JSON Patch format(op: "replace", "add", "remove").
 4. When you are done, call 'final_response' with a natural language summary.
-`;
+`.trim();
   }
 
   static buildWorkerUserPrompt(state: DatabaseState, history: any[], currentText: string): string {
@@ -65,9 +66,7 @@ INSTRUCTIONS:
     const today = new Date().toISOString().split('T')[0];
 
     // Serialize state to JSON
-    const cleanState = {
-      ir: state.ir
-    };
+    const cleanState = state.ir;
 
     // Format History
     const historyText = history.slice(-10).map(m => {
@@ -87,6 +86,6 @@ ${JSON.stringify(cleanState, null, 2)}
 
 RECENT HISTORY:
 ${historyText || '(No history)'}
-    `;
+`.trim();
   }
 }

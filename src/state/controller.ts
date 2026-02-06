@@ -14,7 +14,7 @@
  */
 import { runInAction, toJS } from 'mobx';
 import { appState } from '../domain/state';
-import { ChatMsg, LLMLogEntry, IRDocument } from '../domain/types';
+import { ChatMsg, LLMLogEntry, IRDocument, DatabaseState } from '../domain/types';
 import { historyManager } from './history';
 import { settingsManager } from './settings';
 import { validateIR } from '../ir/validator';
@@ -270,7 +270,7 @@ export class AppController {
     this.setActiveRewindId(null);
   }
 
-  public mutate(description: string, source: 'user' | 'llm', recipe: (draft: import('../domain/types').DatabaseState) => void) {
+  public mutate(description: string, source: 'user' | 'llm', recipe: (draft: DatabaseState) => void) {
     runInAction(() => {
       historyManager.record(description, source, recipe);
       this.saveDatabase();

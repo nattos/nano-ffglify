@@ -18,9 +18,8 @@ import { appState, AppState } from '../domain/state';
 import { llmManager, LLMManager } from './llm-manager';
 import { PromptBuilder } from '../domain/prompt-builder';
 import { entityManager, EntityManager } from '../state/entity-manager';
-import { DateUtils } from '../utils/date-utils';
 import { validateEntity } from '../domain/verifier';
-import { BaseEntity } from '../domain/types';
+import { PatchIRRequest, ReplaceIRRequest } from '../state/entity-api';
 
 export class ChatHandler {
   constructor(
@@ -81,89 +80,64 @@ export class ChatHandler {
   public executeTool(name: string, args: any): { success: boolean; message?: string } {
     // Dynamic Dispatch for Specific Tools
     let effectiveName = name;
-    let effectiveArgs = { ...args };
-
-    if (name.startsWith('upsert') && name !== 'upsertEntity') {
-      const type = name.replace('upsert', '');
-      effectiveName = 'upsertEntity';
-      effectiveArgs.entity_type = type;
-    } else if (name.startsWith('patch') && name !== 'patchEntity') {
-      const type = name.replace('patch', '');
-      effectiveName = 'patchEntity';
-      effectiveArgs.entity_type = type;
-      if (args.id) effectiveArgs.entity_id = args.id;
-    }
+    let effectiveArgs = args;
 
     switch (effectiveName) {
-      case 'upsertEntity': {
-        const cleanArgs = DateUtils.restoreTimestamps(effectiveArgs, new Date());
+      case 'replaceIR': {
+        const entity_type = 'IR';
+        const cleanArgs: ReplaceIRRequest = effectiveArgs;
 
         // Validate before mutating state.
         // NOTE: This check (via validateEntity) only enforces structural/schema integrity.
         // Logic errors (e.g. invalid node connections) are allowed to be saved and are
         // surfaced later via the Diagnostics UI/context.
-        const validationErrors = validateEntity(cleanArgs.entity, cleanArgs.entity_type, this.appState.database);
+        const validationErrors = validateEntity(cleanArgs as any, entity_type, this.appState.database);
         if (validationErrors.length > 0) {
           const errorMsg = validationErrors.map(e => `${e.field}: ${e.message}`).join(', ');
           return { success: false, message: `Validation Failed (Structural): ${errorMsg}` };
         }
 
-        const upsertRes = this.entityManager.upsertEntity(cleanArgs);
+        const upsertRes = this.entityManager.replaceIR(cleanArgs);
 
         if (!upsertRes.success) {
           return { success: false, message: upsertRes.message };
         } else {
           // Fetch updated entity to display
-          const { entity_id, log } = upsertRes.data;
-          const type = cleanArgs.entity_type;
+          const log = upsertRes.errors;
+          const type = entity_type;
+          const entity = this.appState.database.ir;
 
-          const collection = this.entityManager.getCollectionName(type);
-          const entity = (this.appState.database as unknown as Record<string, Record<string, BaseEntity> | undefined>)[collection]?.[entity_id];
-
-          if (entity) {
-            this.appController.addChatMessage({
-              role: 'assistant',
-              text: '', // Empty text, using widget
-              type: 'entity_update',
-              data: { entity, log, entityType: type, mutation: effectiveArgs }
-            });
-          }
+          this.appController.addChatMessage({
+            role: 'assistant',
+            text: '', // Empty text, using widget
+            type: 'entity_update',
+            data: { entity, log, entityType: type, mutation: effectiveArgs }
+          });
           return { success: true };
         }
       }
 
-      case 'deleteEntity':
-        const delRes = this.entityManager.deleteEntity(effectiveArgs);
-        if (!delRes.success) {
-          return { success: false, message: delRes.message };
-        }
-        return { success: true };
-
-      case 'patchEntity': {
+      case 'patchIR': {
         // Warning: patchEntity takes 'patches', not a full entity.
-        // We need to restore timestamps inside the patches 'value' if applicable.
-        const cleanArgs = DateUtils.restoreTimestamps(effectiveArgs, new Date());
-        const patchRes = this.entityManager.patchEntity(cleanArgs);
+        const entity_type = 'IR';
+        const cleanArgs: PatchIRRequest = effectiveArgs;
+        const patchRes = this.entityManager.patchIR(cleanArgs);
 
         if (!patchRes.success) {
           console.error(`[ChatHandler] patchEntity failed: ${patchRes.message}`);
           return { success: false, message: patchRes.message };
         } else {
           // Fetch updated entity
-          const { entity_id, log } = patchRes.data;
-          const type = cleanArgs.entity_type;
+          const log = patchRes.errors;
+          const type = entity_type;
+          const entity = this.appState.database.ir;
 
-          const collection = this.entityManager.getCollectionName(type);
-          const entity = (this.appState.database as unknown as Record<string, Record<string, BaseEntity> | undefined>)[collection]?.[entity_id];
-
-          if (entity) {
-            this.appController.addChatMessage({
-              role: 'assistant',
-              text: '',
-              type: 'entity_update',
-              data: { entity, log, entityType: type, mutation: effectiveArgs }
-            });
-          }
+          this.appController.addChatMessage({
+            role: 'assistant',
+            text: '',
+            type: 'entity_update',
+            data: { entity, log, entityType: type, mutation: effectiveArgs }
+          });
           return { success: true };
         }
       }

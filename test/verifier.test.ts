@@ -6,7 +6,7 @@ import { DatabaseState } from '../src/state/types';
 const mockState: DatabaseState = {
   ir: {
     id: 'current-ir',
-    version: '3.0.0',
+    version: '1.0.0',
     meta: { name: 'Test IR' },
     entryPoint: 'main',
     inputs: [],
@@ -23,7 +23,7 @@ describe('Entity Verifier', () => {
     it('should pass a valid IR', () => {
       const ir = {
         id: 'new-ir',
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'New IR' },
         entryPoint: 'fn_main',
         functions: []

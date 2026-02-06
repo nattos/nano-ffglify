@@ -88,7 +88,7 @@ describe('Conformance: Buffers', () => {
 
   it('should detect Type Mismatch in buffer_store', () => {
     const ir: any = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Type Mismatch Test' },
       entryPoint: 'fn_main',
       inputs: [],

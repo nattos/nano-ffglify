@@ -6,7 +6,7 @@ import { reconstructEdges } from './utils';
 describe('Regression: Refable Arguments', () => {
   it('should allow refable dispatch size in cmd_dispatch', () => {
     const doc: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Dispatch Ref Test' },
       entryPoint: 'fn_main',
       inputs: [
@@ -51,7 +51,7 @@ describe('Regression: Refable Arguments', () => {
 
   it('should detect missing refs in cmd_dispatch array', () => {
     const doc: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Dispatch Missing Ref Test' },
       entryPoint: 'fn_main',
       inputs: [],
@@ -82,7 +82,7 @@ describe('Regression: Refable Arguments', () => {
 
   it('should allow refable count in cmd_draw', () => {
     const doc: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Draw Ref Test' },
       entryPoint: 'fn_main',
       inputs: [

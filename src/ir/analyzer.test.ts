@@ -4,7 +4,7 @@ import { IRDocument } from './types';
 
 describe('IR Analyzer', () => {
   const mockDoc: IRDocument = {
-    version: '3.0.0',
+    version: '1.0.0',
     meta: { name: 'Test' },
     entryPoint: 'fn_main',
     inputs: [

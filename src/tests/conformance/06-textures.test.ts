@@ -5,7 +5,7 @@ import { IRDocument } from '../../ir/types';
 describe('Conformance: Texture Sampling', () => {
 
   const wrapModeIr: IRDocument = {
-    version: '3.0.0',
+    version: '1.0.0',
     meta: { name: 'Sampler Test' },
     entryPoint: 'fn_main',
     inputs: [],
@@ -106,7 +106,7 @@ describe('Conformance: Texture Sampling', () => {
         testCtx.skip();
       }
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Format Test' },
         entryPoint: 'fn_main',
         inputs: [],

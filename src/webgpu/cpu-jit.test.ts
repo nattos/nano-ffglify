@@ -5,7 +5,7 @@ import { IRDocument } from '../ir/types';
 describe('CpuJitCompiler: Argument Resolution', () => {
   it('should resolve references inside arrays (e.g. dispatch dimensions)', () => {
     const ir: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'JIT Array Ref Test' },
       entryPoint: 'fn_main',
       inputs: [
@@ -38,7 +38,7 @@ describe('CpuJitCompiler: Argument Resolution', () => {
 
   it('should resolve local variable references inside arrays', () => {
     const ir: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'JIT Local Var Array Ref Test' },
       entryPoint: 'fn_main',
       inputs: [],

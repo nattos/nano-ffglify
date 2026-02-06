@@ -3,7 +3,7 @@ import { IRDocument } from './ir/types';
 
 // Hard-coded IR graph (copy of the blur pipeline)
 const MOCK_IR: IRDocument = {
-  version: '3.0.0',
+  version: '1.0.0',
   meta: { name: 'Precomputed Blur Debug' },
   comment: 'This is a test pipeline demonstrating resize, generation, and blur phases.',
   entryPoint: 'fn_main_cpu',

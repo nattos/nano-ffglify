@@ -2,8 +2,7 @@ import { DatabaseState } from "./types";
 
 export const INITIAL_DATABASE_STATE: DatabaseState = {
   ir: {
-    id: 'default-ir',
-    version: '3.0.0',
+    version: '1.0.0',
     meta: {
       name: 'New Shader',
     },

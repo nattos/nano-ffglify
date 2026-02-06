@@ -6,10 +6,6 @@
  * @external-interactions
  * - Uses `schemas.ts` (via `defineSchema`) to create verifiable LLM tool definitions.
  * - Used by `state.ts` to define the shape of the database.
- *
- * @pitfalls
- * - Ensure `BaseEntity` is extended by all persistable types.
- * - `IRDocument` is the central entity.
  */
 import { defineSchema } from './schemas';
 import { IRDocument as BaseIRDocument } from '../ir/types';
@@ -46,6 +42,7 @@ export interface LLMLogEntry {
   id: string;
   timestamp: number;
   duration_ms: number;
+  system_instruction_snapshot?: string;
   prompt_snapshot: string;
   response_snapshot: string;
   tools_called?: string[];
@@ -70,16 +67,15 @@ export interface LocalState {
 }
 
 export interface DatabaseState {
-  ir: IRDocument & { id: string };
+  ir: IRDocument;
   chat_history: ChatMsg[];
 }
 
 // Utility Types
-export const IRSchema = defineSchema<IRDocument & { id: string }>({
+export const IRSchema = defineSchema<IRDocument>({
   name: 'IR',
   description: 'The Intermediate Representation document of the shader graph.',
   fields: {
-    id: { type: 'string', description: 'Unique identifier for the document', required: false },
     version: { type: 'string', description: 'IR Version', required: true },
     meta: {
       type: 'object',

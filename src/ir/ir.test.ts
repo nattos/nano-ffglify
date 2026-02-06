@@ -5,7 +5,7 @@ import { IRDocument, TextureFormat } from './types';
 describe('IR Validation', () => {
   it('should validate a minimal IR document', () => {
     const minimal: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Minimal' },
       entryPoint: 'fn_main',
       inputs: [],
@@ -35,7 +35,7 @@ describe('IR Validation', () => {
 
   it('should validate the complex Precomputed Blur example', () => {
     const complex: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Precomputed Blur' },
       entryPoint: 'fn_main_cpu',
       inputs: [
@@ -160,7 +160,7 @@ describe('IR Validation', () => {
 
   it('should detect Duplicate Node IDs', () => {
     const invalid: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Dup Node' },
       entryPoint: 'fn_main',
       inputs: [],
@@ -190,7 +190,7 @@ describe('IR Validation', () => {
 
   it('should detect Duplicate Resource IDs', () => {
     const invalid: any = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Dup Res' },
       entryPoint: 'fn_main',
       inputs: [],
@@ -221,7 +221,7 @@ describe('IR Validation', () => {
 
   it('should detect Duplicate Function IDs', () => {
     const invalid: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Dup Func' },
       entryPoint: 'fn_1',
       inputs: [],
@@ -246,7 +246,7 @@ describe('Zod Schema Validation (Structural)', () => {
   it('should fail on missing required fields', () => {
     // Missing 'entryPoint'
     const invalid: any = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Missing Entry' },
       // entryPoint missing
       inputs: [],
@@ -285,7 +285,7 @@ describe('Zod Schema Validation (Structural)', () => {
 
   it('should fail on invalid enum values', () => {
     const invalid: any = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Bad Enum' },
       entryPoint: 'fn_main',
       inputs: [],
@@ -311,7 +311,7 @@ describe('Zod Schema Validation (Structural)', () => {
 
   it('should fail on malformed union types (Resource Size)', () => {
     const invalid: any = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Bad Size' },
       entryPoint: 'fn_main',
       inputs: [],

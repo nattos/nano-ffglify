@@ -13,7 +13,7 @@ describe('Conformance: Functions', () => {
   };
 
   runFullGraphTest('should execute Function Call and Return Value', {
-    version: '3.0.0',
+    version: '1.0.0',
     meta: { name: 'Function Call' },
     entryPoint: 'fn_main',
     inputs: [],
@@ -50,7 +50,7 @@ describe('Conformance: Functions', () => {
   });
 
   runFullGraphTest('should execute Conditional Return (Flow Control)', {
-    version: '3.0.0',
+    version: '1.0.0',
     meta: { name: 'Conditional Return' },
     entryPoint: 'fn_main',
     inputs: [],
@@ -92,7 +92,7 @@ describe('Conformance: Functions', () => {
   });
 
   runFullGraphErrorTest('should throw Error on Recursion', {
-    version: '3.0.0',
+    version: '1.0.0',
     meta: { name: 'Recursion Test' },
     entryPoint: 'fn_main',
     inputs: [],

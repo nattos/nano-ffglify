@@ -14,9 +14,9 @@
 import { GoogleGenerativeAI, SchemaType, FunctionDeclaration } from "@google/generative-ai";
 
 import { appController, AppController } from '../state/controller';
-import { generateUpsertTool, generatePatchTool } from '../domain/schemas';
+import { generatePatchTool, generateReplaceTool } from '../domain/schemas';
 import { NOTES_MOCKS } from '../domain/mock-responses';
-import { ALL_SCHEMAS } from "../domain/types";
+import { ALL_SCHEMAS, IRSchema } from "../domain/types";
 import { DEFAULT_LLM_MODEL } from "../constants";
 
 export interface LLMToolCall {
@@ -63,25 +63,10 @@ export class GoogleGenAIManager implements LLMManager {
       }
     });
 
-
-    tools.push({
-      name: "deleteEntity",
-      description: "Soft delete an entity.",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          entity_type: { type: SchemaType.STRING, enum: ["IR"], format: "enum" as any },
-          entity_id: { type: SchemaType.STRING }
-        },
-        required: ["entity_type", "entity_id"]
-      }
-    });
-
     // 2. Schema-Driven Tools
-    Object.values(ALL_SCHEMAS).forEach(schema => {
-      tools.push(generateUpsertTool(schema));
-      tools.push(generatePatchTool(schema));
-    });
+    tools.push(generateReplaceTool(IRSchema));
+    tools.push(generatePatchTool(IRSchema));
+    console.log(tools);
 
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.model = this.genAI.getGenerativeModel({
@@ -184,6 +169,7 @@ export class GoogleGenAIManager implements LLMManager {
     this.appController.logLLMInteraction({
       id: crypto.randomUUID(),
       timestamp: Date.now(),
+      system_instruction_snapshot: systemInstruction,
       prompt_snapshot: prompt,
       response_snapshot: JSON.stringify(response),
       duration_ms: Date.now() - start,

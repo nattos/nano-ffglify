@@ -9,7 +9,6 @@
  *
  * @pitfalls
  * - `MappedFieldSchema` is complex and recursive. Debugging type errors here can be tricky.
- * - Ensure `generateUpsertTool` and `generatePatchTool` are updated if the schema structure changes significantly.
  */
 import { FunctionDeclaration, SchemaType } from '@google/generative-ai';
 
@@ -50,22 +49,16 @@ export function defineSchema<T>(schema: Omit<EntitySchema, 'fields'> & { fields:
   return schema as unknown as EntitySchema;
 }
 
-export function generateUpsertTool(schema: EntitySchema): FunctionDeclaration {
+export function generateReplaceTool(schema: EntitySchema): FunctionDeclaration {
   return {
-    name: `upsert${schema.name}`,
-    description: `Create or Update a ${schema.name}. ${schema.description}`,
+    name: `replace${schema.name}`,
+    description: `Replace the entire ${schema.name}. ${schema.description}`,
     parameters: {
       type: SchemaType.OBJECT,
-      properties: {
-        entity: {
-          type: SchemaType.OBJECT,
-          properties: toJsonSchemaProperties(schema.fields),
-          required: Object.entries(schema.fields)
-            .filter(([_, f]) => f.required)
-            .map(([k]) => k)
-        }
-      },
-      required: ["entity"]
+      properties: toJsonSchemaProperties(schema.fields),
+      required: Object.entries(schema.fields)
+        .filter(([_, f]) => f.required)
+        .map(([k]) => k),
     }
   };
 }
@@ -73,25 +66,18 @@ export function generateUpsertTool(schema: EntitySchema): FunctionDeclaration {
 export function generatePatchTool(schema: EntitySchema): FunctionDeclaration {
   return {
     name: `patch${schema.name}`,
-    description: `Patch a ${schema.name}. Use JSON Patch format.`,
+    description: `Patch the ${schema.name}. Use JSON Patch format.`,
     parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        id: { type: SchemaType.STRING, description: "ID of the entity to patch" },
-        patches: {
-          type: SchemaType.ARRAY,
-          items: {
-            type: SchemaType.OBJECT,
-            properties: {
-              op: { type: SchemaType.STRING, enum: ["add", "remove", "replace", "move", "copy", "test"], format: "enum" as any },
-              path: { type: SchemaType.STRING, description: "JSON Pointer path (e.g. /label/medium)" },
-              value: { type: SchemaType.STRING, description: "Value to set (can be JSON object)" }
-            },
-            required: ["op", "path", "value"]
-          }
-        }
-      },
-      required: ["id", "patches"]
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          op: { type: SchemaType.STRING, enum: ["add", "remove", "replace", "move", "copy", "test"], format: "enum" as any },
+          path: { type: SchemaType.STRING, description: "JSON Pointer path (e.g. /label/medium)" },
+          value: { type: SchemaType.STRING, description: "Value to set (can be JSON object)" }
+        },
+        required: ["op", "path", "value"]
+      }
     }
   };
 }

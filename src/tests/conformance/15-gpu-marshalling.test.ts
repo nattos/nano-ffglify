@@ -15,7 +15,7 @@ describe('Conformance: GPU Marshalling', () => {
     // ----------------------------------------------------------------
     describe('Scalars', () => {
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Scalar Marshalling' },
         entryPoint: 'main',
         inputs: [],
@@ -78,7 +78,7 @@ describe('Conformance: GPU Marshalling', () => {
     // ----------------------------------------------------------------
     describe('Vectors', () => {
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Vector Marshalling' },
         entryPoint: 'main',
         inputs: [],
@@ -153,7 +153,7 @@ describe('Conformance: GPU Marshalling', () => {
     // ----------------------------------------------------------------
     describe('Matrices', () => {
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Matrix Marshalling' },
         entryPoint: 'main',
         inputs: [],
@@ -233,7 +233,7 @@ describe('Conformance: GPU Marshalling', () => {
     // ----------------------------------------------------------------
     describe('Structs', () => {
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Struct Marshalling' },
         entryPoint: 'main',
         inputs: [],
@@ -298,7 +298,7 @@ describe('Conformance: GPU Marshalling', () => {
     // ----------------------------------------------------------------
     describe('Fixed Arrays', () => {
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Fixed Array Marshalling' },
         entryPoint: 'main',
         inputs: [],
@@ -353,7 +353,7 @@ describe('Conformance: GPU Marshalling', () => {
     // ----------------------------------------------------------------
     describe('Dynamic Arrays', () => {
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Dynamic Array Marshalling' },
         entryPoint: 'main',
         inputs: [],
@@ -410,7 +410,7 @@ describe('Conformance: GPU Marshalling', () => {
     // ----------------------------------------------------------------
     describe('Struct Arrays', () => {
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Struct Array Marshalling' },
         entryPoint: 'main',
         inputs: [],
@@ -473,7 +473,7 @@ describe('Conformance: GPU Marshalling', () => {
     // ----------------------------------------------------------------
     describe('Errors: Strings', () => {
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'String Error' },
         entryPoint: 'main',
         inputs: [],

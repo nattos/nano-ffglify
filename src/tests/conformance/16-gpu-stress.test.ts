@@ -16,7 +16,7 @@ describe('Conformance: GPU Stress Tests', () => {
   // Buffer Aliasing (Read-Modify-Write)
   // ----------------------------------------------------------------
   const irAliasing: IRDocument = {
-    version: '3.0.0',
+    version: '1.0.0',
     meta: { name: 'Buffer Aliasing' },
     entryPoint: 'main',
     inputs: [],
@@ -73,7 +73,7 @@ describe('Conformance: GPU Stress Tests', () => {
   // ----------------------------------------------------------------
   const size = 256;
   const irLarge: IRDocument = {
-    version: '3.0.0',
+    version: '1.0.0',
     meta: { name: 'Large Dispatch' },
     entryPoint: 'main',
     inputs: [],

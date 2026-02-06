@@ -14,16 +14,13 @@
 import { applyPatch } from 'fast-json-patch';
 import { appState, AppState } from '../domain/state';
 import { AppController, appController } from './controller';
-import { toJS } from 'mobx';
 import {
   EntityResponse,
-  UpsertEntityRequest,
-  DeleteEntityRequest,
-  PatchEntityRequest,
+  ReplaceIRRequest,
+  PatchIRRequest,
   MutationResult
 } from './entity-api';
 import { validateEntity } from '../domain/verifier';
-import { IRDocument } from '../ir/types';
 
 export class EntityManager {
   constructor(
@@ -31,62 +28,32 @@ export class EntityManager {
     private controller: AppController
   ) { }
 
-  public upsertEntity(request: UpsertEntityRequest<any>): EntityResponse {
-    const { entity_type, entity } = request;
-    const id = entity.id || 'current-ir';
-
-    if (entity_type !== 'IR') {
-      return { success: false, message: "Only IR is supported" };
-    }
-
-    // 1. Resolve Existing
-    const existing: any = toJS(this.appState.database.ir || {});
-    const exists = existing.id === id;
-
-    // 2. Propose Merge
-    const merged: IRDocument & { id: string } = {
-      ...existing,
-      ...entity,
-      id
-    };
-
-    // 3. Verify Merged State
-    const errors = validateEntity(merged as any, entity_type, this.appState.database);
+  public replaceIR(request: ReplaceIRRequest): EntityResponse {
+    const entity_type = 'IR';
+    const errors = validateEntity(request as any, 'IR', this.appState.database);
     if (errors.length > 0) {
       const errorMsg = errors.map(e => `${e.field}: ${e.message} `).join('; ');
       return { success: false, message: `Validation Failed. ${errorMsg}`, errors };
     }
 
     // 4. Record History & Apply
-    const operation = exists ? 'updated' : 'created';
+    const operation = 'replace';
     this.controller.mutate(`${operation} ${entity_type}`, 'llm', (database) => {
-      database.ir = merged;
+      database.ir = structuredClone(request);
     });
 
     return {
       success: true,
       message: `${entity_type} ${operation}`,
       data: {
-        entity_id: id,
-        operation
+        operation: operation as string
       } as MutationResult
     };
   }
 
-  public deleteEntity(request: DeleteEntityRequest): EntityResponse {
-    if (request.entity_type !== 'IR') return { success: false, message: "Invalid type" };
-
-    this.controller.mutate(`Delete ${request.entity_type}`, 'llm', (database) => {
-      // For IR, we might want to reset to initial instead of deleting
-      database.ir = { id: 'current-ir', version: '1.0', meta: { name: 'Empty IR' }, entryPoint: '', inputs: [], resources: [], structs: [], functions: [] };
-    });
-    return { success: true, message: "Reset IR" };
-  }
-
-
-  public patchEntity(request: PatchEntityRequest): EntityResponse {
-    const { entity_type, entity_id, patches } = request;
-    if (entity_type !== 'IR') return { success: false, message: "Invalid type" };
+  public patchIR(request: PatchIRRequest): EntityResponse {
+    const entity_type = 'IR';
+    const patches = request;
 
     const existing = this.appState.database.ir;
     if (!existing) return { success: false, message: "IR not found" };
@@ -106,14 +73,9 @@ export class EntityManager {
       success: true,
       message: "Patched",
       data: {
-        entity_id,
         operation: 'updated'
       } as MutationResult
     };
-  }
-
-  public getCollectionName(type: string): string {
-    return 'ir';
   }
 }
 

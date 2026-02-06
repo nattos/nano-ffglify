@@ -1,4 +1,4 @@
-import { BaseEntity, ValidationError } from '../domain/types';
+import { BaseEntity, IRDocument, ValidationError } from '../domain/types';
 
 // Standard Response Wrapper
 export interface EntityResponse {
@@ -8,24 +8,8 @@ export interface EntityResponse {
   errors?: ValidationError[];
 }
 
-// Universal Mutation Request
-// The LLM (or UI) sends a partial or complete entity.
-// If valid, it's merged into the state.
-export interface UpsertEntityRequest<T extends BaseEntity> {
-  // Discriminator to know which collection to update
-  entity_type: 'IR';
-
-  // The payload.
-  // - If `id` is present and matches existing, it's an UPDATE.
-  // - If `id` is missing or new, it's a CREATE.
-  entity: Partial<T>; // label removed as it is not part of Note
-}
-
-export interface DeleteEntityRequest {
-  entity_type: 'IR';
-  entity_id: string;
-  reason?: string; // For audit logs
-}
+// Accpet the given IRDocument as is.
+export type ReplaceIRRequest = IRDocument;
 
 export interface PatchOperation {
   op: 'add' | 'remove' | 'replace';
@@ -33,11 +17,7 @@ export interface PatchOperation {
   value?: any;
 }
 
-export interface PatchEntityRequest {
-  entity_type: 'IR';
-  entity_id: string;
-  patches: PatchOperation[];
-}
+export type PatchIRRequest = PatchOperation[];
 
 // Side Effect / Result Inspection
 // When an Upsert happens, we might want to know what else changed.

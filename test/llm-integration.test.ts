@@ -24,7 +24,7 @@ describe('LLM Integration Flow', () => {
       historyManager.redoStack.length = 0;
       appState.database.ir = {
         id: 'current-ir',
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Initial IR' },
         entryPoint: '',
         inputs: [],

@@ -15,7 +15,7 @@ describe('Conformance: Bind Group Layouts', () => {
   // 1. Empty Inputs (Only injected u_dispatch_size)
   describe('Empty Inputs', () => {
     const ir: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Empty Inputs' },
       entryPoint: 'main',
       inputs: [],
@@ -67,7 +67,7 @@ describe('Conformance: Bind Group Layouts', () => {
   // 2. Unused Resources
   describe('Unused Resources', () => {
     const ir: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Unused Resources' },
       entryPoint: 'main',
       inputs: [],
@@ -113,7 +113,7 @@ describe('Conformance: Bind Group Layouts', () => {
   // 3. Mixed Inputs and Resources
   describe('Mixed Inputs and Resources', () => {
     const ir: IRDocument = {
-      version: '3.0.0',
+      version: '1.0.0',
       meta: { name: 'Mixed Bindings' },
       entryPoint: 'main',
       inputs: [],
@@ -153,7 +153,7 @@ describe('Conformance: Bind Group Layouts', () => {
     // 4. resource_get_size Bindings
     describe('resource_get_size Bindings', () => {
       const ir: IRDocument = {
-        version: '3.0.0',
+        version: '1.0.0',
         meta: { name: 'Resource Get Size' },
         entryPoint: 'main',
         inputs: [],

@@ -13,7 +13,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
   }
 
   const ir: IRDocument = {
-    version: '3.0.0',
+    version: '1.0.0',
     meta: { name: 'Precomputed Blur' },
     comment: 'This is a test pipeline demonstrating resize, generation, and blur phases.',
     entryPoint: 'fn_main_cpu',
