@@ -1,5 +1,5 @@
 import { IRDocument, Node, FunctionDef, Edge, RenderPipelineDef, BuiltinOp } from '../ir/types';
-import { OpDefs } from '../ir/builtin-schemas';
+import { INTERNAL_KEYS, OpDefs } from '../ir/builtin-schemas';
 import { EvaluationContext, RuntimeValue } from './context';
 import { OpRegistry } from './ops';
 import { SoftwareRasterizer } from './rasterizer';
@@ -297,9 +297,6 @@ export class InterpretedExecutor {
 
   protected mixinNodeProperties(node: Node, args: Record<string, RuntimeValue>, func: FunctionDef, edges: Edge[]) {
     const def = OpDefs[node.op as BuiltinOp];
-    const INTERNAL_KEYS = new Set(['id', 'op', 'metadata', 'comment', 'dataType', 'exec_in', 'exec_out', 'next', '_next']);
-    const isNodeId = (id: string) => func.nodes.some(n => n.id === id);
-
     // 1. Literal properties and metadata references (var names, resource IDs, etc.)
     for (const [key, val] of Object.entries(node)) {
       if (INTERNAL_KEYS.has(key)) continue;

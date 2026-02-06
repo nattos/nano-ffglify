@@ -1,4 +1,4 @@
-import { IRDocument, FunctionDef, BuiltinOp } from './types';
+import { IRDocument, FunctionDef, BuiltinOp, BLITTABLE_TYPES } from './types';
 import { OpSignatures, OpSignature, ValidationType } from './signatures';
 import { OpSchemas, OpDefs } from './builtin-schemas';
 import { verifyLiteralsOrRefsExist } from './schema-verifier';
@@ -544,14 +544,9 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
         // Strict Type Check for buffer_store
         if (node.op === 'buffer_store' && resDef) {
           const normalize = (t: string): ValidationType => {
-            if (t === 'f32' || t === 'float') return 'float';
-            if (t === 'i32' || t === 'int') return 'int';
-            if (t === 'bool' || t === 'boolean') return 'boolean';
-            if (t === 'vec2<f32>' || t === 'float2') return 'float2';
-            if (t === 'vec3<f32>' || t === 'float3') return 'float3';
-            if (t === 'vec4<f32>' || t === 'float4') return 'float4';
-            if (t === 'mat3x3<f32>' || t === 'float3x3') return 'float3x3';
-            if (t === 'mat4x4<f32>' || t === 'float4x4') return 'float4x4';
+            if (BLITTABLE_TYPES.includes(t)) {
+              return t as ValidationType;
+            }
             return 'any';
           };
 

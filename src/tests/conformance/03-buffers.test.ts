@@ -94,8 +94,8 @@ describe('Conformance: Buffers', () => {
       inputs: [],
       structs: [],
       resources: [
-        { id: 'b_float', type: 'buffer', dataType: 'f32', size: { mode: 'fixed', value: 1 }, persistence: { retain: false } },
-        { id: 'b_int', type: 'buffer', dataType: 'i32', size: { mode: 'fixed', value: 1 }, persistence: { retain: false } }
+        { id: 'b_float', type: 'buffer', dataType: 'float', size: { mode: 'fixed', value: 1 }, persistence: { retain: false } },
+        { id: 'b_int', type: 'buffer', dataType: 'int', size: { mode: 'fixed', value: 1 }, persistence: { retain: false } }
       ],
       functions: [
         {

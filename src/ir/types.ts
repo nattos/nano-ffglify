@@ -16,6 +16,17 @@ export const PRIMITIVE_TYPES = [
   'sampler'
 ] as const;
 
+export const BLITTABLE_TYPES: DataType[] = [
+  'float',
+  'int',
+  'boolean',
+  'float2',
+  'float3',
+  'float4',
+  'float3x3',
+  'float4x4',
+];
+
 // ------------------------------------------------------------------
 // Core Document
 // ------------------------------------------------------------------
