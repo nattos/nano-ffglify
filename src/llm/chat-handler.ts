@@ -41,38 +41,17 @@ export class ChatHandler {
       const previousHistory = this.appState.database.chat_history.slice(0, -1);
       const fullPrompt = PromptBuilder.buildWorkerUserPrompt({ database: this.appState.database, ephemeral: this.appState.local }, previousHistory, text);
 
-      let currentPrompt = fullPrompt;
-      let turns = 0;
-      const MAX_TURNS = 3;
-
-      while (turns < MAX_TURNS) {
-        turns++;
-        const response = await this.llmManager.generateResponse(currentPrompt, workerSystemPrompt, {
-          forceMock: this.appState.local.settings.useMockLLM
-        });
-
-        if (response.text) {
-          this.appController.addChatMessage({ role: 'assistant', text: response.text });
+      await this.llmManager.generateResponse(fullPrompt, workerSystemPrompt, {
+        forceMock: this.appState.local.settings.useMockLLM,
+        executeTool: async (name, args) => {
+          console.log("Executing Tool:", name, args);
+          const result = this.executeTool(name, args);
+          return {
+            end: !result.success, // End loop on failure if needed, or based on tool logic
+            response: result.success ? (result.data || { success: true }) : { success: false, message: result.message }
+          };
         }
-
-        if (response.tool_calls && response.tool_calls.length > 0) {
-          // Tool execution logic.
-          let toolFailed = false;
-          for (const tool of response.tool_calls) {
-            console.log("Executing Tool:", tool.name, tool.arguments);
-            const result = this.executeTool(tool.name, tool.arguments);
-            if (!result.success) {
-              toolFailed = true;
-              this.appController.addChatMessage({ role: 'assistant', text: `[System Error] ${result.message}. Retrying...` });
-              currentPrompt += `\n\nAssistant Tool Call: ${tool.name}(${JSON.stringify(tool.arguments)})`;
-              currentPrompt += `\nSystem: Tool execution failed. Error: ${result.message}. Please correct your parameters and try again.`;
-            }
-          }
-          if (!toolFailed) break;
-        } else {
-          break;
-        }
-      }
+      });
 
     } catch (error) {
       console.error("LLM Error:", error);
@@ -80,20 +59,25 @@ export class ChatHandler {
     }
   }
 
-  public executeTool(name: string, args: any): { success: boolean; message?: string } {
+  public executeTool(name: string, args: any): { success: boolean; message?: string; data?: any } {
     // Dynamic Dispatch for Specific Tools
     const effectiveName = name;
     const effectiveArgs = args;
 
     switch (effectiveName) {
+      case 'final_response': {
+        const text = effectiveArgs.text;
+        if (text) {
+          this.appController.addChatMessage({ role: 'assistant', text });
+        }
+        return { success: true, data: { status: 'sent' } };
+      }
+
       case 'replaceIR': {
         const entity_type = 'IR';
         const cleanArgs: ReplaceIRRequest = effectiveArgs;
 
         // Validate before mutating state.
-        // NOTE: This check (via validateEntity) only enforces structural/schema integrity.
-        // Logic errors (e.g. invalid node connections) are allowed to be saved and are
-        // surfaced later via the Diagnostics UI/context.
         const validationErrors = validateEntity(cleanArgs as any, entity_type, this.appState.database);
         if (validationErrors.length > 0) {
           const errorMsg = validationErrors.map(e => `${e.field}: ${e.message}`).join(', ');
@@ -116,7 +100,7 @@ export class ChatHandler {
             type: 'entity_update',
             data: { entity, log, entityType: type, mutation: effectiveArgs }
           });
-          return { success: true };
+          return { success: true, data: { status: 'replaced' } };
         }
       }
 
@@ -140,7 +124,7 @@ export class ChatHandler {
             type: 'entity_update',
             data: { entity, log, entityType: type, mutation: effectiveArgs }
           });
-          return { success: true };
+          return { success: true, data: { status: 'patched' } };
         }
       }
 
@@ -153,12 +137,13 @@ export class ChatHandler {
         }
 
         const doc = opDefToFunctionDeclaration(opName, def);
+        const text = `Documentation for \`${opName}\`:\n\`\`\`json\n${JSON.stringify(doc, null, 2)}\n\`\`\``;
         this.appController.addChatMessage({
           role: 'assistant',
-          text: `Documentation for \`${opName}\`:\n\`\`\`json\n${JSON.stringify(doc, null, 2)}\n\`\`\``
+          text
         });
 
-        return { success: true };
+        return { success: true, data: doc };
       }
 
       default:

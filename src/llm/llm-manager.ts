@@ -31,6 +31,8 @@ export interface LLMResponse {
 
 export interface LLMOptions {
   forceMock?: boolean;
+  maxTurns?: number;
+  executeTool?: (name: string, args: any) => Promise<{ end: boolean; response: any; }>;
 }
 
 export interface LLMManager {
@@ -47,7 +49,9 @@ export class GoogleGenAIManager implements LLMManager {
     }
 
     // Load default mocks
-    Object.entries(NOTES_MOCKS).forEach(([key, val]) => this.mockRegistry.set(key.toLowerCase(), val));
+    Object.entries(NOTES_MOCKS).forEach(([key, val]) => {
+      this.mockRegistry.set(key.toLowerCase(), Array.isArray(val) ? val : [val]);
+    });
 
     // Generate Native Tools from Schemas
     const tools: FunctionDeclaration[] = [];
@@ -91,37 +95,38 @@ export class GoogleGenAIManager implements LLMManager {
     });
   }
 
-  // Registry for deterministic testing
-  private mockRegistry: Map<string, LLMResponse> = new Map();
+  // Registry for deterministic testing - support multi-step responses
+  private mockRegistry: Map<string, LLMResponse[]> = new Map();
 
-  public setMockRegistry(registry: Record<string, LLMResponse>) {
+  public setMockRegistry(registry: Record<string, LLMResponse | LLMResponse[]>) {
     this.mockRegistry.clear();
-    Object.entries(registry).forEach(([key, val]) => this.mockRegistry.set(key.toLowerCase(), val));
+    Object.entries(registry).forEach(([key, val]) => {
+      this.mockRegistry.set(key.toLowerCase(), Array.isArray(val) ? val : [val]);
+    });
   }
 
   async generateResponse(prompt: string, systemInstruction?: string, options?: LLMOptions): Promise<LLMResponse> {
     const start = Date.now();
-    let response: LLMResponse;
+    let finalResponse: LLMResponse = { text: "" };
     let mocked = false;
+
+    const maxTurns = options?.maxTurns || 5;
+    let turns = 0;
 
     // Check Mock Mode from Options (Caller must provide preference)
     if (options?.forceMock) {
       mocked = true;
       const lowerPrompt = prompt.toLowerCase();
 
-      // Simple mock lookup
-      const candidates: Map<string, LLMResponse> = new Map();
-      for (const [key, val] of this.mockRegistry.entries()) candidates.set(key, val);
-
+      // Simple mock lookup based on initial prompt
       const lines = lowerPrompt.split('\n');
-      let registryMatch: LLMResponse | undefined;
+      let registryMatch: LLMResponse[] | undefined;
       let maxLineIndex = -1;
 
-      for (const [key, val] of candidates.entries()) {
+      for (const [key, val] of this.mockRegistry.entries()) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b${escapedKey}\\b`, 'i');
 
-        // Find match on latest line
         let foundIndex = -1;
         for (let i = lines.length - 1; i >= 0; i--) {
           if (regex.test(lines[i])) {
@@ -130,27 +135,47 @@ export class GoogleGenAIManager implements LLMManager {
           }
         }
 
-        if (foundIndex > -1) {
-          if (foundIndex > maxLineIndex) {
-            maxLineIndex = foundIndex;
-            registryMatch = val;
-          } else if (foundIndex === maxLineIndex) {
-            // Tie-breaker: existing registry order priority
-            registryMatch = val;
-          }
+        if (foundIndex > -1 && foundIndex > maxLineIndex) {
+          maxLineIndex = foundIndex;
+          registryMatch = val;
         }
       }
 
       if (registryMatch) {
-        response = registryMatch;
+        // Multi-turn mock simulation
+        for (const step of registryMatch) {
+          turns++;
+          if (turns > maxTurns) break;
+
+          finalResponse = step;
+
+          if (step.tool_calls && options?.executeTool) {
+            let shouldEnd = false;
+            for (const call of step.tool_calls) {
+              const res = await options.executeTool(call.name, call.arguments);
+              if (res.end) shouldEnd = true;
+            }
+            if (shouldEnd) break;
+          } else {
+            // No tool calls (or finished), but if there's text, we should show it
+            if (step.text && options?.executeTool) {
+              await options.executeTool('final_response', { text: step.text });
+            }
+            break;
+          }
+        }
       } else {
-        response = { text: "[MOCK] No matching mock response found." };
+        finalResponse = { text: "[MOCK] No matching mock response found." };
+        // If we expect tool calls but failed, try calling final_response as fallback
+        if (options?.executeTool) {
+          await options.executeTool('final_response', { text: finalResponse.text });
+        }
       }
 
     } else {
       // Real API Call Logic.
       try {
-        console.log("Calling Gemini with:", { prompt });
+        console.log("Starting Chat with Gemini...");
         const chat = this.model.startChat({
           history: systemInstruction ? [
             { role: "user", parts: [{ text: systemInstruction }] },
@@ -158,23 +183,61 @@ export class GoogleGenAIManager implements LLMManager {
           ] : []
         });
 
-        const result = await chat.sendMessage(prompt);
-        const apiResponse = result.response;
-        const text = apiResponse.text();
+        let currentInput: string | any = prompt;
 
-        const toolCalls: LLMToolCall[] = [];
-        const call = apiResponse.functionCalls();
-        if (call && call.length > 0) {
-          call.forEach((c: any) => {
-            toolCalls.push({ name: c.name, arguments: c.args });
-          });
+        while (turns < maxTurns) {
+          turns++;
+          const result = await chat.sendMessage(currentInput);
+          const apiResponse = result.response;
+          const text = apiResponse.text();
+
+          const toolCalls: LLMToolCall[] = [];
+          const calls = apiResponse.functionCalls();
+          if (calls && calls.length > 0) {
+            calls.forEach((c: any) => {
+              toolCalls.push({ name: c.name, arguments: c.args });
+            });
+          }
+
+          finalResponse = { text: text || undefined, tool_calls: toolCalls.length > 0 ? toolCalls : undefined };
+
+          if (toolCalls.length > 0 && options?.executeTool) {
+            const functionResponses = [];
+            let sessionEnded = false;
+
+            for (const call of toolCalls) {
+              const toolResult = await options.executeTool(call.name, call.arguments);
+
+              functionResponses.push({
+                functionResponse: {
+                  name: call.name,
+                  response: toolResult.response
+                }
+              });
+
+              if (toolResult.end || call.name === 'final_response') {
+                sessionEnded = true;
+              }
+            }
+
+            if (sessionEnded) {
+              break;
+            }
+
+            // Feed tool results back to chat
+            currentInput = functionResponses;
+          } else {
+            // No tool calls. If we have text, call final_response as fallback
+            if (text && options?.executeTool) {
+              await options.executeTool('final_response', { text });
+            }
+            break;
+          }
         }
-
-        response = { text, tool_calls: toolCalls.length > 0 ? toolCalls : undefined };
 
       } catch (error) {
         console.error("Gemini API Error:", error);
-        response = { text: "Error connecting to AI." };
+        finalResponse = { text: "Error connecting to AI." };
       }
     }
 
@@ -184,12 +247,12 @@ export class GoogleGenAIManager implements LLMManager {
       timestamp: Date.now(),
       system_instruction_snapshot: systemInstruction,
       prompt_snapshot: prompt,
-      response_snapshot: JSON.stringify(response),
+      response_snapshot: JSON.stringify(finalResponse),
       duration_ms: Date.now() - start,
       mocked
     });
 
-    return response;
+    return finalResponse;
   }
 }
 
