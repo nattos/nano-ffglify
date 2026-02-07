@@ -71,6 +71,15 @@ export interface DatabaseState {
   chat_history: ChatMsg[];
 }
 
+export interface EphemeralState {
+  validationErrors: LogicValidationError[];
+}
+
+export interface CombinedAgentState {
+  database: DatabaseState;
+  ephemeral: EphemeralState;
+}
+
 // Utility Types
 export const IRSchema = defineSchema<IRDocument>({
   name: 'IR',

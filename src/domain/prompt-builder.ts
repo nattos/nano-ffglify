@@ -11,12 +11,10 @@
  * - The `EXAMPLES` string is critical for teaching the LLM how to use tools. If tools change, examples MUST be updated.
  * - Context window size is finite; sending the *entire* database in `buildContext` will eventually hit limits. Pagination or RAG needed for large apps.
  */
-import { DatabaseState } from './types';
-
-import { DateUtils } from '../utils/date-utils';
+import { CombinedAgentState } from './types';
 
 export class PromptBuilder {
-  static buildWorkerSystemInstruction(state: DatabaseState): string {
+  static buildWorkerSystemInstruction(): string {
     // Define Few-Shot Examples
     const EXAMPLES = `
 EXAMPLES:
@@ -45,28 +43,30 @@ EXAMPLES:
 
     // 3. Construct System Prompt
     return `
-You are the WebGPU IR Assistant.
-Current Date: ${new Date().toISOString().split('T')[0]}
+## Role: Shader IR Architect
+You are a graphics engineer managing a hybrid CPU/GPU shader graph. Your goal is to transform user requests into valid Intermediate Representation (IR) edits.
 
-${EXAMPLES}
+The graph is split into functions. Functions may be either CPU (\`cpu\`) or GPU (\`shader\`). CPU functions must explicitly invoke GPU functions using \`cmd_dispatch\` or \`cmd_draw\`. In general, use CPU functions to prepare inputs, and GPU functions chained together to perform heavy duty work, using typical graphics pipeline techniques to efficiently leverage compute resources.
 
-INSTRUCTIONS:
-1. Analyze the user's request and the current IR state.
-2. Use 'upsertIR' to create or update the shader graph.
-3. Use 'patchIR' for small updates like changing defaults or adding nodes/properties.
-   - Use JSON Patch format(op: "replace", "add", "remove").
-4. When you are done, call 'final_response' with a natural language summary.
+## Operational Strategy
+- USE THE DOCS: You do not know the inputs/outputs of specific "ops." Always call \`queryDocs\` before introducing or modifying a node to ensure parameter accuracy.
+- CHOOSE THE TOOL:
+    - Use \`patchIR\` for incremental changes (RFC 6902 syntax).
+    - Use \`replaceIR\` for structural overhauls.
+- ERROR RECOVERY: If the system returns a "Validation Error" after you perform an action, analyze the error message. It likely indicates a logic error (e.g., type mismatch between nodes or a missing CPU-to-GPU bridge) even if the JSON itself was valid. Fix the error in your next turn.
+- USE COMMENTS: The \`comment\` fields within the IR should be used to help keep notes on what and why. Use these like you would in code.
+- ENDING THE SESSION: When you are done, call \`final_response\` with a natural language summary.
+
+## Graph Integrity Rules
+1. Every edge must connect a valid output to a valid input.
+2. Ensure that CPU-side logic nodes are not directly piped into high-frequency GPU fragment inputs without the necessary conversion ops.
+3. If an edit results in an orphan node (no edges), consider if it should be removed to maintain graph cleanliness.
 `.trim();
   }
 
-  static buildWorkerUserPrompt(state: DatabaseState, history: any[], currentText: string): string {
-    return `${this.buildContext(state, history)}\n\nUser: ${currentText}`;
-  }
-  static buildContext(state: DatabaseState, history: any[] = []): string {
-    const today = new Date().toISOString().split('T')[0];
-
+  static buildWorkerUserPrompt(state: CombinedAgentState, history: any[], currentText: string): string {
     // Serialize state to JSON
-    const cleanState = state.ir;
+    const cleanState = state.database.ir;
 
     // Format History
     const historyText = history.slice(-10).map(m => {
@@ -79,13 +79,35 @@ INSTRUCTIONS:
       return `${role}: ${m.text || '(Action)'} `;
     }).join('\n');
 
+    const validationErrors = state.ephemeral.validationErrors;
+    let validationFeedback: string;
+    if (validationErrors.length) {
+      validationFeedback = `
+CRITICAL: Your last action resulted in a compilation error.
+Errors:
+${validationErrors.map(error => JSON.stringify(error)).join('\n')}
+Please correct this in your next step.
+`.trim();
+    } else {
+      validationFeedback = `
+The current IR is valid and compiling correctly.
+`.trim();
+    }
+
     return `
-CONTEXT(Full State JSON):
-- State:
+### ACTIVE STATE
 ${JSON.stringify(cleanState, null, 2)}
 
-RECENT HISTORY:
-${historyText || '(No history)'}
+### VALIDATION FEEDBACK
+${validationFeedback}
+
+### CONVERSATION LOG
+${historyText}
+
+### USER REQUEST
+User: ${currentText}
+
+### AGENT RESPONSE (Thought + Action)
 `.trim();
   }
 }

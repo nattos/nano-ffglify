@@ -34,9 +34,9 @@ export class ChatHandler {
     this.appController.addChatMessage({ role: 'user', text });
 
     try {
-      const workerSystemPrompt = PromptBuilder.buildWorkerSystemInstruction(this.appState.database);
+      const workerSystemPrompt = PromptBuilder.buildWorkerSystemInstruction();
       const previousHistory = this.appState.database.chat_history.slice(0, -1);
-      const fullPrompt = PromptBuilder.buildWorkerUserPrompt(this.appState.database, previousHistory, text);
+      const fullPrompt = PromptBuilder.buildWorkerUserPrompt({ database: this.appState.database, ephemeral: this.appState.local }, previousHistory, text);
 
       let currentPrompt = fullPrompt;
       let turns = 0;

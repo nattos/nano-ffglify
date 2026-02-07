@@ -429,8 +429,10 @@ export class App extends MobxLitElement {
               <h3>Target Step Results</h3>
               ${this.scriptLogs.map(log => html`
                 <div class="result-block" style="border:1px solid #ccc; padding:10px; margin-top:10px; border-radius:4px;">
-                   <h4>System Instruction</h4>
-                   <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto;">${this.formatLogValue(log.system_instruction_snapshot)}</pre>
+                   ${log.system_instruction_snapshot ? html`
+                    <h4>System Instruction</h4>
+                    <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto;">${this.formatLogValue(log.system_instruction_snapshot)}</pre>
+                   ` : ''}
                    <h4>Request</h4>
                    <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto;">${this.formatLogValue(log.prompt_snapshot)}</pre>
                    <h4>Response</h4>
