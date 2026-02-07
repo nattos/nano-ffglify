@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BuiltinOp, Node } from './types';
+export type { BuiltinOp, Node };
 
 // ------------------------------------------------------------------
 // Core Schema Types

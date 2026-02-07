@@ -47,4 +47,20 @@ describe('Integration: IR App Scenarios', () => {
       expect(ir.inputs[2].default).toBe(32);
     });
   });
+
+  it('Scenario: Querying Documentation', async () => {
+    // 1. Ask for documentation
+    await chatHandler.handleUserMessage("how do i use math_add");
+
+    runInAction(() => {
+      // The chat history should contain the tool execution output
+      const history = appState.database.chat_history;
+
+      // Look for the documentation message
+      const docMessage = history.find(m => m.role === 'assistant' && m.text?.includes('Documentation for `math_add`'));
+      expect(docMessage).toBeDefined();
+      expect(docMessage?.text).toContain('"name": "math_add"');
+      expect(docMessage?.text).toContain('"description": "Standard numeric binary math operation."');
+    });
+  });
 });

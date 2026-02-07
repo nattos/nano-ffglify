@@ -66,6 +66,19 @@ export class GoogleGenAIManager implements LLMManager {
     // 2. Schema-Driven Tools
     tools.push(generateReplaceTool(IRSchema));
     tools.push(generatePatchTool(IRSchema));
+
+    // 3. Documentation Tools
+    tools.push({
+      name: "queryDocs",
+      description: "Look up the schema and documentation for a specific IR operation (op). Returns a JSON object describing the parameters.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          op: { type: SchemaType.STRING, description: "The name of the operation to look up (e.g., 'math_add', 'texture_sample')." }
+        },
+        required: ["op"]
+      }
+    });
     console.log(tools);
 
     this.genAI = new GoogleGenerativeAI(apiKey);

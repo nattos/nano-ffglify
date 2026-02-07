@@ -14,6 +14,7 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
     tool_calls: [{
       name: "replaceIR",
       arguments: {
+        id: 'blur-ir',
         version: '1.0.0',
         meta: { name: 'Precomputed Blur' },
         comment: 'This is a test pipeline demonstrating resize, generation, and blur phases with dynamic dimensions.',
@@ -160,6 +161,13 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
           }
         ]
       }
+    }]
+  },
+  "how do i use math_add": {
+    text: "You can use the `math_add` operation to add two values together. Here is the schema:",
+    tool_calls: [{
+      name: "queryDocs",
+      arguments: { op: "math_add" }
     }]
   },
   "change the kernel size to 32": {

@@ -20,6 +20,9 @@ import { PromptBuilder } from '../domain/prompt-builder';
 import { entityManager, EntityManager } from '../state/entity-manager';
 import { validateEntity } from '../domain/verifier';
 import { PatchIRRequest, ReplaceIRRequest } from '../state/entity-api';
+import { BuiltinOp, OpDef, OpDefs } from '../ir/builtin-schemas';
+import { FunctionDeclaration, SchemaType } from '@google/generative-ai';
+import { opDefToFunctionDeclaration } from '../domain/schemas';
 
 export class ChatHandler {
   constructor(
@@ -79,8 +82,8 @@ export class ChatHandler {
 
   public executeTool(name: string, args: any): { success: boolean; message?: string } {
     // Dynamic Dispatch for Specific Tools
-    let effectiveName = name;
-    let effectiveArgs = args;
+    const effectiveName = name;
+    const effectiveArgs = args;
 
     switch (effectiveName) {
       case 'replaceIR': {
@@ -118,7 +121,6 @@ export class ChatHandler {
       }
 
       case 'patchIR': {
-        // Warning: patchEntity takes 'patches', not a full entity.
         const entity_type = 'IR';
         const cleanArgs: PatchIRRequest = effectiveArgs;
         const patchRes = this.entityManager.patchIR(cleanArgs);
@@ -140,6 +142,23 @@ export class ChatHandler {
           });
           return { success: true };
         }
+      }
+
+      case 'queryDocs': {
+        const opName = effectiveArgs.op as BuiltinOp;
+        const def = OpDefs[opName];
+
+        if (!def) {
+          return { success: false, message: `Unknown operation: ${opName}` };
+        }
+
+        const doc = opDefToFunctionDeclaration(opName, def);
+        this.appController.addChatMessage({
+          role: 'assistant',
+          text: `Documentation for \`${opName}\`:\n\`\`\`json\n${JSON.stringify(doc, null, 2)}\n\`\`\``
+        });
+
+        return { success: true };
       }
 
       default:

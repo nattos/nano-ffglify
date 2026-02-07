@@ -11,6 +11,7 @@
  * - `MappedFieldSchema` is complex and recursive. Debugging type errors here can be tricky.
  */
 import { FunctionDeclaration, SchemaType } from '@google/generative-ai';
+import { OpDef } from '../ir/builtin-schemas';
 
 export type FieldType = 'string' | 'number' | 'boolean' | 'array' | 'object' | 'any' | 'any_value';
 
@@ -78,6 +79,40 @@ export function generatePatchTool(schema: EntitySchema): FunctionDeclaration {
         },
         required: ["op", "path", "value"]
       }
+    }
+  };
+}
+
+export function opDefToFunctionDeclaration(name: string, def: OpDef<any>): FunctionDeclaration {
+  const properties: any = {};
+  const required: string[] = [];
+
+  for (const [key, arg] of Object.entries(def.args)) {
+    const docLines = [arg.doc];
+    if (arg.literalTypes) {
+      docLines.push(`Accepted types: ${arg.literalTypes.join(', ')}`);
+    }
+    if (arg.refable) {
+      docLines.push(`Can be a literal value or a string reference.`);
+    }
+
+    properties[key] = {
+      type: SchemaType.STRING,
+      description: docLines.join(' ')
+    };
+
+    if (!arg.optional) {
+      required.push(key);
+    }
+  }
+
+  return {
+    name,
+    description: def.doc,
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties,
+      required: required.length > 0 ? required : undefined
     }
   };
 }
