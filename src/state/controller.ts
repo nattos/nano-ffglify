@@ -36,6 +36,10 @@ export class AppController {
   public readonly repl = new ReplManager();
   public readonly runtime = new RuntimeManager();
 
+  private lastCompiledIRJson: string | null = null;
+  private activeCompileResolver: ((res: CompileResult) => void) | null = null;
+  private activeCompilePromise: Promise<CompileResult> | null = null;
+
   public setActiveTab(tab: 'live' | 'ir' | 'raw_code' | 'state' | 'script' | 'logs') {
     runInAction(() => {
       appState.local.settings.activeTab = tab;
@@ -143,11 +147,15 @@ export class AppController {
   }
 
   public async play() {
-    if (!this.repl.currentArtifacts) {
-      const success = await this.compileCurrentIR();
-      if (!success) return;
+    // Ensure we have compiled code.
+    if (!this.ensureCompiled()) {
+      return;
+    }
+
+    if (appState.local.settings.activeTab !== 'live') {
       this.setActiveTab('live');
     }
+
     runInAction(() => {
       appState.local.settings.transportState = 'playing';
     });
@@ -190,32 +198,11 @@ export class AppController {
   }
 
   public async compileCurrentIR(): Promise<boolean> {
-    if (!this.validateCurrentIR()) {
-      return false;
+    const res = await this.performCompile();
+    if (res.compileStatus === 'fail') {
+      alert("Compilation failed: " + (res.errors?.[0]?.message || "unknown error"));
     }
-    console.info("[AppController] Compiling IR...");
-    const ir = appState.database.ir;
-
-    const artifacts = await this.repl.compile(ir);
-    if (artifacts) {
-      this.repl.swap(artifacts);
-
-      // Auto-update runtime if we have one
-      const device = await getSharedDevice();
-      await this.runtime.setCompiled(artifacts, device);
-
-      runInAction(() => {
-        appState.local.compilationResult = {
-          js: artifacts.compiled.taskCode,
-          jsInit: artifacts.compiled.initCode,
-          wgsl: artifacts.wgsl
-        };
-      });
-      return true;
-    } else {
-      alert("Compilation failed: " + this.repl.lastError);
-      return false;
-    }
+    return res.compileStatus === 'success';
   }
 
   // runOne is now managed by RuntimeManager
@@ -288,57 +275,103 @@ export class AppController {
     });
 
     if (options?.needsCompile) {
-      task.compileResult = this._performCompile();
+      task.compileResult = this.performCompile();
     }
 
     return task;
   }
 
-  private async _performCompile(): Promise<CompileResult> {
-    const timeoutPrompt = new Promise<CompileResult>((resolve) => {
-      setTimeout(() => resolve({ compileStatus: 'timeout' }), 10000);
-    });
+  private async ensureCompiled() {
+    if (this.repl.currentArtifacts) {
+      return true;
+    }
+    let success = false;
+    if (this.activeCompilePromise) {
+      const res = await this.activeCompilePromise;
+      return res.compileStatus === 'success';
+    } else {
+      return await this.compileCurrentIR();
+    }
+  }
 
-    const compilePromise = (async (): Promise<CompileResult> => {
-      const isValid = this.validateCurrentIR();
-      if (!isValid) {
-        return {
-          compileStatus: 'fail',
-          errors: this.repl.validationErrors
-        };
-      }
+  private async performCompile(): Promise<CompileResult> {
+    // 1. Cancel previous in-flight compilation
+    if (this.activeCompileResolver) {
+      this.activeCompileResolver({ compileStatus: 'timeout' });
+      this.activeCompileResolver = null;
+    }
 
-      const ir = appState.database.ir;
-      const artifacts = await this.repl.compile(ir);
+    // 2. Check for redundant work
+    const ir = appState.database.ir;
+    const irJson = JSON.stringify(ir);
+    if (irJson === this.lastCompiledIRJson) {
+      return { compileStatus: 'success' };
+    }
 
-      if (artifacts) {
-        this.repl.swap(artifacts);
+    // 3. Start new compilation task
+    this.activeCompilePromise = new Promise<CompileResult>(async (resolve) => {
+      this.activeCompileResolver = resolve;
 
-        try {
-          const device = await getSharedDevice();
-          await this.runtime.setCompiled(artifacts, device);
-        } catch (gpuError) {
-          console.warn("[AppController] GPU environment not available for live update:", gpuError);
+      // Local timeout for THIS specific turn
+      const timeoutTimer = setTimeout(() => {
+        if (this.activeCompileResolver === resolve) {
+          resolve({ compileStatus: 'timeout' });
+          this.activeCompileResolver = null;
+        }
+      }, 10000);
+
+      const compileTask = (async (): Promise<CompileResult> => {
+        const isValid = this.validateCurrentIR();
+        if (!isValid) {
+          return {
+            compileStatus: 'fail',
+            errors: this.repl.validationErrors
+          };
         }
 
-        runInAction(() => {
-          appState.local.compilationResult = {
-            js: artifacts.compiled.taskCode,
-            jsInit: artifacts.compiled.initCode,
-            wgsl: artifacts.wgsl
+        const artifacts = await this.repl.compile(ir);
+        if (artifacts) {
+          this.repl.swap(artifacts);
+
+          try {
+            const device = await getSharedDevice();
+            await this.runtime.setCompiled(artifacts, device);
+          } catch (gpuError) {
+            console.warn("[AppController] GPU environment not available for live update:", gpuError);
+          }
+
+          runInAction(() => {
+            appState.local.compilationResult = {
+              js: artifacts.compiled.taskCode,
+              jsInit: artifacts.compiled.initCode,
+              wgsl: artifacts.wgsl
+            };
+          });
+
+          return { compileStatus: 'success' };
+        } else {
+          return {
+            compileStatus: 'fail',
+            errors: this.repl.validationErrors
           };
-        });
+        }
+      })();
 
-        return { compileStatus: 'success' };
-      } else {
-        return {
-          compileStatus: 'fail',
-          errors: this.repl.validationErrors
-        };
+      const res = await compileTask;
+
+      // Only resolve if we haven't been superseded or timed out
+      if (this.activeCompileResolver === resolve) {
+        clearTimeout(timeoutTimer);
+        if (res.compileStatus === 'success') {
+          this.lastCompiledIRJson = irJson;
+        }
+        resolve(res);
+        this.activeCompileResolver = null;
+        this.activeCompilePromise = null;
       }
-    })();
+    });
 
-    return Promise.race([compilePromise, timeoutPrompt]);
+    return this.activeCompilePromise;
   }
 
   public addChatMessage(msg: Partial<ChatMsg>) {
