@@ -53,7 +53,11 @@ export class EntityManager {
 
   public patchIR(request: PatchIRRequest): EntityResponse {
     const entity_type = 'IR';
-    const patches = request;
+    const patches = request.patches;
+
+    if (!Array.isArray(patches)) {
+      return { success: false, message: `patches must be an array` };
+    }
 
     const existing = this.appState.database.ir;
     if (!existing) return { success: false, message: "IR not found" };

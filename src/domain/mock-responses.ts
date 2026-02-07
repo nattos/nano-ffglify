@@ -174,7 +174,7 @@ export const NOTES_MOCKS: Record<string, LLMResponse> = {
     text: "I've updated the kernel size to 32.",
     tool_calls: [{
       name: "patchIR",
-      arguments: [{ op: "replace", path: "/inputs/2/default", value: 32 }]
+      arguments: { patches: [{ op: "replace", path: "/inputs/2/default", value: 32 }] }
     }]
   }
 };

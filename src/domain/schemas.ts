@@ -69,16 +69,22 @@ export function generatePatchTool(schema: EntitySchema): FunctionDeclaration {
     name: `patch${schema.name}`,
     description: `Patch the ${schema.name}. Use JSON Patch format.`,
     parameters: {
-      type: SchemaType.ARRAY,
-      items: {
-        type: SchemaType.OBJECT,
-        properties: {
-          op: { type: SchemaType.STRING, enum: ["add", "remove", "replace", "move", "copy", "test"], format: "enum" as any },
-          path: { type: SchemaType.STRING, description: "JSON Pointer path (e.g. /label/medium)" },
-          value: { type: SchemaType.STRING, description: "Value to set (can be JSON object)" }
-        },
-        required: ["op", "path", "value"]
-      }
+      type: SchemaType.OBJECT,
+      properties: {
+        patches: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              op: { type: SchemaType.STRING, enum: ["add", "remove", "replace", "move", "copy", "test"], format: "enum" as any },
+              path: { type: SchemaType.STRING, description: "JSON Pointer path (e.g. /label/medium)" },
+              value: { type: SchemaType.STRING, description: "Value to set (can be JSON object)" }
+            },
+            required: ["op", "path", "value"]
+          }
+        }
+      },
+      required: ["patches"]
     }
   };
 }

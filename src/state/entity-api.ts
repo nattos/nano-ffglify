@@ -17,7 +17,9 @@ export interface PatchOperation {
   value?: any;
 }
 
-export type PatchIRRequest = PatchOperation[];
+export type PatchIRRequest = {
+  patches: PatchOperation[]
+}
 
 // Side Effect / Result Inspection
 // When an Upsert happens, we might want to know what else changed.
