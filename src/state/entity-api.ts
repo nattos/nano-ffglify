@@ -1,11 +1,15 @@
-import { BaseEntity, IRDocument, ValidationError } from '../domain/types';
+import { FunctionDeclaration } from '@google/generative-ai/dist/generative-ai';
+import { IRDocument, ValidationError } from '../domain/types';
+import { LogicValidationError } from '../ir/validator';
 
 // Standard Response Wrapper
-export interface EntityResponse {
-  success: boolean;
+export interface IREditResponse {
+  success?: boolean;
+  editApplied?: boolean;
   message: string;
-  data?: any;
-  errors?: ValidationError[];
+  validationResult?: ValidationResult;
+  compileResult?: CompileResult;
+  docsResult?: FunctionDeclaration;
 }
 
 // Accpet the given IRDocument as is.
@@ -21,23 +25,12 @@ export type PatchIRRequest = {
   patches: PatchOperation[]
 }
 
-// Side Effect / Result Inspection
-// When an Upsert happens, we might want to know what else changed.
-// e.g. Upserting a generic "Pizza" Event might trigger a "Research Needed" side effect.
-export interface MutationResult {
-  entity_id: string;
-  operation: 'created' | 'updated';
+export interface ValidationResult {
+  success: boolean;
+  errors?: ValidationError[];
+}
 
-  // Did this trigger a research need?
-  research_required?: {
-    query: string;
-    context: string;
-  };
-
-  // Did this auto-update other entities?
-  side_effects?: {
-    entity_type: string;
-    entity_id: string;
-    operation: string;
-  }[];
+export interface CompileResult {
+  compileStatus: 'success' | 'fail' | 'timeout';
+  errors?: LogicValidationError[];
 }

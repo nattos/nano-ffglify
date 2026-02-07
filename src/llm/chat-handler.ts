@@ -13,15 +13,12 @@
  * - Tool arguments are not strictly typed at runtime unless `validateEntity` catches them.
  */
 import { appController, AppController } from '../state/controller';
-
 import { appState, AppState } from '../domain/state';
 import { llmManager, LLMManager } from './llm-manager';
 import { PromptBuilder } from '../domain/prompt-builder';
 import { entityManager, EntityManager } from '../state/entity-manager';
-import { validateEntity } from '../domain/verifier';
-import { PatchIRRequest, ReplaceIRRequest } from '../state/entity-api';
-import { BuiltinOp, OpDef, OpDefs } from '../ir/builtin-schemas';
-import { FunctionDeclaration, SchemaType } from '@google/generative-ai';
+import { IREditResponse, PatchIRRequest, ReplaceIRRequest } from '../state/entity-api';
+import { BuiltinOp, OpDefs } from '../ir/builtin-schemas';
 import { opDefToFunctionDeclaration } from '../domain/schemas';
 
 export class ChatHandler {
@@ -48,7 +45,7 @@ export class ChatHandler {
           const result = this.executeTool(name, args);
           return {
             end: !result.success, // End loop on failure if needed, or based on tool logic
-            response: result.success ? (result.data || { success: true }) : { success: false, message: result.message }
+            response: result
           };
         }
       });
@@ -59,7 +56,7 @@ export class ChatHandler {
     }
   }
 
-  public executeTool(name: string, args: any): { success: boolean; message?: string; data?: any } {
+  public executeTool(name: string, args: any): IREditResponse {
     // Dynamic Dispatch for Specific Tools
     const effectiveName = name;
     const effectiveArgs = args;
@@ -70,62 +67,39 @@ export class ChatHandler {
         if (text) {
           this.appController.addChatMessage({ role: 'assistant', text });
         }
-        return { success: true, data: { status: 'sent' } };
+        return { success: true, message: 'sent' };
       }
 
       case 'replaceIR': {
-        const entity_type = 'IR';
         const cleanArgs: ReplaceIRRequest = effectiveArgs;
-
-        // Validate before mutating state.
-        const validationErrors = validateEntity(cleanArgs as any, entity_type, this.appState.database);
-        if (validationErrors.length > 0) {
-          const errorMsg = validationErrors.map(e => `${e.field}: ${e.message}`).join(', ');
-          return { success: false, message: `Validation Failed (Structural): ${errorMsg}` };
-        }
-
         const upsertRes = this.entityManager.replaceIR(cleanArgs);
 
-        if (!upsertRes.success) {
-          return { success: false, message: upsertRes.message };
-        } else {
-          // Fetch updated entity to display
-          const log = upsertRes.errors;
-          const type = entity_type;
-          const entity = this.appState.database.ir;
+        // TODO: Trigger and wait for result
+        // upsertRes.compileResult = undefined;
 
-          this.appController.addChatMessage({
-            role: 'assistant',
-            text: '', // Empty text, using widget
-            type: 'entity_update',
-            data: { entity, log, entityType: type, mutation: effectiveArgs }
-          });
-          return { success: true, data: { status: 'replaced' } };
-        }
+        this.appController.addChatMessage({
+          role: 'tool-response',
+          text: '',
+          type: 'entity_update',
+          data: structuredClone(upsertRes)
+        });
+        return upsertRes;
       }
 
       case 'patchIR': {
-        const entity_type = 'IR';
         const cleanArgs: PatchIRRequest = effectiveArgs;
         const patchRes = this.entityManager.patchIR(cleanArgs);
 
-        if (!patchRes.success) {
-          console.error(`[ChatHandler] patchEntity failed: ${patchRes.message}`);
-          return { success: false, message: patchRes.message };
-        } else {
-          // Fetch updated entity
-          const log = patchRes.errors;
-          const type = entity_type;
-          const entity = this.appState.database.ir;
+        // TODO: Trigger and wait for result
+        // upsertRes.compileResult = undefined;
 
-          this.appController.addChatMessage({
-            role: 'assistant',
-            text: '',
-            type: 'entity_update',
-            data: { entity, log, entityType: type, mutation: effectiveArgs }
-          });
-          return { success: true, data: { status: 'patched' } };
-        }
+        this.appController.addChatMessage({
+          role: 'tool-response',
+          text: '',
+          type: 'entity_update',
+          data: structuredClone(patchRes)
+        });
+        return patchRes;
       }
 
       case 'queryDocs': {
@@ -137,13 +111,14 @@ export class ChatHandler {
         }
 
         const doc = opDefToFunctionDeclaration(opName, def);
-        const text = `Documentation for \`${opName}\`:\n\`\`\`json\n${JSON.stringify(doc, null, 2)}\n\`\`\``;
+        const queryRes: IREditResponse = { success: true, message: 'Found', docsResult: doc };
         this.appController.addChatMessage({
-          role: 'assistant',
-          text
+          role: 'tool-response',
+          text: '',
+          type: 'entity_update',
+          data: structuredClone(queryRes)
         });
-
-        return { success: true, data: doc };
+        return queryRes;
       }
 
       default:

@@ -13,10 +13,6 @@ import { LogicValidationError } from '../ir/validator';
 
 export type IRDocument = BaseIRDocument;
 
-export interface BaseEntity {
-  id: string;
-}
-
 export interface ValidationError {
   field: string;
   message: string;
@@ -25,7 +21,7 @@ export interface ValidationError {
 
 export interface ChatMsg {
   id: string; // UUID
-  role: 'user' | 'assistant';
+  role: 'user' | 'tool-response' | 'assistant';
   text?: string;
   type?: 'text' | 'poll' | 'proposal' | 'entity_update';
   data?: any;
@@ -42,7 +38,9 @@ export interface LLMLogEntry {
   id: string;
   timestamp: number;
   duration_ms: number;
+  turn_index?: number;
   system_instruction_snapshot?: string;
+  type: 'chat' | 'tool_call' | 'error';
   prompt_snapshot: string;
   response_snapshot: string;
   tools_called?: string[];

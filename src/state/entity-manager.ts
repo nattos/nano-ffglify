@@ -15,12 +15,15 @@ import { applyPatch } from 'fast-json-patch';
 import { appState, AppState } from '../domain/state';
 import { AppController, appController } from './controller';
 import {
-  EntityResponse,
+  IREditResponse,
   ReplaceIRRequest,
   PatchIRRequest,
-  MutationResult
+  CompileResult
 } from './entity-api';
 import { validateEntity } from '../domain/verifier';
+import { ValidationError } from '../domain/types';
+
+class EditNotValidError extends Error { }
 
 export class EntityManager {
   constructor(
@@ -28,57 +31,85 @@ export class EntityManager {
     private controller: AppController
   ) { }
 
-  public replaceIR(request: ReplaceIRRequest): EntityResponse {
+  public replaceIR(request: ReplaceIRRequest): IREditResponse {
     const entity_type = 'IR';
-    const errors = validateEntity(request as any, 'IR', this.appState.database);
-    if (errors.length > 0) {
-      const errorMsg = errors.map(e => `${e.field}: ${e.message} `).join('; ');
-      return { success: false, message: `Validation Failed. ${errorMsg}`, errors };
-    }
 
     // 4. Record History & Apply
     const operation = 'replace';
-    this.controller.mutate(`${operation} ${entity_type}`, 'llm', (database) => {
-      database.ir = structuredClone(request);
-    });
+    let validationErrors: ValidationError[] | undefined;
+    try {
+      this.controller.mutate(`${operation} ${entity_type}`, 'llm', (database) => {
+        database.ir = structuredClone(request);
+        validationErrors = validateEntity(database.ir as any, 'IR', database);
+        if (validationErrors.length) {
+          throw new EditNotValidError();
+        }
+      });
+    } catch (e) {
+      if (e instanceof EditNotValidError) {
+        validationErrors ??= [];
+      } else {
+        throw e;
+      }
+    }
 
+    const editApplied = !validationErrors;
     return {
-      success: true,
+      editApplied: editApplied,
       message: `${entity_type} ${operation}`,
-      data: {
-        operation: operation as string
-      } as MutationResult
+      validationResult: {
+        success: editApplied,
+        errors: validationErrors,
+      }
     };
   }
 
-  public patchIR(request: PatchIRRequest): EntityResponse {
+  public patchIR(request: PatchIRRequest): IREditResponse {
     const entity_type = 'IR';
     const patches = request.patches;
 
     if (!Array.isArray(patches)) {
-      return { success: false, message: `patches must be an array` };
+      return { editApplied: false, message: `patches must be an array` };
     }
 
-    const existing = this.appState.database.ir;
-    if (!existing) return { success: false, message: "IR not found" };
+    const operation = 'patch';
+    let validationErrors: ValidationError[] | undefined;
+    try {
+      this.controller.mutate(`Patch ${entity_type}`, 'llm', (database) => {
+        const target = database.ir;
+        if (!target) return;
 
-    this.controller.mutate(`Patch ${entity_type}`, 'llm', (database) => {
-      const target = database.ir;
-      if (!target) return;
-
-      try {
-        applyPatch(target, patches as any);
-      } catch (e: any) {
-        console.error("Patch Failed:", e);
+        try {
+          applyPatch(target, patches as any);
+          validationErrors = validateEntity(database.ir as any, 'IR', database);
+        } catch (e: any) {
+          console.error("Patch Failed:", e);
+          validationErrors = [{
+            field: '/',
+            message: `Patch failed: ${e.toString()}`,
+            severity: 'error'
+          }];
+        }
+        if (validationErrors.length) {
+          throw new EditNotValidError();
+        }
+      });
+    } catch (e) {
+      if (e instanceof EditNotValidError) {
+        validationErrors ??= [];
+      } else {
+        throw e;
       }
-    });
+    }
 
+    const editApplied = !validationErrors;
     return {
-      success: true,
-      message: "Patched",
-      data: {
-        operation: 'updated'
-      } as MutationResult
+      editApplied: editApplied,
+      message: `${entity_type} ${operation}`,
+      validationResult: {
+        success: editApplied,
+        errors: validationErrors,
+      }
     };
   }
 }

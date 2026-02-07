@@ -11,7 +11,7 @@
  * - Requires valid `GOOGLE_API_KEY`.
  * - Mock matching logic is fuzzy regex; collisions happen if mock prompts are too similar.
  */
-import { GoogleGenerativeAI, SchemaType, FunctionDeclaration } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType, FunctionDeclaration, GenerativeModel, FunctionResponsePart, FunctionResponse } from "@google/generative-ai";
 
 import { appController, AppController } from '../state/controller';
 import { generatePatchTool, generateReplaceTool } from '../domain/schemas';
@@ -39,9 +39,13 @@ export interface LLMManager {
   generateResponse(prompt: string, systemInstruction?: string, options?: LLMOptions): Promise<LLMResponse>;
 }
 
+interface ChatSessionAdapter {
+  sendMessage(input: string | FunctionResponsePart[]): Promise<LLMResponse>;
+}
+
 export class GoogleGenAIManager implements LLMManager {
   private genAI: GoogleGenerativeAI;
-  private model: any;
+  private model: GenerativeModel;
 
   constructor(private apiKey: string, private appController: AppController) {
     if (!apiKey) {
@@ -107,18 +111,17 @@ export class GoogleGenAIManager implements LLMManager {
 
   async generateResponse(prompt: string, systemInstruction?: string, options?: LLMOptions): Promise<LLMResponse> {
     const start = Date.now();
+    const sessionId = crypto.randomUUID();
     let finalResponse: LLMResponse = { text: "" };
-    let mocked = false;
-
+    const mocked = !!options?.forceMock;
     const maxTurns = options?.maxTurns || 5;
     let turns = 0;
 
-    // Check Mock Mode from Options (Caller must provide preference)
-    if (options?.forceMock) {
-      mocked = true;
-      const lowerPrompt = prompt.toLowerCase();
+    // 1. Setup Session Adapter
+    let session: ChatSessionAdapter;
 
-      // Simple mock lookup based on initial prompt
+    if (mocked) {
+      const lowerPrompt = prompt.toLowerCase();
       const lines = lowerPrompt.split('\n');
       let registryMatch: LLMResponse[] | undefined;
       let maxLineIndex = -1;
@@ -126,7 +129,6 @@ export class GoogleGenAIManager implements LLMManager {
       for (const [key, val] of this.mockRegistry.entries()) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b${escapedKey}\\b`, 'i');
-
         let foundIndex = -1;
         for (let i = lines.length - 1; i >= 0; i--) {
           if (regex.test(lines[i])) {
@@ -134,63 +136,34 @@ export class GoogleGenAIManager implements LLMManager {
             break;
           }
         }
-
         if (foundIndex > -1 && foundIndex > maxLineIndex) {
           maxLineIndex = foundIndex;
           registryMatch = val;
         }
       }
 
-      if (registryMatch) {
-        // Multi-turn mock simulation
-        for (const step of registryMatch) {
-          turns++;
-          if (turns > maxTurns) break;
-
-          finalResponse = step;
-
-          if (step.tool_calls && options?.executeTool) {
-            let shouldEnd = false;
-            for (const call of step.tool_calls) {
-              const res = await options.executeTool(call.name, call.arguments);
-              if (res.end) shouldEnd = true;
-            }
-            if (shouldEnd) break;
-          } else {
-            // No tool calls (or finished), but if there's text, we should show it
-            if (step.text && options?.executeTool) {
-              await options.executeTool('final_response', { text: step.text });
-            }
-            break;
+      const match = registryMatch;
+      session = {
+        async sendMessage(_input: string | FunctionResponsePart[]) {
+          if (!match || turns > match.length) {
+            return { text: "[MOCK] No more mock steps or no match found." };
           }
+          return match[turns - 1]; // turns is incremented before sendMessage is called
         }
-      } else {
-        finalResponse = { text: "[MOCK] No matching mock response found." };
-        // If we expect tool calls but failed, try calling final_response as fallback
-        if (options?.executeTool) {
-          await options.executeTool('final_response', { text: finalResponse.text });
-        }
-      }
-
+      };
     } else {
-      // Real API Call Logic.
-      try {
-        console.log("Starting Chat with Gemini...");
-        const chat = this.model.startChat({
-          history: systemInstruction ? [
-            { role: "user", parts: [{ text: systemInstruction }] },
-            { role: "model", parts: [{ text: "Understood. I am the WebGPU IR Assistant." }] }
-          ] : []
-        });
-
-        let currentInput: string | any = prompt;
-
-        while (turns < maxTurns) {
-          turns++;
-          const result = await chat.sendMessage(currentInput);
+      console.log("Starting Chat with Gemini...");
+      const realChat = this.model.startChat({
+        history: systemInstruction ? [
+          { role: "user", parts: [{ text: systemInstruction }] },
+          { role: "model", parts: [{ text: "Understood. I am the WebGPU IR Assistant." }] }
+        ] : []
+      });
+      session = {
+        async sendMessage(input: string | FunctionResponsePart[]) {
+          const result = await realChat.sendMessage(input);
           const apiResponse = result.response;
           const text = apiResponse.text();
-
           const toolCalls: LLMToolCall[] = [];
           const calls = apiResponse.functionCalls();
           if (calls && calls.length > 0) {
@@ -198,59 +171,93 @@ export class GoogleGenAIManager implements LLMManager {
               toolCalls.push({ name: c.name, arguments: c.args });
             });
           }
-
-          finalResponse = { text: text || undefined, tool_calls: toolCalls.length > 0 ? toolCalls : undefined };
-
-          if (toolCalls.length > 0 && options?.executeTool) {
-            const functionResponses = [];
-            let sessionEnded = false;
-
-            for (const call of toolCalls) {
-              const toolResult = await options.executeTool(call.name, call.arguments);
-
-              functionResponses.push({
-                functionResponse: {
-                  name: call.name,
-                  response: toolResult.response
-                }
-              });
-
-              if (toolResult.end || call.name === 'final_response') {
-                sessionEnded = true;
-              }
-            }
-
-            if (sessionEnded) {
-              break;
-            }
-
-            // Feed tool results back to chat
-            currentInput = functionResponses;
-          } else {
-            // No tool calls. If we have text, call final_response as fallback
-            if (text && options?.executeTool) {
-              await options.executeTool('final_response', { text });
-            }
-            break;
-          }
+          return { text: text || undefined, tool_calls: toolCalls.length > 0 ? toolCalls : undefined };
         }
-
-      } catch (error) {
-        console.error("Gemini API Error:", error);
-        finalResponse = { text: "Error connecting to AI." };
-      }
+      };
     }
 
-    // Log Interaction via injected controller
-    this.appController.logLLMInteraction({
-      id: crypto.randomUUID(),
-      timestamp: Date.now(),
-      system_instruction_snapshot: systemInstruction,
-      prompt_snapshot: prompt,
-      response_snapshot: JSON.stringify(finalResponse),
-      duration_ms: Date.now() - start,
-      mocked
-    });
+    // 2. Unified Multi-Turn Loop
+    let currentInput: string | FunctionResponsePart[] = prompt;
+
+    try {
+      while (turns < maxTurns) {
+        turns++;
+        const turnStart = Date.now();
+
+        const response = await session.sendMessage(currentInput);
+        finalResponse = response;
+
+        // Log this turn
+        this.appController.logLLMInteraction({
+          id: sessionId,
+          timestamp: Date.now(),
+          turn_index: turns,
+          type: 'chat',
+          system_instruction_snapshot: systemInstruction,
+          prompt_snapshot: typeof currentInput === 'string' ? currentInput : JSON.stringify(currentInput),
+          response_snapshot: JSON.stringify(response),
+          duration_ms: mocked ? 0 : Date.now() - turnStart,
+          mocked
+        });
+
+        let toolCalls: LLMToolCall[];
+        if (response.tool_calls && response.tool_calls.length) {
+          toolCalls = response.tool_calls;
+        } else {
+          // No tool calls. If we have text, call final_response as fallback
+          toolCalls = [{ name: 'final_response', arguments: { text: response.text } }];
+        }
+        let sessionEnded = false;
+        if (!options?.executeTool) {
+          sessionEnded = true;
+        } else {
+          const functionResponses: FunctionResponsePart[] = [];
+
+          for (const call of toolCalls) {
+            const toolResult = await options.executeTool(call.name, call.arguments);
+            this.appController.logLLMInteraction({
+              id: sessionId,
+              timestamp: Date.now(),
+              turn_index: turns,
+              type: 'tool_call',
+              prompt_snapshot: JSON.stringify(call),
+              response_snapshot: JSON.stringify(toolResult),
+              duration_ms: mocked ? 0 : Date.now() - turnStart,
+              mocked
+            });
+            functionResponses.push({
+              functionResponse: {
+                name: call.name,
+                response: toolResult.response
+              }
+            });
+
+            if (toolResult.end || call.name === 'final_response') {
+              sessionEnded = true;
+            }
+          }
+          currentInput = functionResponses;
+        }
+
+        if (sessionEnded) {
+          break;
+        }
+      }
+    } catch (error) {
+      console.error("LLM Session Error:", error);
+      finalResponse = { text: "Error during conversation." };
+      this.appController.logLLMInteraction({
+        id: sessionId,
+        timestamp: Date.now(),
+        turn_index: turns,
+        type: 'error',
+        system_instruction_snapshot: systemInstruction,
+        prompt_snapshot: prompt,
+        response_snapshot: error?.toString() ?? 'Unknown',
+        duration_ms: Date.now() - start,
+        mocked
+      });
+    }
 
     return finalResponse;
   }

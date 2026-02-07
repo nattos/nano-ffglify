@@ -390,18 +390,19 @@ export class App extends MobxLitElement {
             <h3>Latest LLM Logs (Live)</h3>
             <div class="logs-list">
               ${local.llmLogs.map(log => html`
-                <div class="log-entry" style="margin-bottom: 2rem; border-bottom: 1px solid #eee; padding-bottom: 1rem;">
+                <div class="log-entry" style="margin-bottom: 2rem; border-bottom: 1px solid #333; padding-bottom: 1rem;">
                   <div style="font-size:0.8em; color:#888; margin-bottom: 0.5rem;">
                     <strong>ID:</strong> ${log.id} |
+                    <strong>Turn:</strong> ${log.turn_index || 1} |
                     <strong>Duration:</strong> ${log.duration_ms}ms |
                     <strong>Mocked:</strong> ${log.mocked}
                   </div>
 
                   <div style="margin-bottom: 0.5rem;"><strong>Prompt:</strong></div>
-                  <pre style="white-space: pre-wrap; background: rgba(255, 243, 162, 0.06); padding: 0.5rem; max-height: 200px; overflow: auto;">${this.formatLogValue(log.prompt_snapshot)}</pre>
+                  <pre style="white-space: pre-wrap; background: rgba(255, 243, 162, 0.06); padding: 0.5rem; max-height: 200px; overflow: auto; border: 1px solid #444;">${this.formatLogValue(log.prompt_snapshot)}</pre>
 
                   <div style="margin-bottom: 0.5rem;"><strong>Response:</strong></div>
-                  <pre style="white-space: pre-wrap; background: #68dcff1e; padding: 0.5rem; max-height: 400px; overflow: auto;">${this.formatLogValue(log.response_snapshot)}</pre>
+                  <pre style="white-space: pre-wrap; background: #68dcff1e; padding: 0.5rem; max-height: 400px; overflow: auto; border: 1px solid #444;">${this.formatLogValue(log.response_snapshot)}</pre>
                 </div>
               `)}
             </div>
@@ -415,29 +416,35 @@ export class App extends MobxLitElement {
 
             <div class="script-list">
               ${DEMO_SCRIPT.map((line, idx) => html`
-                <div class="script-row" style="display:flex; align-items:center; margin-bottom:8px; padding:4px; background:${this.runningScriptLine === idx ? '#ff1' : '#000'}">
-                  <button ?disabled=${this.runningScriptLine !== null} @click=${() => this.runScript(idx)} style="margin-right:10px">
-                    ${this.runningScriptLine === idx ? 'Running...' : 'Run'}
-                  </button>
-                  <code>${idx + 1}. ${line}</code>
+                <div class="script-row" style="display:flex; align-items:center; margin-bottom:8px; padding:4px; background:${this.runningScriptLine === idx ? '#444' : 'transparent'}; border: 1px solid ${this.runningScriptLine === idx ? 'var(--color-primary)' : '#333'}">
+                  <ui-button ?disabled=${this.runningScriptLine !== null} @click=${() => this.runScript(idx)} style="margin-right:10px">
+                    ${this.runningScriptLine === idx ? 'Running...' : 'Run Line'}
+                  </ui-button>
+                  <code>#${idx + 1}: ${Array.isArray(line) ? line[0].text.substring(0, 50) + '...' : line}</code>
                 </div>
               `)}
             </div>
 
             ${this.scriptLogs.length > 0 ? html`
-              <hr/>
-              <h3>Target Step Results</h3>
+              <hr style="border: none; border-top: 1px solid #333; margin: 2rem 0;"/>
+              <h3>Target Step Interactions (${this.scriptLogs.length} turns)</h3>
               ${this.scriptLogs.map(log => html`
-                <div class="result-block" style="border:1px solid #ccc; padding:10px; margin-top:10px; border-radius:4px;">
-                   ${log.system_instruction_snapshot ? html`
-                    <h4>System Instruction</h4>
-                    <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto;">${this.formatLogValue(log.system_instruction_snapshot)}</pre>
+                <div class="result-block" style="border:1px solid #444; padding:15px; margin-top:15px; border-radius:4px; background: #1a1a1a;">
+                   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid #333; padding-bottom: 0.5rem;">
+                     <strong>Step Turn #${log.turn_index || 1}</strong>
+                     <span style="font-size: 0.8rem; color: #888;">${log.duration_ms}ms | Mocked: ${log.mocked}</span>
+                   </div>
+
+                   ${log.system_instruction_snapshot && (log.turn_index === 1) ? html`
+                    <div style="margin-bottom: 0.5rem; color: #aaa; font-size: 0.9rem;">System Instruction:</div>
+                    <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto; max-height: 150px; font-size: 0.8rem; border: 1px solid #222; color: #666;">${this.formatLogValue(log.system_instruction_snapshot)}</pre>
                    ` : ''}
-                   <h4>Request</h4>
-                   <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto;">${this.formatLogValue(log.prompt_snapshot)}</pre>
-                   <h4>Response</h4>
-                   <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto;">${this.formatLogValue(log.response_snapshot)}</pre>
-                   <div><strong>Duration:</strong> ${log.duration_ms}ms | <strong>Mocked:</strong> ${log.mocked}</div>
+
+                   <div style="margin-bottom: 0.5rem; color: #aaa; font-size: 0.9rem;">Request (Prompt/Feedback):</div>
+                   <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto; max-height: 250px; border: 1px solid #222;">${this.formatLogValue(log.prompt_snapshot)}</pre>
+
+                   <div style="margin-bottom: 0.5rem; color: #aaa; font-size: 0.9rem;">Response (Text/Tools):</div>
+                   <pre style="white-space: pre-wrap; background: #0a0a0a; padding:8px; overflow:auto; max-height: 350px; border: 1px solid #222; color: var(--color-primary-light);">${this.formatLogValue(log.response_snapshot)}</pre>
                 </div>
               `)}
 
@@ -506,7 +513,7 @@ export class App extends MobxLitElement {
         <div class="chat-history">
             ${chat_history.map(msg => html`
                 <div class="msg ${msg.role}">
-                    <strong>${msg.role}:</strong> ${msg.text}
+                    <strong>${msg.role}:</strong> ${msg.role === 'tool-response' ? JSON.stringify(msg.data, undefined, 2) : msg.text}
                 </div>
             `)}
         </div>
