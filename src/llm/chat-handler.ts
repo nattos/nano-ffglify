@@ -42,9 +42,9 @@ export class ChatHandler {
         forceMock: this.appState.local.settings.useMockLLM,
         executeTool: async (name, args) => {
           console.log("Executing Tool:", name, args);
-          const result = this.executeTool(name, args);
+          const result = await this.executeTool(name, args);
           return {
-            end: !result.success, // End loop on failure if needed, or based on tool logic
+            end: !result.editApplied && !result.success, // End loop on failure if it's not a documentation tool
             response: result
           };
         }
@@ -56,7 +56,7 @@ export class ChatHandler {
     }
   }
 
-  public executeTool(name: string, args: any): IREditResponse {
+  public async executeTool(name: string, args: any): Promise<IREditResponse> {
     // Dynamic Dispatch for Specific Tools
     const effectiveName = name;
     const effectiveArgs = args;
@@ -72,7 +72,7 @@ export class ChatHandler {
 
       case 'replaceIR': {
         const cleanArgs: ReplaceIRRequest = effectiveArgs;
-        const upsertRes = this.entityManager.replaceIR(cleanArgs);
+        const upsertRes = await this.entityManager.replaceIR(cleanArgs);
 
         // TODO: Trigger and wait for result
         // upsertRes.compileResult = undefined;
@@ -88,7 +88,7 @@ export class ChatHandler {
 
       case 'patchIR': {
         const cleanArgs: PatchIRRequest = effectiveArgs;
-        const patchRes = this.entityManager.patchIR(cleanArgs);
+        const patchRes = await this.entityManager.patchIR(cleanArgs);
 
         // TODO: Trigger and wait for result
         // upsertRes.compileResult = undefined;

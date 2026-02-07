@@ -31,20 +31,23 @@ export class EntityManager {
     private controller: AppController
   ) { }
 
-  public replaceIR(request: ReplaceIRRequest): IREditResponse {
+  public async replaceIR(request: ReplaceIRRequest): Promise<IREditResponse> {
     const entity_type = 'IR';
 
     // 4. Record History & Apply
     const operation = 'replace';
     let validationErrors: ValidationError[] | undefined;
+    let compilePromise: Promise<CompileResult> | undefined;
+
     try {
-      this.controller.mutate(`${operation} ${entity_type}`, 'llm', (database) => {
+      const task = this.controller.mutate(`${operation} ${entity_type}`, 'llm', (database) => {
         database.ir = structuredClone(request);
         validationErrors = validateEntity(database.ir as any, 'IR', database);
         if (validationErrors.length) {
           throw new EditNotValidError();
         }
-      });
+      }, { needsCompile: true });
+      compilePromise = task.compileResult;
     } catch (e) {
       if (e instanceof EditNotValidError) {
         validationErrors ??= [];
@@ -54,17 +57,23 @@ export class EntityManager {
     }
 
     const editApplied = !validationErrors;
+    let compileResult: CompileResult | undefined;
+    if (editApplied && compilePromise) {
+      compileResult = await compilePromise;
+    }
+
     return {
       editApplied: editApplied,
       message: `${entity_type} ${operation}`,
       validationResult: {
         success: editApplied,
         errors: validationErrors,
-      }
+      },
+      compileResult
     };
   }
 
-  public patchIR(request: PatchIRRequest): IREditResponse {
+  public async patchIR(request: PatchIRRequest): Promise<IREditResponse> {
     const entity_type = 'IR';
     const patches = request.patches;
 
@@ -74,8 +83,10 @@ export class EntityManager {
 
     const operation = 'patch';
     let validationErrors: ValidationError[] | undefined;
+    let compilePromise: Promise<CompileResult> | undefined;
+
     try {
-      this.controller.mutate(`Patch ${entity_type}`, 'llm', (database) => {
+      const task = this.controller.mutate(`Patch ${entity_type}`, 'llm', (database) => {
         const target = database.ir;
         if (!target) return;
 
@@ -93,7 +104,8 @@ export class EntityManager {
         if (validationErrors.length) {
           throw new EditNotValidError();
         }
-      });
+      }, { needsCompile: true });
+      compilePromise = task.compileResult;
     } catch (e) {
       if (e instanceof EditNotValidError) {
         validationErrors ??= [];
@@ -103,13 +115,19 @@ export class EntityManager {
     }
 
     const editApplied = !validationErrors;
+    let compileResult: CompileResult | undefined;
+    if (editApplied && compilePromise) {
+      compileResult = await compilePromise;
+    }
+
     return {
       editApplied: editApplied,
       message: `${entity_type} ${operation}`,
       validationResult: {
         success: editApplied,
         errors: validationErrors,
-      }
+      },
+      compileResult
     };
   }
 }

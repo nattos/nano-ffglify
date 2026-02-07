@@ -19,7 +19,7 @@ describe('Integration: IR App Scenarios', () => {
     runInAction(() => {
       // Reset State
       appState.database = {
-        ir: { id: 'current-ir', version: '1.0', meta: { name: 'Empty' }, entryPoint: '', inputs: [], resources: [], structs: [], functions: [] },
+        ir: { version: '1.0', meta: { name: 'Empty' }, entryPoint: '', inputs: [], resources: [], structs: [], functions: [] },
         chat_history: []
       };
 
@@ -35,7 +35,6 @@ describe('Integration: IR App Scenarios', () => {
       const ir = appState.database.ir;
       expect(ir).toBeDefined();
       expect(ir.meta.name).toBe('Precomputed Blur');
-      expect(ir.id).toBe('blur-ir');
     });
 
     // 2. Update Kernel Size
@@ -43,7 +42,7 @@ describe('Integration: IR App Scenarios', () => {
 
     runInAction(() => {
       const ir = appState.database.ir;
-      expect(ir.id).toBe('blur-ir');
+      expect(ir.meta.name).toBe('Precomputed Blur');
       expect(ir.inputs[2].default).toBe(32);
     });
   });
@@ -57,10 +56,10 @@ describe('Integration: IR App Scenarios', () => {
       const history = appState.database.chat_history;
 
       // Look for the documentation message
-      const docMessage = history.find(m => m.role === 'assistant' && m.text?.includes('Documentation for `math_add`'));
+      const docMessage = history.find(m => m.role === 'tool-response' && m.data?.docsResult?.name === 'math_add');
       expect(docMessage).toBeDefined();
-      expect(docMessage?.text).toContain('"name": "math_add"');
-      expect(docMessage?.text).toContain('"description": "Standard numeric binary math operation."');
+      expect(docMessage?.data.docsResult.name).toBe('math_add');
+      expect(docMessage?.data.docsResult.description).toContain('Standard numeric binary math operation.');
     });
   });
 });

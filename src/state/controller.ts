@@ -22,6 +22,16 @@ import { getSharedDevice } from '../webgpu/gpu-device';
 import { ReplManager } from '../runtime/repl-manager';
 import { RuntimeManager } from '../runtime/runtime-manager';
 
+import { CompileResult } from './entity-api';
+
+export interface MutateOptions {
+  needsCompile?: boolean;
+}
+
+export interface MutateTask {
+  compileResult?: Promise<CompileResult>;
+}
+
 export class AppController {
   public readonly repl = new ReplManager();
   public readonly runtime = new RuntimeManager();
@@ -270,11 +280,65 @@ export class AppController {
     this.setActiveRewindId(null);
   }
 
-  public mutate(description: string, source: 'user' | 'llm', recipe: (draft: DatabaseState) => void) {
+  public mutate(description: string, source: 'user' | 'llm', recipe: (draft: DatabaseState) => void, options?: MutateOptions): MutateTask {
+    const task: MutateTask = {};
     runInAction(() => {
       historyManager.record(description, source, recipe);
       this.saveDatabase();
     });
+
+    if (options?.needsCompile) {
+      task.compileResult = this._performCompile();
+    }
+
+    return task;
+  }
+
+  private async _performCompile(): Promise<CompileResult> {
+    const timeoutPrompt = new Promise<CompileResult>((resolve) => {
+      setTimeout(() => resolve({ compileStatus: 'timeout' }), 10000);
+    });
+
+    const compilePromise = (async (): Promise<CompileResult> => {
+      const isValid = this.validateCurrentIR();
+      if (!isValid) {
+        return {
+          compileStatus: 'fail',
+          errors: this.repl.validationErrors
+        };
+      }
+
+      const ir = appState.database.ir;
+      const artifacts = await this.repl.compile(ir);
+
+      if (artifacts) {
+        this.repl.swap(artifacts);
+
+        try {
+          const device = await getSharedDevice();
+          await this.runtime.setCompiled(artifacts, device);
+        } catch (gpuError) {
+          console.warn("[AppController] GPU environment not available for live update:", gpuError);
+        }
+
+        runInAction(() => {
+          appState.local.compilationResult = {
+            js: artifacts.compiled.taskCode,
+            jsInit: artifacts.compiled.initCode,
+            wgsl: artifacts.wgsl
+          };
+        });
+
+        return { compileStatus: 'success' };
+      } else {
+        return {
+          compileStatus: 'fail',
+          errors: this.repl.validationErrors
+        };
+      }
+    })();
+
+    return Promise.race([compilePromise, timeoutPrompt]);
   }
 
   public addChatMessage(msg: Partial<ChatMsg>) {
