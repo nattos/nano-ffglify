@@ -13,6 +13,29 @@ fn mat4_from_array_i32(arr: array<i32, 16>) -> mat4x4<f32> {
     f32(arr[12]), f32(arr[13]), f32(arr[14]), f32(arr[15])
   );
 }
+fn mat3_inverse(m: mat3x3<f32>) -> mat3x3<f32> {
+  let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2];
+  let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2];
+  let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2];
+  let b01 = a22 * a11 - a12 * a21;
+  let b11 = -a22 * a01 + a02 * a21;
+  let b21 = a12 * a01 - a02 * a11;
+  let det = a00 * b01 + a10 * b11 + a20 * b21;
+  if (det == 0.0) { return mat3x3<f32>(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0); }
+  let invDet = 1.0 / det;
+  return mat3x3<f32>(
+    b01 * invDet,
+    (-a22 * a10 + a12 * a20) * invDet,
+    (a21 * a10 - a11 * a20) * invDet,
+    b11 * invDet,
+    (a22 * a00 - a02 * a20) * invDet,
+    (-a21 * a00 + a01 * a20) * invDet,
+    b21 * invDet,
+    (-a12 * a00 + a02 * a10) * invDet,
+    (a11 * a00 - a01 * a10) * invDet
+  );
+}
+
 fn mat4_inverse(m: mat4x4<f32>) -> mat4x4<f32> {
   let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2]; let a03 = m[0][3];
   let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2]; let a13 = m[1][3];

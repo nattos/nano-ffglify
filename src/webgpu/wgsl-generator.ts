@@ -583,7 +583,7 @@ export class WgslGenerator {
         if (count === 1) {
           lines.push(`  b_globals.data[${idx}] = f32(${valExpr});`);
         } else if (isMatrix) {
-          const dims = type.includes('3x3') ? 3 : 4;
+          const dims = (count === 9) ? 3 : 4;
           for (let c = 0; c < dims; c++) {
             for (let r = 0; r < dims; r++) {
               lines.push(`  b_globals.data[${idx + c * dims + r}] = f32(${valExpr}[${c}][${r}]);`);
@@ -641,8 +641,14 @@ export class WgslGenerator {
         else lines.push(`${indent}${node['func']}(${args});`);
       }
     } else if (node.op === 'func_return') {
-      const prop = node['value'] !== undefined ? 'value' : 'val';
-      lines.push(`${indent}return ${this.resolveArg(node, prop, func, options, ir, 'any', edges)};`);
+      const isEntry = options.entryPointId === func.id;
+      const isComputeEntry = isEntry && options.stage === 'compute';
+      if (isComputeEntry) {
+        lines.push(`${indent}return;`);
+      } else {
+        const prop = node['value'] !== undefined ? 'value' : 'val';
+        lines.push(`${indent}return ${this.resolveArg(node, prop, func, options, ir, 'any', edges)};`);
+      }
     } else if (node.op === 'flow_branch') {
       const cond = this.resolveArg(node, 'cond', func, options, ir, 'bool', edges);
       const isBoolExpr =
@@ -720,7 +726,6 @@ export class WgslGenerator {
   }
 
   private getVariableExpr(varId: string, func: FunctionDef, options: WgslOptions): string {
-    if (func.localVars.some(v => v.id === varId)) return `l_${varId}`;
     if (options.varMap?.has(varId)) {
       const idx = options.varMap.get(varId)!;
       const type = options.varTypes?.get(varId) || 'float';
@@ -750,6 +755,7 @@ export class WgslGenerator {
       }
       return `b_globals.data[${idx}]`;
     }
+    if (func.localVars.some(v => v.id === varId)) return `l_${varId}`;
     const arg = func.inputs.find(i => i.id === varId);
     if (arg) {
       if (arg.builtin) return `l_${varId}`;
@@ -862,26 +868,14 @@ export class WgslGenerator {
       return 'mat4x4<f32>(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)';
     }
     if (node.op === 'mat_inverse') {
-      // WGSL inverse() exists but behavior on singular is undefined/implementation defined.
-      // Tests require a fallback (e.g. zero matrix) if singular?
-      // Actually inverse() is available for mat2x2, mat3x3, mat4x4.
-      // If we need safe inverse, we might need a helper, but determinant check is expensive.
-      // However, the test "Inverse Singular Matrix (Fallback)" passes IF we don't compile error.
-      // The previous error was "cannot index type 'abstract-float'" implying it returned 0.0 or something non-matrix.
-      // If we assume it wasn't implemented, then compiling 'mat_inverse' would fall through?
-      // Wait, if it fell through, what did it return?
-      // It might have returned "0.0" from some default catch-all? Or empty string?
-      // CompileExpression returns formatZero('float') at the end if no match.
-      // formatZero('float') is "0.0".
-      // That explains "cannot index type 'abstract-float'".
-      // So we just need to return `inverse(val)`.
-      // NOTE: We wrap in a helper if we want to catch singulars, but let's try standard `inverse` first.
-      // If `inverse` on singular returns weirdness, we might fail the "Expect 0" check.
-      // But let's implementing it correctly first.
-      const val = this.resolveArg(node, 'val', func, options, ir, 'float4x4', edges); // Defaulting to 4x4, but could be 3x3
-      // We should infer type.
-      const inputType = options.nodeTypes?.get(node['val']) || 'float4x4';
+      const val = this.resolveArg(node, 'val', func, options, ir, 'any', edges);
+      const type = options.nodeTypes?.get(node['val']) || 'float4x4';
+      if (type === 'float3x3' || type === 'mat3x3<f32>') return `mat3_inverse(${val})`;
       return `mat4_inverse(${val})`;
+    }
+    if (node.op === 'mat_transpose') {
+      const val = this.resolveArg(node, 'val', func, options, ir, 'any', edges);
+      return `transpose(${val})`;
     }
     if (node.op === 'static_cast_float') return `f32(${this.resolveArg(node, 'val', func, options, ir, 'float', edges)})`;
     if (node.op === 'static_cast_int') {
@@ -1426,7 +1420,8 @@ export class WgslGenerator {
     if (t === 'i32') return '0';
     if (t === 'u32') return '0u';
     if (t === 'bool') return 'false';
-    if (t.startsWith('vec') || t.startsWith('mat')) return `${t}(0.0)`;
+    if (t.startsWith('vec')) return `${t}(0.0)`;
+    if (t.startsWith('mat')) return `${t}()`;
     return `${t}()`;
   }
 
@@ -1469,7 +1464,7 @@ export class WgslGenerator {
     if (toType === 'uint' || toType === 'u32') return `u32(${expr})`;
     if (toType === 'bool' || toType === 'boolean') return `bool(${expr})`;
 
-    if (toType.startsWith('float') && toCount > 1) {
+    if (toType.startsWith('float') && toCount > 1 && !toType.includes('x')) {
       if (fromCount === 1) return `vec${toCount}<f32>(${expr})`;
       return `vec${toCount}<f32>(${expr})`;
     }

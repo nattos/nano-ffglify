@@ -176,14 +176,18 @@ export const ForceOntoGPUTestBackend: TestBackend = {
           resourceDefs.set(r.id, r);
         });
 
+        const nodeTypes = inferFunctionTypes(func, ir);
+
         func.nodes.forEach(n => {
           if (n.op === 'var_set') {
             const v = n['var'];
-            const isLocal = func.localVars?.some(lv => lv.id === v);
-            if (!isLocal && !varMap.has(v)) {
+            // For conformance tests, we want to be able to read back even local variables
+            // that are results of operations.
+            if (!varMap.has(v)) {
               varMap.set(v, varCounter);
-              varTypes.set(v, 'float');
-              varCounter++;
+              const valType = nodeTypes.get(n.id) || nodeTypes.get(n['val']) || 'float';
+              varTypes.set(v, valType);
+              varCounter += getComponentCount(valType);
             }
           }
         });
@@ -221,8 +225,6 @@ export const ForceOntoGPUTestBackend: TestBackend = {
           if (id.endsWith('_sampler')) genSamplerBindings.set(id.replace('_sampler', ''), binding);
           else genResourceBindings.set(id, binding);
         });
-
-        const nodeTypes = inferFunctionTypes(func, ir);
 
         // Handle cmd_dispatch redirection:
         // If the entry function contains a 'cmd_dispatch', we should compile the dispatched function instead.
@@ -283,6 +285,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
         });
 
         const code = WgslGenerator.resolveImports(compilation);
+        console.log("--- GENERATED WGSL ---\n", code, "\n---------------------");
 
         device.pushErrorScope('validation');
         const pipeline = await GpuCache.getComputePipeline(device, code);

@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { availableBackends } from './test-runner';
+import { cpuBackends } from './test-runner';
 import { RuntimeValue } from '../../interpreter/context';
 import { NOISE_SHADER } from '../../domain/example-ir';
 
-const backends = availableBackends;
+const backends = cpuBackends;
 
 describe('Conformance: Integration - Noise Generator', () => {
   if (backends.length === 0) {

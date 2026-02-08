@@ -262,6 +262,21 @@ const resolveNodeType = (
       return inputTypes['val'];
     }
 
+    if (node.op === 'mat_identity') {
+      const size = node['size'];
+      const vType = (size === 3) ? 'float3x3' : 'float4x4';
+      cache.set(nodeId, vType);
+      return vType;
+    }
+
+    if (node.op === 'mat_transpose' || node.op === 'mat_inverse') {
+      const valType = inputTypes['val'];
+      if (valType && valType !== 'any') {
+        cache.set(nodeId, valType);
+        return valType;
+      }
+    }
+
     if (node.op === 'var_get') {
       const varId = node['var'];
       const localVar = func.localVars.find(v => v.id === varId);
