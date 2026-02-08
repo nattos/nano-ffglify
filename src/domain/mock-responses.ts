@@ -25,12 +25,6 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
         {
           "name": "queryDocs",
           "arguments": {
-            "op": "texture_sample_lod"
-          }
-        },
-        {
-          "name": "queryDocs",
-          "arguments": {
             "op": "texture_store"
           }
         },
@@ -101,7 +95,8 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
                 type: 'texture2d',
                 format: 'rgba8',
                 size: { mode: 'reference', ref: 't_input' },
-                persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
+                persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false },
+                isOutput: true
               },
               {
                 id: 'b_weights',
@@ -254,6 +249,209 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
       }
     ]
   }
+};
+
+
+export const NOTES_MOCKS2: Record<string, LLMResponse | LLMResponse[]> = {
+  "make a simple noise shader": {
+    tool_calls: [
+      {
+        name: "replaceIR",
+        arguments: {
+          "entryPoint": "fn_main_cpu",
+          "inputs": [
+            {
+              "label": "Noise Scale",
+              "id": "scale",
+              "default": 10.0,
+              "ui": {
+                "max": 100,
+                "widget": "slider",
+                "min": 1
+              },
+              "type": "float"
+            },
+            {
+              "type": "float",
+              "default": 0.0,
+              "id": "time",
+              "label": "Time"
+            }
+          ],
+          "version": "1.0.0",
+          "structs": [],
+          "resources": [
+            {
+              "id": "output_tex",
+              "type": "texture2d",
+              "persistence": {
+                "clearEveryFrame": true,
+                "cpuAccess": false,
+                "clearOnResize": true,
+                "retain": true
+              },
+              "size": {
+                "mode": "viewport"
+              }
+            }
+          ],
+          "meta": {
+            "name": "Simple Noise Generator"
+          },
+          "functions": [
+            {
+              "id": "fn_main_cpu",
+              "localVars": [],
+              "nodes": [
+                {
+                  "id": "tex_size",
+                  "resource": "output_tex",
+                  "op": "resource_get_size"
+                },
+                {
+                  "per_pixel": true,
+                  "op": "cmd_dispatch",
+                  "shader": "fn_noise_gpu",
+                  "id": "dispatch_noise",
+                  "resource": "output_tex"
+                }
+              ],
+              "type": "cpu",
+              "outputs": [],
+              "inputs": []
+            },
+            {
+              "type": "shader",
+              "id": "fn_noise_gpu",
+              "inputs": [],
+              "outputs": [],
+              "localVars": [],
+              "nodes": [
+                {
+                  "id": "gid",
+                  "op": "builtin_get",
+                  "name": "global_invocation_id"
+                },
+                {
+                  "op": "vec_swizzle",
+                  "id": "pos_f2",
+                  "src": "gid",
+                  "swizzle": "xy"
+                },
+                {
+                  "id": "size_f2",
+                  "op": "resource_get_size",
+                  "resource": "output_tex"
+                },
+                {
+                  "a": "pos_f2",
+                  "id": "uv",
+                  "op": "math_div",
+                  "b": "size_f2"
+                },
+                {
+                  "id": "scale_val",
+                  "op": "var_get",
+                  "id_var": "scale"
+                },
+                {
+                  "op": "math_mul",
+                  "b": "scale_val",
+                  "id": "scaled_uv",
+                  "a": "uv"
+                },
+                {
+                  "op": "var_get",
+                  "id": "time_val",
+                  "id_var": "time"
+                },
+                {
+                  "op": "float2",
+                  "y": "time_val",
+                  "id": "time_vec",
+                  "x": "time_val"
+                },
+                {
+                  "a": "scaled_uv",
+                  "op": "math_add",
+                  "id": "uv_animated",
+                  "b": "time_vec"
+                },
+                {
+                  "x": 12.9898,
+                  "y": 78.233,
+                  "id": "const_a",
+                  "op": "float2"
+                },
+                {
+                  "id": "dot_val",
+                  "a": "uv_animated",
+                  "op": "vec_dot",
+                  "b": "const_a"
+                },
+                {
+                  "id": "sin_val",
+                  "op": "math_sin",
+                  "val": "dot_val"
+                },
+                {
+                  "id": "mul_val",
+                  "op": "math_mul",
+                  "a": "sin_val",
+                  "b": 43758.5453
+                },
+                {
+                  "id": "noise_val",
+                  "op": "math_fract",
+                  "val": "mul_val"
+                },
+                {
+                  "op": "float4",
+                  "y": "noise_val",
+                  "z": "noise_val",
+                  "x": "noise_val",
+                  "w": 1,
+                  "id": "color_out"
+                },
+                {
+                  "id": "store_node",
+                  "coords": "pos_f2",
+                  "op": "texture_store",
+                  "tex": "output_tex",
+                  "value": "color_out"
+                }
+              ]
+            }
+          ],
+          "comment": "Set up a basic noise generator using a compute shader."
+        }
+      }]
+  },
+  "fix the noise shader": {
+    text: "I'll apply a series of patches to fix the property naming and formatting issues in the noise shader IR...",
+    tool_calls: [
+      {
+        name: "patchIR",
+        arguments: {
+          patches: [
+            { op: "add", path: "/resources/0/format", value: "rgba8" },
+            { op: "move", from: "/functions/0/nodes/1/shader", path: "/functions/0/nodes/1/func" },
+            { op: "remove", path: "/functions/0/nodes/1/per_pixel" },
+            { op: "remove", path: "/functions/0/nodes/1/resource" },
+            { op: "add", path: "/functions/0/nodes/1/dispatch", value: "tex_size" },
+            { op: "move", from: "/functions/1/nodes/1/src", path: "/functions/1/nodes/1/vec" },
+            { op: "move", from: "/functions/1/nodes/1/swizzle", path: "/functions/1/nodes/1/channels" },
+            { op: "move", from: "/functions/1/nodes/4/id_var", path: "/functions/1/nodes/4/var" },
+            { op: "move", from: "/functions/1/nodes/6/id_var", path: "/functions/1/nodes/6/var" }
+          ]
+        }
+      },
+      {
+        name: "final_response",
+        arguments: { text: "The noise shader IR has been fixed and is now strictly valid according to the updated schemas." }
+      }
+    ]
+  },
 };
 
 export const DEMO_SCRIPT = Object.keys(NOTES_MOCKS);
