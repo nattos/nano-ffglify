@@ -10,8 +10,9 @@
  * @pitfalls
  * - `MappedFieldSchema` is complex and recursive. Debugging type errors here can be tricky.
  */
+import { z } from 'zod';
 import { FunctionDeclaration, SchemaType } from '@google/generative-ai';
-import { OpDef } from '../ir/builtin-schemas';
+import { OpArg, OpDef } from '../ir/builtin-schemas';
 
 export type FieldType = 'string' | 'number' | 'boolean' | 'array' | 'object' | 'any' | 'any_value';
 
@@ -94,19 +95,7 @@ export function opDefToFunctionDeclaration(name: string, def: OpDef<any>): Funct
   const required: string[] = [];
 
   for (const [key, arg] of Object.entries(def.args)) {
-    const docLines = [arg.doc];
-    if (arg.literalTypes) {
-      docLines.push(`Accepted types: ${arg.literalTypes.join(', ')}`);
-    }
-    if (arg.refable) {
-      docLines.push(`Can be a literal value or a string reference.`);
-    }
-
-    properties[key] = {
-      type: SchemaType.STRING,
-      description: docLines.join(' ')
-    };
-
+    properties[key] = mapOpArgToGeminiSchema(arg);
     if (!arg.optional) {
       required.push(key);
     }
@@ -120,6 +109,65 @@ export function opDefToFunctionDeclaration(name: string, def: OpDef<any>): Funct
       properties,
       required: required.length > 0 ? required : undefined
     }
+  };
+}
+
+function mapOpArgToGeminiSchema(arg: OpArg): any {
+  const docLines = [arg.doc];
+  if (arg.literalTypes) {
+    docLines.push(`Accepted types: ${arg.literalTypes.join(', ')}`);
+  }
+
+  // If it's refable, it can be a string ID, so we must allow STRING.
+  // Gemini tool parameters don't easily support unions of types (e.g. number | string).
+  // We prioritize STRING for refable fields to ensure references always work.
+  if (arg.refable || arg.requiredRef) {
+    docLines.push(`Can be a literal value or a string reference (node ID).`);
+    return {
+      type: SchemaType.STRING,
+      description: docLines.join(' ')
+    };
+  }
+
+  const description = docLines.join(' ');
+  const type = arg.type;
+
+  // Introspect Zod type
+  if (type instanceof z.ZodEnum) {
+    return {
+      type: SchemaType.STRING,
+      format: 'enum',
+      enum: type.options,
+      description
+    };
+  }
+
+  if (type instanceof z.ZodNumber) {
+    return {
+      type: SchemaType.NUMBER,
+      description
+    };
+  }
+
+  if (type instanceof z.ZodBoolean) {
+    return {
+      type: SchemaType.BOOLEAN,
+      description
+    };
+  }
+
+  if (type instanceof z.ZodArray) {
+    return {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING }, // Simplified for now
+      description
+    };
+  }
+
+  // Generic fallback
+  return {
+    type: SchemaType.STRING,
+    description
   };
 }
 

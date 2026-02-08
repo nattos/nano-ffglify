@@ -105,18 +105,33 @@ export class ChatHandler {
       }
 
       case 'queryDocs': {
-        const opName = effectiveArgs.op as BuiltinOp;
-        const def = OpDefs[opName];
+        const opName = effectiveArgs.op as BuiltinOp | undefined;
 
+        if (!opName) {
+          // List all operations
+          const lines = Object.entries(OpDefs).map(([name, def]) => `- **${name}**: ${def.doc}`);
+          const summary = `Available IR Operations:\n\n${lines.join('\n')}`;
+
+          const queryRes: IREditResponse = { success: true, message: summary };
+          this.appController.addChatMessage({
+            role: 'tool-response',
+            text: summary,
+            type: 'text',
+            data: structuredClone(queryRes)
+          });
+          return { end: false, response: queryRes };
+        }
+
+        const def = OpDefs[opName];
         if (!def) {
           return { end: false, response: { success: false, message: `Unknown operation: ${opName}` } };
         }
 
         const doc = opDefToFunctionDeclaration(opName, def);
-        const queryRes: IREditResponse = { success: true, message: 'Found', docsResult: doc };
+        const queryRes: IREditResponse = { success: true, message: `Documentation for ${opName}`, docsResult: doc };
         this.appController.addChatMessage({
           role: 'tool-response',
-          text: '',
+          text: `Showing docs for ${opName}`,
           type: 'entity_update',
           data: structuredClone(queryRes)
         });

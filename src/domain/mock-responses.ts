@@ -20,6 +20,11 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
         {
           "name": "queryDocs",
           "arguments": {
+          }
+        },
+        {
+          "name": "queryDocs",
+          "arguments": {
             "op": "texture_sample_lod"
           }
         },
@@ -45,6 +50,12 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
           "name": "queryDocs",
           "arguments": {
             "op": "math_div"
+          }
+        },
+        {
+          "name": "queryDocs",
+          "arguments": {
+            "op": "call_func"
           }
         },
         {

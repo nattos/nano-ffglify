@@ -80,7 +80,7 @@ export class GoogleGenAIManager implements LLMManager {
     // 3. Documentation Tools
     tools.push({
       name: "queryDocs",
-      description: "Look up the schema and documentation for a specific IR operation (op). Returns a JSON object describing the parameters.",
+      description: "Look up the schema and documentation for a specific IR operation (op). If no op is provided, returns a summary list of all available operations.",
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
@@ -91,7 +91,7 @@ export class GoogleGenAIManager implements LLMManager {
             description: "The name of the operation to look up (e.g., 'math_add', 'texture_sample').",
           }
         },
-        required: ["op"]
+        required: []
       }
     });
     console.log(tools);
