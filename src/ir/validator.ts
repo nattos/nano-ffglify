@@ -277,6 +277,24 @@ const resolveNodeType = (
       }
     }
 
+    if (node.op === 'array_construct') {
+      const type = node['type'] || 'float';
+      let len = 0;
+      if (Array.isArray(node['values'])) len = node['values'].length;
+      else if (typeof node['length'] === 'number') len = node['length'];
+
+      // Normalize internal type names to WGSL types for the string
+      let scalarType = type;
+      if (type === 'float') scalarType = 'f32';
+      else if (type === 'int' || type === 'i32') scalarType = 'i32';
+      else if (type === 'uint' || type === 'u32') scalarType = 'u32';
+      else if (type === 'bool' || type === 'boolean') scalarType = 'bool';
+
+      const arrayType = `array<${scalarType}, ${len}>`;
+      cache.set(nodeId, arrayType);
+      return arrayType;
+    }
+
     if (node.op === 'var_get') {
       const varId = node['var'];
       const localVar = func.localVars.find(v => v.id === varId);

@@ -39,6 +39,10 @@ const getComponentCount = (type: string): number => {
   if (type === 'float4' || type === 'vec4<f32>') return 4;
   if (type === 'float3x3' || type === 'mat3x3<f32>') return 9;
   if (type === 'float4x4' || type === 'mat4x4<f32>') return 16;
+  if (type.startsWith('array<')) {
+    const match = type.match(/,\s*(\d+)>/);
+    if (match) return parseInt(match[1]);
+  }
   return 1;
 };
 

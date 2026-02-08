@@ -13,7 +13,8 @@ export type ValidationType =
   | 'float4x4'
   | 'struct' // Generic Struct
   | 'array'  // Generic Array
-  | 'any';   // Fallback
+  | 'any'    // Fallback
+  | (string & {}); // Dynamic types (struct IDs, array patterns)
 
 export interface OpSignature {
   inputs: Record<string, ValidationType>;

@@ -573,7 +573,7 @@ export class WgslGenerator {
     const indent = '  ';
     if (node.op === 'var_set') {
       const varId = node['var'];
-      const valExpr = this.resolveArg(node, 'val', func, options, ir, 'float', edges);
+      const valExpr = this.resolveArg(node, 'val', func, options, ir, 'any', edges);
       if (options.varMap?.has(varId)) {
         const idx = options.varMap.get(varId)!;
         const type = options.varTypes?.get(varId) || 'float';
@@ -621,10 +621,22 @@ export class WgslGenerator {
         else if (t.includes('f32') || t.includes('float')) elemType = 'f32';
       }
 
-      const arr = this.resolveArg(node, 'array', func, options, ir, 'any', edges);
       const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
       const val = this.resolveArg(node, 'value', func, options, ir, elemType, edges);
-      lines.push(`${indent}${arr}[u32(${idx})] = ${val};`);
+
+      let varId = targetId;
+      const sourceNode = func.nodes.find(n => n.id === targetId);
+      if (sourceNode && sourceNode.op === 'var_get') {
+        varId = sourceNode['var'] as string;
+      }
+
+      if (options.varMap?.has(varId)) {
+        const baseIdx = options.varMap.get(varId)!;
+        lines.push(`${indent}b_globals.data[u32(${baseIdx}) + u32(${idx})] = f32(${val});`);
+      } else {
+        const arr = this.resolveArg(node, node.op === 'array_set' ? 'array' : 'vec', func, options, ir, 'any', edges);
+        lines.push(`${indent}${arr}[u32(${idx})] = ${val};`);
+      }
     } else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'] as string;
       const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
@@ -752,6 +764,16 @@ export class WgslGenerator {
         const comps = [];
         for (let i = 0; i < 16; i++) comps.push(`b_globals.data[${idx + i}]`);
         return `mat4x4<f32>(${comps.join(', ')})`;
+      }
+      if (type.startsWith('array<')) {
+        const match = type.match(/,\s*(\d+)>/);
+        if (match) {
+          const len = parseInt(match[1]);
+          const comps = [];
+          for (let i = 0; i < len; i++) comps.push(`b_globals.data[${idx + i}]`);
+          // We assume f32 elements in b_globals
+          return `array<f32, ${len}>(${comps.join(', ')})`;
+        }
       }
       return `b_globals.data[${idx}]`;
     }
@@ -1379,6 +1401,13 @@ export class WgslGenerator {
     if (type === 'float4' || type === 'vec4<f32>' || type === 'quat') return 4;
     if (type === 'float3x3' || type === 'mat3x3<f32>') return 9;
     if (type === 'float4x4' || type === 'mat4x4<f32>') return 16;
+
+    // Handle array<T, N>
+    if (type.startsWith('array<')) {
+      const match = type.match(/,\s*(\d+)>/);
+      if (match) return parseInt(match[1]);
+    }
+
     return 1;
   }
 
