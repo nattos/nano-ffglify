@@ -794,7 +794,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
 
   'texture_sample': (ctx, args) => {
     const id = args.tex as string;
-    const uv = args.uv as [number, number]; // [0..1]
+    const uv = args.coords as [number, number]; // [0..1]
     const res = ctx.getResource(id);
 
     const wrapMode = res.def.sampler?.wrap || 'clamp';

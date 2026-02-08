@@ -379,7 +379,7 @@ require('./intrinsics.js');
 
   private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
     if (node.op === 'cmd_dispatch') {
-      const targetId = node['target'] || node['func'];
+      const targetId = node['func'];
       const dimExpr = this.resolveArg(node, 'dispatch', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
       lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimExpr}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
     }
@@ -530,7 +530,7 @@ require('./intrinsics.js');
       }
       case 'texture_sample': {
         const texId = node['tex'];
-        const uv = (node['uv'] !== undefined) ? this.resolveArg(node, 'uv', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges) : this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const uv = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
         return `((uv) => {
           const res = ctx.resources.get('${texId}');
           if (!res) return [0, 0, 0, 0];
@@ -770,7 +770,7 @@ require('./intrinsics.js');
       case 'vec_normalize': return `_vec_normalize(${a()})`;
       case 'vec_swizzle': {
         const vec = this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        const channels = node['channels'] || node['swizzle'] || 'x';
+        const channels = node['channels'] || 'x';
         const map: any = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3 };
         const idxs = channels.split('').map((c: string) => map[c]);
         if (idxs.length === 1) return `${vec}[${idxs[0]}]`;
@@ -830,9 +830,10 @@ require('./intrinsics.js');
   }
 
   private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]): string {
-    const targetId = (node['func'] || node['target']) as string;
+    const targetId = node['func'] as string;
     const targetFunc = allFunctions.find(f => f.id === targetId);
     if (!targetFunc) return '{}';
+
 
     const parts: string[] = [];
     targetFunc.inputs.forEach(input => {

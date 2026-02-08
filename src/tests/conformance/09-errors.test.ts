@@ -100,7 +100,7 @@ describe('Conformance: Error Handling & Negative Tests', () => {
 
     runStaticBadIR('Unknown Opcode', [
       { id: 'bad_op', op: 'cast_to_float', value: 'x' }
-    ], [], 'Unknown op');
+    ], [], 'Invalid option: expected one of');
 
     runStaticBadIR('Multiple Static Errors (Accumulation)', [
       // Error 1: Missing Argument in math_add

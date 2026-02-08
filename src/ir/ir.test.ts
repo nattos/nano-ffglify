@@ -97,7 +97,7 @@ describe('IR Validation', () => {
             { id: 'idx', op: 'loop_index', loop: 'loop' },
             { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 'idx' },
             { id: 'uv', op: 'float2', x: 0.5, y: 0.5 },
-            { id: 'tex_val', op: 'texture_sample', tex: 't_input', uv: 'uv' }
+            { id: 'tex_val', op: 'texture_sample', tex: 't_input', coords: 'uv' }
           ]
         }
       ]

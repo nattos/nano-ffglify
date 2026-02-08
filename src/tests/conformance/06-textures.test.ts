@@ -46,7 +46,7 @@ describe('Conformance: Texture Sampling', () => {
         localVars: [],
         nodes: [
           { id: 'uv', op: 'float2', x: 0.0, y: 0.0 }, // Mutated in tests
-          { id: 'sample', op: 'texture_sample', tex: 't_src', uv: 'uv' },
+          { id: 'sample', op: 'texture_sample', tex: 't_src', coords: 'uv' },
           { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'sample' }
         ]
       }

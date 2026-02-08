@@ -680,7 +680,7 @@ export class WgslGenerator {
       lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
       lines.push(`${indent}}`);
     } else if (node.op === 'cmd_dispatch') {
-      const targetId = (node['func'] || node['target']) as string;
+      const targetId = node['func'] as string;
       const targetFunc = ir.functions.find(f => f.id === targetId);
       if (targetFunc) {
         const dispatchArgs = targetFunc.inputs.map((inp: any) => this.resolveArg(node, `args.${inp.id}`, func, options, ir, 'any', edges)).join(', ');
@@ -901,8 +901,8 @@ export class WgslGenerator {
     }
     if (node.op === 'texture_sample') {
       const tex = node['tex'];
-      const uv = this.resolveArg(node, 'uv', func, options, ir, 'any', edges);
-      return `sample_${tex}(${uv})`;
+      const coords = this.resolveArg(node, 'coords', func, options, ir, 'any', edges);
+      return `sample_${tex}(${coords})`;
     }
     if (node.op === 'texture_load') {
       const tex = node['tex'];
@@ -943,7 +943,7 @@ export class WgslGenerator {
       const q = this.resolveArg(node, 'q', func, options, ir, 'float4', edges);
       return `quat_rotate(${v}, ${q})`;
     }
-    if (node.op === 'quat_to_float4x4' || node.op === 'quat_to_mat4') { // Handle alias
+    if (node.op === 'quat_to_float4x4') {
       const q = this.resolveArg(node, 'q', func, options, ir, 'float4', edges);
       return `quat_to_mat4(${q})`;
     }
@@ -977,7 +977,7 @@ export class WgslGenerator {
     }
     if (node.op === 'vec_swizzle') {
       const vec = this.resolveArg(node, 'vec', func, options, ir, 'any', edges);
-      const swizzle = node['swizzle'] || node['channels'];
+      const swizzle = node['channels'];
       return `${vec}.${swizzle}`;
     }
     if (node.op === 'vec_get_element' || node.op === 'array_extract') {

@@ -83,7 +83,7 @@ const MOCK_IR: IRDocument = {
         { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 'idx_int' },
         { id: 'size', op: 'resource_get_size', resource: 't_input' },
         { id: 'uv', op: 'math_div', a: 'sample_coords', b: 'size' },
-        { id: 'tex_val', op: 'texture_sample', tex: 't_input', uv: 'uv' },
+        { id: 'tex_val', op: 'texture_sample', tex: 't_input', coords: 'uv' },
         { id: 'prev', op: 'var_get', var: 'v_color' },
         { id: 'new_val', op: 'math_mad', a: 'tex_val', b: 'w_val', c: 'prev' },
         { id: 'set', op: 'var_set', var: 'v_color', val: 'new_val' },

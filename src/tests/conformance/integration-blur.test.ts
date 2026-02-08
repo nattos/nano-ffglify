@@ -118,7 +118,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
           // Loop body
           { id: 'idx', op: 'loop_index', loop: 'loop' },
           { id: 'w_val', op: 'buffer_load', buffer: 'b_weights', index: 'idx' },
-          { id: 'tex_val', op: 'texture_sample', tex: 't_input', uv: [0.5, 0.5] },
+          { id: 'tex_val', op: 'texture_sample', tex: 't_input', coords: [0.5, 0.5] },
           { id: 'prev', op: 'var_get', var: 'v_color' },
           { id: 'new_val', op: 'math_mad', a: 'tex_val', b: 'w_val', c: 'prev' },
           { id: 'set', op: 'var_set', var: 'v_color', val: 'new_val' },

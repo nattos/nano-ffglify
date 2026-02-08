@@ -38,7 +38,7 @@ describe('Compliance: Texture Sampling Modes', () => {
           outputs: [],
           localVars: [],
           nodes: [
-            { id: 'n1', op: 'texture_sample', tex: 't_check', uv: [u, v], _next: 'n2' },
+            { id: 'n1', op: 'texture_sample', tex: 't_check', coords: [u, v], _next: 'n2' },
             { id: 'n2', op: 'buffer_store', buffer: 'b_res', index: 0, value: 'n1' }
           ]
         }

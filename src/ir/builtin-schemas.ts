@@ -364,8 +364,7 @@ export const TextureSampleDef = defineOp<TextureSampleArgs>({
   doc: "Sample a texture at given coordinates.",
   args: {
     tex: { type: z.string(), doc: "ID of the texture resource", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true },
-    coords: { type: AnyVector, doc: "Coordinates", refable: true, optional: true },
-    uv: { type: AnyVector, doc: "Alias for coords (float2 expected)", refable: true, optional: true }
+    coords: { type: AnyVector, doc: "Coordinates", refable: true, optional: true }
   }
 });
 

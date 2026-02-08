@@ -185,7 +185,7 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
                   { id: 'sample_uv', op: 'math_add', a: 'uv', b: 'v_offset' },
                   { id: 'idx_clamped', op: 'math_clamp', val: 'idx_loop', min: 0, max: 15 },
                   { id: 'weight_val', op: 'buffer_load', buffer: 'b_weights', index: 'idx_clamped' },
-                  { id: 'sample_col', op: 'texture_sample', tex: 't_input', uv: 'sample_uv' },
+                  { id: 'sample_col', op: 'texture_sample', tex: 't_input', coords: 'sample_uv' },
                   { id: 'weighted_col', op: 'math_mul', a: 'sample_col', b: 'weight_val' },
                   { id: 'curr_sum', op: 'var_get', var: 'v_sum' },
                   { id: 'new_sum', op: 'math_add', a: 'curr_sum', b: 'weighted_col' },

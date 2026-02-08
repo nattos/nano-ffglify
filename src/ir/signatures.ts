@@ -336,7 +336,6 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   'resource_get_size': [{ inputs: { resource: 'string' }, output: 'float2' }],
   'resource_get_format': [{ inputs: { resource: 'string' }, output: 'int' }], // Fixed: id -> resource
   'texture_sample': [
-    { inputs: { tex: 'string', uv: 'float2' }, output: 'float4' },
     { inputs: { tex: 'string', coords: 'float2' }, output: 'float4' }
   ],
   'texture_load': [{ inputs: { tex: 'string', coords: 'float2' }, output: 'float4' }],
