@@ -1,6 +1,7 @@
 import { IRDocument } from "../domain/types";
 import { TextureFormat } from "../ir/types";
 import { ResourceState } from "../webgpu/host-interface";
+import { PATCH_SIZE } from "../constants";
 
 export function makeResourceStates(ir: IRDocument): Map<string, ResourceState> {
   const resources = new Map<string, ResourceState>();
@@ -53,8 +54,8 @@ export function makeResourceStates(ir: IRDocument): Map<string, ResourceState> {
             cpuAccess: false
           },
         },
-        width: 1,
-        height: 1
+        width: PATCH_SIZE.width,
+        height: PATCH_SIZE.height
       });
     }
   }

@@ -103,10 +103,35 @@ export class RuntimeManager {
       // 1. Allocate all textures
       this.resources.forEach((state, id) => {
         if (state.def.type === 'texture2d') {
-          // Default to PATCH_SIZE if viewport mode or not fixed
-          const isViewport = state.def.size?.mode === 'viewport';
-          const width = isViewport ? PATCH_SIZE.width : state.width;
-          const height = isViewport ? PATCH_SIZE.height : state.height;
+          // Default to PATCH_SIZE
+          let width = PATCH_SIZE.width;
+          let height = PATCH_SIZE.height;
+
+          // Resolve size mode
+          const sizeDef = state.def.size;
+          if (sizeDef) { // Check if size is defined
+            if (sizeDef.mode === 'viewport') {
+              // Keep default PATCH_SIZE or eventually bind to canvas
+            } else if (sizeDef.mode === 'fixed') {
+              // @ts-ignore - TS doesn't narrow discriminated unions perfect here locally?
+              const val = sizeDef.value;
+              if (Array.isArray(val)) {
+                width = val[0];
+                height = val[1];
+              } else {
+                width = val;
+                height = val;
+              }
+            } else if (sizeDef.mode === 'reference') {
+              // @ts-ignore
+              const refId = sizeDef.ref;
+              const ref = this.resources.get(refId);
+              if (ref) {
+                width = ref.width;
+                height = ref.height;
+              }
+            }
+          }
 
           state.width = width;
           state.height = height;
@@ -561,5 +586,38 @@ export class RuntimeManager {
     }
 
     return null;
+  }
+
+  private resizeResource(id: string, width: number, height: number) {
+    const resource = this.resources.get(id);
+    if (!resource || !this.device) return;
+
+    // 1. Update Self
+    resource.width = width;
+    resource.height = height;
+
+    if (resource.gpuTexture) {
+      resource.gpuTexture.destroy();
+    }
+
+    if (resource.def.type === 'texture2d') {
+      resource.gpuTexture = this.device.createTexture({
+        label: `Resource: ${id}`,
+        size: [width, height],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST
+      });
+    }
+
+    // 2. Propagate to dependents
+    this.resources.forEach((otherRes, otherId) => {
+      const size = otherRes.def.size;
+      if (otherRes.def.type === 'texture2d' &&
+        size && size.mode === 'reference' &&
+        // @ts-ignore
+        size.ref === id) {
+        this.resizeResource(otherId, width, height);
+      }
+    });
   }
 }
