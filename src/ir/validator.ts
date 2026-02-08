@@ -9,6 +9,7 @@ import { reconstructEdges } from './utils';
 // Local Error Type (Internal to logic validator, mapped by schema.ts)
 export interface LogicValidationError {
   nodeId?: string;
+  functionId?: string;
   message: string;
   severity: 'error' | 'warning';
 }
@@ -80,6 +81,7 @@ const resolveNodeType = (
   errors: LogicValidationError[],
   edges: Edge[]
 ): ValidationType => {
+  const functionId = func.id;
   if (cache.has(nodeId)) return cache.get(nodeId)!;
 
   // Sentinel to break recursion cycles
@@ -95,6 +97,7 @@ const resolveNodeType = (
     // console.log(`[Validator] No signatures found for op ${node.op}`);
     errors.push({
       nodeId,
+      functionId,
       message: `Unknown op '${node.op}'`,
       severity: 'error'
     });
@@ -197,6 +200,7 @@ const resolveNodeType = (
       result.error.issues.forEach(issue => {
         errors.push({
           nodeId,
+          functionId,
           message: `Schema Error in '${node.op}': ${issue.path.join('.')}: ${issue.message}`,
           severity: 'error'
         });
@@ -283,13 +287,13 @@ const resolveNodeType = (
       const mask = node['channels'];
 
       if (typeof mask !== 'string') {
-        errors.push({ nodeId, message: 'Swizzle mask must be a string literal', severity: 'error' });
+        errors.push({ nodeId, functionId, message: 'Swizzle mask must be a string literal', severity: 'error' });
         cache.set(nodeId, 'any'); return 'any';
       }
 
       const validComps = ['x', 'y', 'z', 'w', 'r', 'g', 'b', 'a'];
       if (mask.length < 1 || mask.length > 4) {
-        errors.push({ nodeId, message: `Invalid swizzle mask length '${mask}'`, severity: 'error' });
+        errors.push({ nodeId, functionId, message: `Invalid swizzle mask length '${mask}'`, severity: 'error' });
       }
 
       let maxComp = 0;
@@ -301,11 +305,11 @@ const resolveNodeType = (
         for (const char of mask) {
           const idx = validComps.indexOf(char);
           if (idx === -1) {
-            errors.push({ nodeId, message: `Invalid swizzle component '${char}'`, severity: 'error' });
+            errors.push({ nodeId, functionId, message: `Invalid swizzle component '${char}'`, severity: 'error' });
           } else {
             const effectiveIdx = idx % 4;
             if (effectiveIdx >= maxComp) {
-              errors.push({ nodeId, message: `Swizzle component '${char}' out of bounds for ${inputType}`, severity: 'error' });
+              errors.push({ nodeId, functionId, message: `Swizzle component '${char}' out of bounds for ${inputType}`, severity: 'error' });
             }
           }
         }
@@ -327,6 +331,7 @@ const resolveNodeType = (
   if (extraKeys.length > 0) {
     errors.push({
       nodeId,
+      functionId,
       message: `Unknown argument(s) '${extraKeys.join(', ')}' for op '${node.op}'`,
       severity: 'error'
     });
@@ -335,7 +340,7 @@ const resolveNodeType = (
   for (const reqArg of Object.keys(refSig.inputs)) {
     if (reqArg === '*') continue;
     if (!inputTypes[reqArg]) {
-      errors.push({ nodeId, message: `Missing required argument '${reqArg}' for op '${node.op}'`, severity: 'error' });
+      errors.push({ nodeId, functionId, message: `Missing required argument '${reqArg}' for op '${node.op}'`, severity: 'error' });
     }
   }
   for (const [argName, argType] of Object.entries(refSig.inputs)) {
@@ -343,7 +348,7 @@ const resolveNodeType = (
     if (providedType && argType !== 'any' && providedType !== 'any' && argType !== providedType) {
       if ((argType === 'float' && providedType === 'int') ||
         (argType === 'int' && providedType === 'float')) continue;
-      errors.push({ nodeId, message: `Type Mismatch at '${argName}': expected ${argType}, got ${providedType}`, severity: 'error' });
+      errors.push({ nodeId, functionId, message: `Type Mismatch at '${argName}': expected ${argType}, got ${providedType}`, severity: 'error' });
     }
   }
 
@@ -351,7 +356,7 @@ const resolveNodeType = (
   return 'any';
 };
 
-const validateDataType = (type: string, doc: IRDocument, errors: LogicValidationError[], contextMsg: string) => {
+const validateDataType = (type: string, doc: IRDocument, errors: LogicValidationError[], contextMsg: string, functionId?: string) => {
   if (PRIMITIVE_TYPES.includes(type as any)) return;
   const isStruct = doc.structs?.some(s => s.id === type);
   if (isStruct) return;
@@ -359,7 +364,7 @@ const validateDataType = (type: string, doc: IRDocument, errors: LogicValidation
   if (type.startsWith('array<')) return;
   if (type.endsWith('[]')) return;
 
-  errors.push({ message: `${contextMsg}: Invalid data type '${type}'. Must be a primitive or defined struct.`, severity: 'error' });
+  errors.push({ functionId, message: `${contextMsg}: Invalid data type '${type}'. Must be a primitive or defined struct.`, severity: 'error' });
 };
 
 export const validateResources = (doc: IRDocument, errors: LogicValidationError[]) => {
@@ -432,9 +437,9 @@ export const validateStructs = (doc: IRDocument, errors: LogicValidationError[])
 
 const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<string>, errors: LogicValidationError[]) => {
   // Validate Signatures
-  func.inputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' input '${param.id}'`));
-  func.outputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' output '${param.id}'`));
-  func.localVars.forEach(v => validateDataType(v.type, doc, errors, `Function '${func.id}' variable '${v.id}'`));
+  func.inputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' input '${param.id}'`, func.id));
+  func.outputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' output '${param.id}'`, func.id));
+  func.localVars.forEach(v => validateDataType(v.type, doc, errors, `Function '${func.id}' variable '${v.id}'`, func.id));
   const edges = reconstructEdges(func, doc);
   const nodeIds = new Set(func.nodes.map(n => n.id));
   const validSources = new Set([
@@ -446,8 +451,8 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
   ]);
 
   edges.forEach(edge => {
-    if (!validSources.has(edge.from)) errors.push({ message: `Edge source '${edge.from}' not found`, severity: 'error' });
-    if (!nodeIds.has(edge.to)) errors.push({ message: `Edge target '${edge.to}' not found`, severity: 'error' });
+    if (!validSources.has(edge.from)) errors.push({ functionId: func.id, message: `Edge source '${edge.from}' not found`, severity: 'error' });
+    if (!nodeIds.has(edge.to)) errors.push({ functionId: func.id, message: `Edge target '${edge.to}' not found`, severity: 'error' });
   });
 
   const cache: TypeCache = new Map();
@@ -457,7 +462,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
     const verification = verifyLiteralsOrRefsExist(node, doc, func);
     if (!verification.valid) {
       verification.errors.forEach(msg => {
-        errors.push({ nodeId: node.id, message: msg, severity: 'error' });
+        errors.push({ nodeId: node.id, functionId: func.id, message: msg, severity: 'error' });
       });
 
     } // End if (!verification.valid)
@@ -473,6 +478,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       if (!isLocal && !isGlobal && !isArg) {
         errors.push({
           nodeId: node.id,
+          functionId: func.id,
           message: `Variable '${varId}' is not defined in local scope, function arguments, or as a global input`,
           severity: 'error'
         });
@@ -484,6 +490,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
     if (node.op === 'builtin_get' && func.type === 'cpu') {
       errors.push({
         nodeId: node.id,
+        functionId: func.id,
         message: `GPU Built-in '${node['name']}' is not available in CPU context`,
         severity: 'error'
       });
@@ -496,10 +503,10 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       if (name.startsWith('TextureFormat.')) {
         const key = name.split('.')[1];
         if (!(key in TextureFormat)) {
-          errors.push({ nodeId: node.id, message: `Invalid TextureFormat constant '${name}'`, severity: 'error' });
+          errors.push({ nodeId: node.id, functionId: func.id, message: `Invalid TextureFormat constant '${name}'`, severity: 'error' });
         }
       } else if (name && !name.includes('.')) {
-        errors.push({ nodeId: node.id, message: `Invalid constant name '${name}'`, severity: 'error' });
+        errors.push({ nodeId: node.id, functionId: func.id, message: `Invalid constant name '${name}'`, severity: 'error' });
       }
     }
 
@@ -509,6 +516,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       if (opDef?.cpuOnly) {
         errors.push({
           nodeId: node.id,
+          functionId: func.id,
           message: `Operation '${node.op}' is not allowed in shader functions (must be executed in CPU context)`,
           severity: 'error'
         });
@@ -530,20 +538,20 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       }
 
       if (typeof resId === 'string' && !resourceIds.has(resId)) {
-        errors.push({ nodeId: node.id, message: `Referenced resource '${resId}' not found`, severity: 'error' });
+        errors.push({ nodeId: node.id, functionId: func.id, message: `Referenced resource '${resId}' not found`, severity: 'error' });
       } else if (typeof resId === 'string') {
         const resDef = doc.resources.find(r => r.id === resId);
         const index = node['index'];
 
         if (resDef && typeof index === 'number') {
           if (index < 0) {
-            errors.push({ nodeId: node.id, message: `Invalid Negative Index: ${index}`, severity: 'error' });
+            errors.push({ nodeId: node.id, functionId: func.id, message: `Invalid Negative Index: ${index}`, severity: 'error' });
           }
           if (resDef.size.mode === 'fixed') {
             const sizeVal = resDef.size.value;
             if (typeof sizeVal === 'number') {
               if (index >= sizeVal) {
-                errors.push({ nodeId: node.id, message: `Static OOB Access: Index ${index} >= Size ${sizeVal}`, severity: 'error' });
+                errors.push({ nodeId: node.id, functionId: func.id, message: `Static OOB Access: Index ${index} >= Size ${sizeVal}`, severity: 'error' });
               }
             }
           }
@@ -583,6 +591,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
             // "strict type casting (e.g. i32 -> f32) in generation" implies implicit is BAD.
             errors.push({
               nodeId: node.id,
+              functionId: func.id,
               message: `Type Mismatch in buffer_store: Buffer '${resId}' expects '${expectedType}', got '${actualType}'`,
               severity: 'error'
             });
