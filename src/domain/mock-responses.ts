@@ -12,6 +12,45 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
       tool_calls: [{ name: "final_response", arguments: { text: "I can help you create, modify, and validate shader graphs. What would you like to build today?" } }]
     }
   ],
+  "do some research": [
+    {
+      text: "I'm looking up the docs for several operations.",
+      // tool_calls: [{ name: "final_response", arguments: { text: "I can help you create, modify, and validate shader graphs. What would you like to build today?" } }]
+      tool_calls: [
+        {
+          "name": "queryDocs",
+          "arguments": {
+            "op": "texture_sample_lod"
+          }
+        },
+        {
+          "name": "queryDocs",
+          "arguments": {
+            "op": "texture_store"
+          }
+        },
+        {
+          "name": "queryDocs",
+          "arguments": {
+            "op": "cmd_dispatch"
+          }
+        },
+        {
+          "name": "queryDocs",
+          "arguments": {
+            "op": "math_add"
+          }
+        },
+        {
+          "name": "queryDocs",
+          "arguments": {
+            "op": "math_div"
+          }
+        },
+        { name: "final_response", arguments: { text: "Done." } }
+      ]
+    }
+  ],
   "create a blur pipeline": [
     {
       text: "I'm setting up the blur pipeline for you...",

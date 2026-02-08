@@ -20,8 +20,7 @@ import { runInAction, toJS } from 'mobx';
 import { ReplManager } from '../runtime/repl-manager';
 import { CompileResult } from '../state/entity-api';
 import { validateIR } from '../ir/validator';
-
-const apiKey = import.meta.env.GOOGLE_API_KEY || "TEST_KEY";
+import { PromptBuilder } from '../domain/prompt-builder';
 
 export async function runScriptDebug(
   targetIndex: number,
@@ -159,7 +158,7 @@ export async function runScriptDebug(
 
   // Real LLM Manager (but using our capturing controller)
   // This enables real API calls if targetUseMock is false.
-  const llmManager = new GoogleGenAIManager(apiKey, mockController);
+  const llmManager = new GoogleGenAIManager(mockController, PromptBuilder.buildWorkerSystemInstruction());
 
   const env = createIsolatedEnv(INITIAL_DATABASE_STATE, {
     controller: mockController,

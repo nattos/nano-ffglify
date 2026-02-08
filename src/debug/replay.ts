@@ -9,15 +9,15 @@ import { createIsolatedEnv } from './isolation';
  *
  * Uses the actual application logic via dependency injection.
  */
-export function applyToolToState(state: DatabaseState, toolName: string, args: any): { entityType: string, entity: any } | null {
+export async function applyToolToState(state: DatabaseState, toolName: string, args: any): Promise<{ entityType: string, entity: any } | null> {
   try {
     // 1. Setup Request-Scoped DI Container
     const { chatHandler, appState } = createIsolatedEnv(state);
 
     // 2. Execute
-    const result = chatHandler.executeTool(toolName, args);
+    const result = await chatHandler.executeTool(toolName, args);
 
-    if (result.success) {
+    if (result.response.success) {
       // 3. Extract Result
       // The tool name often tells us the type, or args does.
       let entityType = args.entity_type;

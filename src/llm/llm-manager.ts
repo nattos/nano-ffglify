@@ -13,10 +13,10 @@
  */
 import { GoogleGenerativeAI, SchemaType, FunctionDeclaration, GenerativeModel, FunctionResponsePart, FunctionResponse } from "@google/generative-ai";
 
-import { appController, AppController } from '../state/controller';
+import { AppController } from '../state/controller';
 import { generatePatchTool, generateReplaceTool } from '../domain/schemas';
 import { NOTES_MOCKS } from '../domain/mock-responses';
-import { ALL_SCHEMAS, IRSchema } from "../domain/types";
+import { IRSchema } from "../domain/types";
 import { DEFAULT_LLM_MODEL } from "../constants";
 
 export interface LLMToolCall {
@@ -36,7 +36,7 @@ export interface LLMOptions {
 }
 
 export interface LLMManager {
-  generateResponse(prompt: string, systemInstruction?: string, options?: LLMOptions): Promise<LLMResponse>;
+  generateResponse(prompt: string, options?: LLMOptions): Promise<LLMResponse>;
 }
 
 interface ChatSessionAdapter {
@@ -44,11 +44,12 @@ interface ChatSessionAdapter {
 }
 
 export class GoogleGenAIManager implements LLMManager {
+  private apiKey = import.meta.env.GOOGLE_API_KEY || "";
   private genAI: GoogleGenerativeAI;
   private model: GenerativeModel;
 
-  constructor(private apiKey: string, private appController: AppController) {
-    if (!apiKey) {
+  constructor(private appController: AppController, private systemInstruction: string) {
+    if (!this.apiKey) {
       console.warn("No GOOGLE_API_KEY provided. LLM will not function correctly.");
     }
 
@@ -89,9 +90,10 @@ export class GoogleGenAIManager implements LLMManager {
     });
     console.log(tools);
 
-    this.genAI = new GoogleGenerativeAI(apiKey);
+    this.genAI = new GoogleGenerativeAI(this.apiKey);
     this.model = this.genAI.getGenerativeModel({
       model: DEFAULT_LLM_MODEL,
+      systemInstruction: systemInstruction,
       // Define tools for the model
       tools: [{
         functionDeclarations: tools
@@ -109,7 +111,7 @@ export class GoogleGenAIManager implements LLMManager {
     });
   }
 
-  async generateResponse(prompt: string, systemInstruction?: string, options?: LLMOptions): Promise<LLMResponse> {
+  async generateResponse(prompt: string, options?: LLMOptions): Promise<LLMResponse> {
     const start = Date.now();
     const sessionId = crypto.randomUUID();
     let finalResponse: LLMResponse = { text: "" };
@@ -153,12 +155,7 @@ export class GoogleGenAIManager implements LLMManager {
       };
     } else {
       console.log("Starting Chat with Gemini...");
-      const realChat = this.model.startChat({
-        history: systemInstruction ? [
-          { role: "user", parts: [{ text: systemInstruction }] },
-          { role: "model", parts: [{ text: "Understood. I am the WebGPU IR Assistant." }] }
-        ] : []
-      });
+      const realChat = this.model.startChat({});
       session = {
         async sendMessage(input: string | FunctionResponsePart[]) {
           const result = await realChat.sendMessage(input);
@@ -193,7 +190,7 @@ export class GoogleGenAIManager implements LLMManager {
           timestamp: Date.now(),
           turn_index: turns,
           type: 'chat',
-          system_instruction_snapshot: systemInstruction,
+          system_instruction_snapshot: this.systemInstruction,
           prompt_snapshot: typeof currentInput === 'string' ? currentInput : JSON.stringify(currentInput),
           response_snapshot: JSON.stringify(response),
           duration_ms: mocked ? 0 : Date.now() - turnStart,
@@ -251,7 +248,7 @@ export class GoogleGenAIManager implements LLMManager {
         timestamp: Date.now(),
         turn_index: turns,
         type: 'error',
-        system_instruction_snapshot: systemInstruction,
+        system_instruction_snapshot: this.systemInstruction,
         prompt_snapshot: prompt,
         response_snapshot: error?.toString() ?? 'Unknown',
         duration_ms: Date.now() - start,
@@ -262,6 +259,3 @@ export class GoogleGenAIManager implements LLMManager {
     return finalResponse;
   }
 }
-
-const apiKey = import.meta.env.GOOGLE_API_KEY || "TEST_KEY";
-export const llmManager = new GoogleGenAIManager(apiKey, appController);

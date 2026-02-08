@@ -14,7 +14,7 @@
  */
 import { appController, AppController } from '../state/controller';
 import { appState, AppState } from '../domain/state';
-import { llmManager, LLMManager } from './llm-manager';
+import { GoogleGenAIManager, LLMManager } from './llm-manager';
 import { PromptBuilder } from '../domain/prompt-builder';
 import { entityManager, EntityManager } from '../state/entity-manager';
 import { IREditResponse, PatchIRRequest, ReplaceIRRequest } from '../state/entity-api';
@@ -34,19 +34,21 @@ export class ChatHandler {
     this.appController.addChatMessage({ role: 'user', text });
 
     try {
-      const workerSystemPrompt = PromptBuilder.buildWorkerSystemInstruction();
       const previousHistory = this.appState.database.chat_history.slice(0, -1);
       const fullPrompt = PromptBuilder.buildWorkerUserPrompt({ database: this.appState.database, ephemeral: this.appState.local }, previousHistory, text);
 
-      await this.llmManager.generateResponse(fullPrompt, workerSystemPrompt, {
+      await this.llmManager.generateResponse(fullPrompt, {
         forceMock: this.appState.local.settings.useMockLLM,
         executeTool: async (name, args) => {
           console.log("Executing Tool:", name, args);
-          const result = await this.executeTool(name, args);
-          return {
-            end: !result.editApplied && !result.success, // End loop on failure if it's not a documentation tool
-            response: result
-          };
+          try {
+            const result = await this.executeTool(name, args);
+            console.log("Done Tool:", name, result);
+            return result;
+          } catch (e) {
+            console.warn("Error Running Tool:", name, e);
+            return { end: false, response: e?.toString() ?? 'unknown error' };
+          }
         }
       });
 
@@ -56,7 +58,7 @@ export class ChatHandler {
     }
   }
 
-  public async executeTool(name: string, args: any): Promise<IREditResponse> {
+  public async executeTool(name: string, args: any): Promise<{ end: boolean; response: IREditResponse; }> {
     // Dynamic Dispatch for Specific Tools
     const effectiveName = name;
     const effectiveArgs = args;
@@ -67,7 +69,7 @@ export class ChatHandler {
         if (text) {
           this.appController.addChatMessage({ role: 'assistant', text });
         }
-        return { success: true, message: 'sent' };
+        return { end: true, response: { success: true, message: 'sent' } };
       }
 
       case 'replaceIR': {
@@ -83,7 +85,7 @@ export class ChatHandler {
           type: 'entity_update',
           data: structuredClone(upsertRes)
         });
-        return upsertRes;
+        return { end: false, response: upsertRes };
       }
 
       case 'patchIR': {
@@ -99,7 +101,7 @@ export class ChatHandler {
           type: 'entity_update',
           data: structuredClone(patchRes)
         });
-        return patchRes;
+        return { end: false, response: patchRes };
       }
 
       case 'queryDocs': {
@@ -107,7 +109,7 @@ export class ChatHandler {
         const def = OpDefs[opName];
 
         if (!def) {
-          return { success: false, message: `Unknown operation: ${opName}` };
+          return { end: false, response: { success: false, message: `Unknown operation: ${opName}` } };
         }
 
         const doc = opDefToFunctionDeclaration(opName, def);
@@ -118,14 +120,19 @@ export class ChatHandler {
           type: 'entity_update',
           data: structuredClone(queryRes)
         });
-        return queryRes;
+        return { end: false, response: queryRes };
       }
 
       default:
         console.warn("Unknown tool:", effectiveName);
-        return { success: false, message: `Unknown tool: ${effectiveName}` };
+        return { end: false, response: { success: false, message: `Unknown tool: ${effectiveName}` } };
     }
   }
 }
 
-export const chatHandler = new ChatHandler(appController, appState, llmManager, entityManager);
+export const chatHandler = new ChatHandler(
+  appController,
+  appState,
+  new GoogleGenAIManager(appController, PromptBuilder.buildWorkerSystemInstruction()),
+  entityManager
+);
