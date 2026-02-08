@@ -24,7 +24,7 @@ export interface ChatMsg {
   id: string; // UUID
   role: 'user' | 'tool-response' | 'assistant';
   text?: string;
-  type?: 'text' | 'poll' | 'proposal' | 'entity_update';
+  type?: 'text' | 'entity_update';
   data?: any;
 }
 

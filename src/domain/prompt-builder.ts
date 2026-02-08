@@ -11,6 +11,7 @@
  * - The `EXAMPLES` string is critical for teaching the LLM how to use tools. If tools change, examples MUST be updated.
  * - Context window size is finite; sending the *entire* database in `buildContext` will eventually hit limits. Pagination or RAG needed for large apps.
  */
+import { CHAT_HISTORY_LENGTH } from '../constants';
 import { PRIMITIVE_TYPES } from '../ir/types';
 import { CombinedAgentState } from './types';
 
@@ -115,14 +116,9 @@ Execution Semantics:
     const cleanState = state.database.ir;
 
     // Format History
-    const historyText = history.slice(-10).map(m => {
-      if (m.type === 'entity_update') {
-        const { entityType, entity } = m.data || {};
-        const label = entity?.meta?.name || entity?.id || 'Unknown';
-        return `[SYSTEM UPDATE] ${entityType} '${label}'... (${entity?.id}) was modified.`;
-      }
+    const historyText = history.slice(-CHAT_HISTORY_LENGTH).map(m => {
       const role = m.role.charAt(0).toUpperCase() + m.role.slice(1);
-      return `${role}: ${m.text || '(Action)'} `;
+      return `${role}: ${m.text || JSON.stringify(m.data) || '(Action)'} `;
     }).join('\n');
 
     const validationErrors = state.ephemeral.validationErrors;

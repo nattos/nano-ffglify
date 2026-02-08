@@ -163,18 +163,20 @@ export class GoogleGenAIManager implements LLMManager {
       console.log("Starting Chat with Gemini...");
       const realChat = this.model.startChat({});
       session = {
-        async sendMessage(input: string | FunctionResponsePart[]) {
-          const result = await realChat.sendMessage(input);
-          const apiResponse = result.response;
-          const text = apiResponse.text();
-          const toolCalls: LLMToolCall[] = [];
-          const calls = apiResponse.functionCalls();
-          if (calls && calls.length > 0) {
-            calls.forEach((c: any) => {
-              toolCalls.push({ name: c.name, arguments: c.args });
-            });
-          }
-          return { text: text || undefined, tool_calls: toolCalls.length > 0 ? toolCalls : undefined };
+        sendMessage: async (input: string | FunctionResponsePart[]) => {
+          return this.withRetry(async () => {
+            const result = await realChat.sendMessage(input);
+            const apiResponse = result.response;
+            const text = apiResponse.text();
+            const toolCalls: LLMToolCall[] = [];
+            const calls = apiResponse.functionCalls();
+            if (calls && calls.length > 0) {
+              calls.forEach((c: any) => {
+                toolCalls.push({ name: c.name, arguments: c.args });
+              });
+            }
+            return { text: text || undefined, tool_calls: toolCalls.length > 0 ? toolCalls : undefined };
+          });
         }
       };
     }
@@ -263,5 +265,31 @@ export class GoogleGenAIManager implements LLMManager {
     }
 
     return finalResponse;
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
+    let delay = 1000;
+    for (let i = 0; i <= maxRetries; i++) {
+      try {
+        return await fn();
+      } catch (error: any) {
+        const errorStr = error?.toString() || "";
+        const isRetryable =
+          errorStr.includes("503") ||
+          errorStr.includes("429") ||
+          errorStr.toLowerCase().includes("overloaded") ||
+          errorStr.toLowerCase().includes("rate limit");
+
+        if (i === maxRetries || !isRetryable) {
+          throw error;
+        }
+
+        console.warn(`LLM Request failed (attempt ${i + 1}/${maxRetries + 1}). Retrying in ${delay}ms...`, error);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay *= 2;
+        if (delay > 10000) delay = 10000;
+      }
+    }
+    throw new Error("Impossible path");
   }
 }
