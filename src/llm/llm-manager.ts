@@ -18,6 +18,7 @@ import { generatePatchTool, generateReplaceTool } from '../domain/schemas';
 import { NOTES_MOCKS } from '../domain/mock-responses';
 import { IRSchema } from "../domain/types";
 import { DEFAULT_LLM_MODEL } from "../constants";
+import { OpSignatures } from "../ir/signatures";
 
 export interface LLMToolCall {
   name: string;
@@ -83,7 +84,12 @@ export class GoogleGenAIManager implements LLMManager {
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          op: { type: SchemaType.STRING, description: "The name of the operation to look up (e.g., 'math_add', 'texture_sample')." }
+          op: {
+            type: SchemaType.STRING,
+            format: 'enum',
+            enum: Object.keys(OpSignatures),
+            description: "The name of the operation to look up (e.g., 'math_add', 'texture_sample').",
+          }
         },
         required: ["op"]
       }

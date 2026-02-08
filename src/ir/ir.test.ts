@@ -309,6 +309,62 @@ describe('Zod Schema Validation (Structural)', () => {
     }
   });
 
+  it('should fail on unknown operator (op) enum', () => {
+    const invalid: any = {
+      version: '1.0.0',
+      meta: { name: 'Unknown Op' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      resources: [],
+      structs: [],
+      functions: [{
+        id: 'fn_main',
+        type: 'cpu',
+        inputs: [],
+        outputs: [],
+        localVars: [],
+        nodes: [
+          { id: 'n1', op: 'not_a_valid_op' } // Invalid Op Enum
+        ]
+      }]
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const err = result.errors.find(e => e.path.includes('nodes') && e.path.includes('op'));
+      expect(err).toBeDefined();
+      expect(err?.message.toLowerCase()).toContain("expected one of"); // Zod terminology for enum error
+    }
+  });
+
+  it('should fail on unknown constant name in const_get', () => {
+    const invalid: any = {
+      version: '1.0.0',
+      meta: { name: 'Unknown Const' },
+      entryPoint: 'fn_main',
+      inputs: [],
+      resources: [],
+      structs: [],
+      functions: [{
+        id: 'fn_main',
+        type: 'cpu',
+        inputs: [],
+        outputs: [],
+        localVars: [],
+        nodes: [
+          { id: 'n1', op: 'const_get', name: 'TextureFormat.InvalidFormat' } // Invalid Const Name
+        ]
+      }]
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const err = result.errors.find(e => e.message.includes("Schema Error in 'const_get': name:"));
+      expect(err).toBeDefined();
+      expect(err?.message.toLowerCase()).toContain("expected one of");
+    }
+  });
+
   it('should fail on malformed union types (Resource Size)', () => {
     const invalid: any = {
       version: '1.0.0',

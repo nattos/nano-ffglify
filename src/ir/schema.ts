@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { IRDocument, DataType, PRIMITIVE_TYPES } from './types.js';
 import { validateStaticLogic } from './validator.js';
+import { OpSignatures } from './signatures.js';
 
 // ------------------------------------------------------------------
 // Validation Types
@@ -28,6 +29,9 @@ const DataTypeSchema = z.string();
 const ResourceTypeSchema = z.enum(['texture2d', 'buffer', 'atomic_counter']);
 const FunctionTypeSchema = z.enum(['cpu', 'shader']);
 const EdgeTypeSchema = z.enum(['data', 'execution']);
+
+const BuiltinOpArray = Object.keys(OpSignatures) as string[];
+const BuiltinOpSchema = z.enum(BuiltinOpArray);
 
 // Meta
 const MetaDataSchema = z.object({
@@ -97,7 +101,7 @@ const PortDefSchema = z.object({
 
 const NodeSchema = z.object({
   id: z.string(),
-  op: z.string(),
+  op: BuiltinOpSchema,
   comment: z.string().optional(),
   metadata: z.object({
     x: z.number(),

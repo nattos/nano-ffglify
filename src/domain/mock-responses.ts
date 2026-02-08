@@ -47,6 +47,18 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
             "op": "math_div"
           }
         },
+        {
+          "name": "queryDocs",
+          "arguments": {
+            "op": "builtin_get"
+          }
+        },
+        {
+          "name": "queryDocs",
+          "arguments": {
+            "op": "const_get"
+          }
+        },
         { name: "final_response", arguments: { text: "Done." } }
       ]
     }

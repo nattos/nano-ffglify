@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BuiltinOp, Node } from './types';
+import { BuiltinOp, Node, TextureFormat } from './types';
 export type { BuiltinOp, Node };
 
 // ------------------------------------------------------------------
@@ -144,6 +144,9 @@ const RenderPipelineSchema = z.object({
     alpha: BlendComponentSchema
   }).optional()
 });
+
+const BuiltinConstantArray = Object.keys(TextureFormat).map(k => `TextureFormat.${k}`) as [string, ...string[]];
+const BuiltinConstantSchema = z.enum(BuiltinConstantArray);
 
 // --- Generic Argument Interfaces ---
 
@@ -697,7 +700,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'var_set': VarSetDef,
   'var_get': VarGetDef,
   'builtin_get': BuiltinGetDef,
-  'const_get': defineOp<ConstGetArgs>({ doc: "Get constant", args: { name: { type: z.string(), doc: "Name", refType: 'const' } } }),
+  'const_get': defineOp<ConstGetArgs>({ doc: "Get a constant, such as the value of an enum by name", args: { name: { type: BuiltinConstantSchema, doc: "Name", refType: 'const' } } }),
   'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true, refType: 'loop', isIdentifier: true } } }),
   'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", isExecutable: true, args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, exec_true: { type: z.string(), doc: "Node ID for true", requiredRef: true, optional: true, refType: 'exec' }, exec_false: { type: z.string(), doc: "Node ID for false", requiredRef: true, optional: true, refType: 'exec' } } }),
   'flow_loop': FlowLoopDef,
