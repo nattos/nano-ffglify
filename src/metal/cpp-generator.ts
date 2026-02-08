@@ -251,12 +251,16 @@ export class CppGenerator {
     const valueOps = [
       'float', 'int', 'uint', 'bool', 'literal', 'loop_index',
       'float2', 'float3', 'float4', 'float3x3', 'float4x4',
-      'static_cast_float', 'static_cast_int',
+      'static_cast_float', 'static_cast_int', 'static_cast_bool',
       'var_get', 'buffer_load', 'vec_swizzle',
       'vec_get_element', 'call_func',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length',
       'resource_get_size',
+      'math_pi', 'math_e',
+      'mat_identity', 'mat_mul',
+      'quat', 'quat_identity',
+      'color_mix', 'texture_sample',
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
@@ -579,6 +583,10 @@ export class CppGenerator {
         return `ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})]`;
       }
 
+      // Constants
+      case 'math_pi': return '3.14159265358979323846f';
+      case 'math_e': return '2.71828182845904523536f';
+
       // Math ops - inlined for simpler code
       case 'math_neg': return `(-(${val()}))`;
       case 'math_abs': return `abs(${val()})`;
@@ -589,11 +597,17 @@ export class CppGenerator {
       case 'math_asin': return `asin(${val()})`;
       case 'math_acos': return `acos(${val()})`;
       case 'math_atan': return `atan(${val()})`;
+      case 'math_sinh': return `sinh(${val()})`;
+      case 'math_cosh': return `cosh(${val()})`;
+      case 'math_tanh': return `tanh(${val()})`;
       case 'math_sqrt': return `sqrt(${val()})`;
       case 'math_exp': return `exp(${val()})`;
+      case 'math_exp2': return `exp2(${val()})`;
       case 'math_log': return `log(${val()})`;
+      case 'math_log2': return `log2(${val()})`;
       case 'math_ceil': return `ceil(${val()})`;
       case 'math_floor': return `floor(${val()})`;
+      case 'math_round': return `round(${val()})`;
       case 'math_trunc': return `trunc(${val()})`;
       case 'math_fract': { const v = val(); return `((${v}) - floor(${v}))`; }
 
@@ -606,13 +620,46 @@ export class CppGenerator {
       case 'math_min': return `std::min(${a()}, ${b()})`;
       case 'math_max': return `std::max(${a()}, ${b()})`;
       case 'math_atan2': return `atan2(${a()}, ${b()})`;
+      case 'math_step': { const edge = a('edge'); const v = a('val'); return `((${v}) >= (${edge}) ? 1.0f : 0.0f)`; }
+      case 'math_smoothstep': {
+        const e0 = a('edge0'); const e1 = a('edge1'); const v = a('val');
+        return `([](float e0, float e1, float x) { float t = std::max(0.0f, std::min(1.0f, (x - e0) / (e1 - e0))); return t * t * (3.0f - 2.0f * t); }(${e0}, ${e1}, ${v}))`;
+      }
+      case 'math_mix':
+      case 'math_lerp': return `([](auto a_, auto b_, auto t_) { return a_ + (b_ - a_) * t_; }(${a()}, ${b()}, ${a('t')}))`;
+      case 'math_clamp': return `clamp_val(${a('val')}, ${a('min')}, ${a('max')})`;
+      case 'math_mad': return `((${a()}) * (${b()}) + (${a('c')}))`;
+      case 'math_select': return `((${a('cond')}) != 0.0f ? (${a('true')}) : (${a('false')}))`;
 
+      // Comparisons
       case 'math_gt': return `((${a()}) > (${b()}) ? 1.0f : 0.0f)`;
       case 'math_lt': return `((${a()}) < (${b()}) ? 1.0f : 0.0f)`;
-      case 'math_ge': return `((${a()}) >= (${b()}) ? 1.0f : 0.0f)`;
-      case 'math_le': return `((${a()}) <= (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_ge':
+      case 'math_gte': return `((${a()}) >= (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_le':
+      case 'math_lte': return `((${a()}) <= (${b()}) ? 1.0f : 0.0f)`;
       case 'math_eq': return `((${a()}) == (${b()}) ? 1.0f : 0.0f)`;
       case 'math_neq': return `((${a()}) != (${b()}) ? 1.0f : 0.0f)`;
+
+      // Logic
+      case 'math_and': return `((${a()}) != 0.0f && (${b()}) != 0.0f ? 1.0f : 0.0f)`;
+      case 'math_or': return `((${a()}) != 0.0f || (${b()}) != 0.0f ? 1.0f : 0.0f)`;
+      case 'math_xor': return `(((${a()}) != 0.0f) != ((${b()}) != 0.0f) ? 1.0f : 0.0f)`;
+      case 'math_not': return `((${val()}) == 0.0f ? 1.0f : 0.0f)`;
+
+      // Numeric analysis
+      case 'math_is_nan': return `(std::isnan(${val()}) ? 1.0f : 0.0f)`;
+      case 'math_is_inf': return `(std::isinf(${val()}) ? 1.0f : 0.0f)`;
+      case 'math_is_finite': return `(std::isfinite(${val()}) ? 1.0f : 0.0f)`;
+      case 'math_mantissa': {
+        const v = val(); return `([](float x) { int e; return std::frexp(x, &e); }(${v}))`;
+      }
+      case 'math_exponent': {
+        const v = val(); return `([](float x) { int e; std::frexp(x, &e); return static_cast<float>(e); }(${v}))`;
+      }
+      case 'math_flush_subnormal': {
+        const v = val(); return `([](float x) { return std::fpclassify(x) == FP_SUBNORMAL ? 0.0f : x; }(${v}))`;
+      }
 
       case 'float': return `static_cast<float>(${val()})`;
       case 'int': return `static_cast<int>(${val()})`;
@@ -623,6 +670,7 @@ export class CppGenerator {
       }
       case 'static_cast_float': return `static_cast<float>(${val()})`;
       case 'static_cast_int': return `static_cast<int>(${val()})`;
+      case 'static_cast_bool': return `((${val()}) != 0.0f ? 1.0f : 0.0f)`;
 
       case 'float2': return `std::array<float, 2>{${a('x')}, ${a('y')}}`;
       case 'float3': return `std::array<float, 3>{${a('x')}, ${a('y')}, ${a('z')}}`;
@@ -642,6 +690,19 @@ export class CppGenerator {
       case 'vec_dot': return `vec_dot(${a()}, ${b()})`;
       case 'vec_length': return `vec_length(${a()})`;
       case 'vec_normalize': return `vec_normalize(${a()})`;
+      case 'vec_mix': return `([](auto a_, auto b_, auto t_) { auto result = a_; for (size_t i = 0; i < a_.size(); ++i) result[i] = a_[i] + (b_[i] - a_[i]) * t_; return result; }(${a()}, ${b()}, ${a('t')}))`;
+      case 'vec_cross': {
+        const va = a(); const vb = b();
+        return `([](auto a_, auto b_) -> std::array<float, 3> { return {a_[1]*b_[2]-a_[2]*b_[1], a_[2]*b_[0]-a_[0]*b_[2], a_[0]*b_[1]-a_[1]*b_[0]}; }(${va}, ${vb}))`;
+      }
+      case 'vec_distance': {
+        const va = a(); const vb = b();
+        return `([](auto a_, auto b_) { float s = 0; for (size_t i = 0; i < a_.size(); ++i) { float d = a_[i] - b_[i]; s += d*d; } return std::sqrt(s); }(${va}, ${vb}))`;
+      }
+      case 'vec_reflect': {
+        const va = a(); const vn = a('n');
+        return `([](auto i_, auto n_) { float d = 2.0f * vec_dot(i_, n_); auto result = i_; for (size_t j = 0; j < i_.size(); ++j) result[j] = i_[j] - d * n_[j]; return result; }(${va}, ${vn}))`;
+      }
 
       case 'vec_swizzle': {
         const vec = this.resolveArg(node, 'vec', func, allFunctions, emitPure, edges);
@@ -657,6 +718,37 @@ export class CppGenerator {
         const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
         return `${vec}[static_cast<size_t>(${idx})]`;
       }
+
+      // Color
+      case 'color_mix': {
+        const dst = a(); const src = b();
+        return `([](std::array<float, 4> d, std::array<float, 4> s) -> std::array<float, 4> {
+          float sa = s[3], da = d[3];
+          float ra = sa + da * (1.0f - sa);
+          if (ra < 1e-6f) return {0.0f, 0.0f, 0.0f, 0.0f};
+          return {(s[0]*sa + d[0]*da*(1.0f-sa))/ra, (s[1]*sa + d[1]*da*(1.0f-sa))/ra, (s[2]*sa + d[2]*da*(1.0f-sa))/ra, ra};
+        }(${dst}, ${src}))`;
+      }
+
+      // Matrices
+      case 'mat_identity': {
+        const size = node['size'] as number || 4;
+        if (size === 3) return `std::array<float, 9>{1,0,0, 0,1,0, 0,0,1}`;
+        return `std::array<float, 16>{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}`;
+      }
+      case 'mat_mul': {
+        const ma = a(); const mb = b();
+        return `mat_mul(${ma}, ${mb})`;
+      }
+
+      // Quaternions
+      case 'quat': {
+        return `std::array<float, 4>{${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}}`;
+      }
+      case 'quat_identity': return `std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}`;
+
+      // Texture sampling (CPU fallback - returns zero)
+      case 'texture_sample': return `std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}`;
 
       case 'call_func': {
         const targetFunc = node['func'];

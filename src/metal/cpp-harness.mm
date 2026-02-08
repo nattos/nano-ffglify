@@ -120,11 +120,17 @@ DEFINE_ELEMENTWISE_UNARY(tan, std::tan)
 DEFINE_ELEMENTWISE_UNARY(asin, std::asin)
 DEFINE_ELEMENTWISE_UNARY(acos, std::acos)
 DEFINE_ELEMENTWISE_UNARY(atan, std::atan)
+DEFINE_ELEMENTWISE_UNARY(sinh, std::sinh)
+DEFINE_ELEMENTWISE_UNARY(cosh, std::cosh)
+DEFINE_ELEMENTWISE_UNARY(tanh, std::tanh)
 DEFINE_ELEMENTWISE_UNARY(sqrt, std::sqrt)
 DEFINE_ELEMENTWISE_UNARY(exp, std::exp)
+DEFINE_ELEMENTWISE_UNARY(exp2, std::exp2)
 DEFINE_ELEMENTWISE_UNARY(log, std::log)
+DEFINE_ELEMENTWISE_UNARY(log2, std::log2)
 DEFINE_ELEMENTWISE_UNARY(ceil, std::ceil)
 DEFINE_ELEMENTWISE_UNARY(floor, std::floor)
+DEFINE_ELEMENTWISE_UNARY(round, std::round)
 DEFINE_ELEMENTWISE_UNARY(trunc, std::trunc)
 
 DEFINE_ELEMENTWISE_BINARY(fmod, std::fmod)
@@ -142,17 +148,186 @@ using elem::atan;
 using elem::atan2;
 using elem::ceil;
 using elem::cos;
+using elem::cosh;
 using elem::exp;
+using elem::exp2;
 using elem::floor;
 using elem::fmod;
 using elem::log;
+using elem::log2;
 using elem::max;
 using elem::min;
 using elem::pow;
+using elem::round;
 using elem::sin;
+using elem::sinh;
 using elem::sqrt;
 using elem::tan;
+using elem::tanh;
 using elem::trunc;
+
+// Matrix multiplication helpers
+template <size_t R, size_t C, size_t K>
+inline std::array<float, R * C>
+mat_mul_impl(const std::array<float, R * K> &a,
+             const std::array<float, K * C> &b) {
+  std::array<float, R * C> result = {};
+  for (size_t r = 0; r < R; ++r)
+    for (size_t c = 0; c < C; ++c)
+      for (size_t k = 0; k < K; ++k)
+        result[r * C + c] += a[r * K + k] * b[k * C + c];
+  return result;
+}
+
+// mat3x3 * mat3x3
+inline std::array<float, 9> mat_mul(const std::array<float, 9> &a,
+                                    const std::array<float, 9> &b) {
+  return mat_mul_impl<3, 3, 3>(a, b);
+}
+// mat4x4 * mat4x4
+inline std::array<float, 16> mat_mul(const std::array<float, 16> &a,
+                                     const std::array<float, 16> &b) {
+  return mat_mul_impl<4, 4, 4>(a, b);
+}
+// mat3x3 * vec3
+inline std::array<float, 3> mat_mul(const std::array<float, 9> &m,
+                                    const std::array<float, 3> &v) {
+  std::array<float, 3> r = {};
+  for (size_t i = 0; i < 3; ++i)
+    for (size_t j = 0; j < 3; ++j)
+      r[i] += m[i * 3 + j] * v[j];
+  return r;
+}
+// mat4x4 * vec4
+inline std::array<float, 4> mat_mul(const std::array<float, 16> &m,
+                                    const std::array<float, 4> &v) {
+  std::array<float, 4> r = {};
+  for (size_t i = 0; i < 4; ++i)
+    for (size_t j = 0; j < 4; ++j)
+      r[i] += m[i * 4 + j] * v[j];
+  return r;
+}
+// vec4 * mat4x4 (pre-multiplication)
+inline std::array<float, 4> mat_mul(const std::array<float, 4> &v,
+                                    const std::array<float, 16> &m) {
+  std::array<float, 4> r = {};
+  for (size_t i = 0; i < 4; ++i)
+    for (size_t j = 0; j < 4; ++j)
+      r[i] += v[j] * m[j * 4 + i];
+  return r;
+}
+
+// Arithmetic operator overloads for std::array (broadcasting)
+template <typename T, size_t N>
+inline std::array<T, N> operator+(const std::array<T, N> &a,
+                                  const std::array<T, N> &b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] + b[i];
+  return r;
+}
+template <typename T, size_t N>
+inline std::array<T, N> operator-(const std::array<T, N> &a,
+                                  const std::array<T, N> &b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] - b[i];
+  return r;
+}
+template <typename T, size_t N>
+inline std::array<T, N> operator*(const std::array<T, N> &a,
+                                  const std::array<T, N> &b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] * b[i];
+  return r;
+}
+template <typename T, size_t N>
+inline std::array<T, N> operator/(const std::array<T, N> &a,
+                                  const std::array<T, N> &b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] / b[i];
+  return r;
+}
+// Scalar broadcasting: array op scalar
+template <typename T, size_t N>
+inline std::array<T, N> operator+(const std::array<T, N> &a, T b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] + b;
+  return r;
+}
+template <typename T, size_t N>
+inline std::array<T, N> operator-(const std::array<T, N> &a, T b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] - b;
+  return r;
+}
+template <typename T, size_t N>
+inline std::array<T, N> operator*(const std::array<T, N> &a, T b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] * b;
+  return r;
+}
+template <typename T, size_t N>
+inline std::array<T, N> operator/(const std::array<T, N> &a, T b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] / b;
+  return r;
+}
+// Scalar broadcasting: scalar op array
+template <typename T, size_t N>
+inline std::array<T, N> operator+(T a, const std::array<T, N> &b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a + b[i];
+  return r;
+}
+template <typename T, size_t N>
+inline std::array<T, N> operator-(T a, const std::array<T, N> &b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a - b[i];
+  return r;
+}
+template <typename T, size_t N>
+inline std::array<T, N> operator*(T a, const std::array<T, N> &b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a * b[i];
+  return r;
+}
+template <typename T, size_t N>
+inline std::array<T, N> operator/(T a, const std::array<T, N> &b) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a / b[i];
+  return r;
+}
+// Unary negation
+template <typename T, size_t N>
+inline std::array<T, N> operator-(const std::array<T, N> &a) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = -a[i];
+  return r;
+}
+
+// Clamp helper (works for scalars and arrays with broadcasting)
+inline float clamp_val(float v, float lo, float hi) {
+  return std::max(lo, std::min(hi, v));
+}
+template <typename T, size_t N>
+inline std::array<T, N> clamp_val(const std::array<T, N> &v, T lo, T hi) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = std::max(lo, std::min(hi, v[i]));
+  return r;
+}
 
 // Resource state structure
 struct ResourceState {
