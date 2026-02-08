@@ -37,7 +37,7 @@ export interface IRDocument {
   inputs: InputDef[];
   resources: ResourceDef[];
   globals?: any[]; // Globals for inter-node communication
-  structs: StructDef[]; // Shared struct type definitions
+  structs?: StructDef[]; // Shared struct type definitions
   functions: FunctionDef[];
   comment?: string;
 }
@@ -151,6 +151,12 @@ export interface ResourceDef {
    * If multiple resources have this set, the first one is used as the main display.
    */
   isOutput?: boolean;
+
+  /**
+   * Usage hint for the resource.
+   * For textures: 'sampled' (default), 'storage' (required for texture_store), or 'attachment'.
+   */
+  usage?: 'sampled' | 'storage' | 'attachment';
 }
 
 export type BuiltinName =

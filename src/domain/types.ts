@@ -147,6 +147,7 @@ export const IRSchema = defineSchema<IRDocument>({
             }
           } as any,
           isOutput: { type: 'boolean', description: 'Explicitly mark as an output. The first texture output will be the main output shown in the UI.', required: false },
+          usage: { type: 'string', description: 'Usage hint: sampled, storage, or attachment.', required: false },
           persistence: {
             type: 'object',
             description: 'Lifecycle rules',

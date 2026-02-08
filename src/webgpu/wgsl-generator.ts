@@ -395,7 +395,7 @@ export class WgslGenerator {
   }
 
   private generateStructs(ir: IRDocument, lines: string[], options: WgslOptions) {
-    for (const s of ir.structs) {
+    for (const s of ir.structs ?? []) {
       lines.push(`struct ${s.id} {`);
       let locationIdx = 0;
       for (const m of s.members) {
@@ -459,7 +459,7 @@ export class WgslGenerator {
           else if (input.builtin === 'sample_index') stageArgs.push(`@builtin(sample_index) si : u32`);
           else if (input.builtin === 'position') stageArgs.push(`@builtin(position) pos : vec4<f32>`);
           else {
-            const isStruct = ir.structs.some(s => s.id === input.type);
+            const isStruct = (ir.structs ?? []).some(s => s.id === input.type);
             const decorators = isStruct ? '' : `@location(${input.location !== undefined ? input.location : locationIdx++}) `;
             stageArgs.push(`${decorators}${input.id} : ${this.resolveType(input.type)}`);
           }
@@ -469,7 +469,7 @@ export class WgslGenerator {
         if (func.outputs.length > 0) {
           const out = func.outputs[0];
           retType = this.resolveType(out.type);
-          if (ir.structs.some(s => s.id === out.type)) {
+          if ((ir.structs ?? []).some(s => s.id === out.type)) {
             retDecorators = '';
           } else if (out.location !== undefined) {
             retDecorators = `@location(${out.location})`;

@@ -71,6 +71,7 @@ export interface ResourceDef {
     cpuAccess: boolean;      // If true, enables Readback to Host (SLOW).
   };
   isOutput?: boolean;
+  usage?: 'sampled' | 'storage' | 'attachment';
 }
 
 export interface ResourceState {
