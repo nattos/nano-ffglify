@@ -154,6 +154,7 @@ export class MslGenerator {
     const emittedFunctions = new Set<string>();
     const varMap = options.varMap || new Map<string, number>();
     const resourceBindings = options.resourceBindings || new Map<string, number>();
+    let varOffset = 0;
 
     // Default resource bindings if not provided
     if (!options.resourceBindings) {
@@ -171,6 +172,32 @@ export class MslGenerator {
 
       const allFunctions = this.collectFunctions(entryFunc, ir.functions);
 
+      // Allocate varMap for inputs and local vars (same as compile())
+      const inputs = (entryFunc.type === 'shader' ? entryFunc.inputs : ir.inputs) || [];
+      for (const input of inputs) {
+        if (!varMap.has(input.id)) {
+          varMap.set(input.id, varOffset);
+          varOffset += this.getTypeSize(input.type);
+        }
+      }
+      for (const func of allFunctions) {
+        for (const v of func.localVars || []) {
+          if (!varMap.has(v.id)) {
+            varMap.set(v.id, varOffset);
+            varOffset += this.getTypeSize(v.type || 'float');
+          }
+        }
+        for (const node of func.nodes) {
+          if (node.op === 'var_set') {
+            const varId = node['var'];
+            if (!varMap.has(varId)) {
+              varMap.set(varId, varOffset);
+              varOffset++;
+            }
+          }
+        }
+      }
+
       // Emit non-entry functions
       for (const func of allFunctions) {
         if (func.id !== entryId && !emittedFunctions.has(func.id)) {
@@ -185,11 +212,13 @@ export class MslGenerator {
       lines.push('');
     }
 
+    const globalBufferSize = Math.max(varOffset * 4, 16);
+
     return {
       code: lines.join('\n'),
       metadata: {
         resourceBindings,
-        globalBufferSize: 0,
+        globalBufferSize,
         varMap
       }
     };
@@ -265,6 +294,16 @@ export class MslGenerator {
   ) {
     lines.push('// Kernel entry point');
 
+    // Scan for texture_store nodes to determine write textures
+    const writeTextures = new Set<string>();
+    for (const f of allFunctions) {
+      for (const node of f.nodes) {
+        if (node.op === 'texture_store') {
+          writeTextures.add(node['tex'] as string);
+        }
+      }
+    }
+
     // Build kernel signature with buffer bindings
     const bufferParams: string[] = [];
 
@@ -283,8 +322,13 @@ export class MslGenerator {
         const elemType = this.irTypeToMsl(res.dataType || 'float');
         bufferParams.push(`device ${elemType}* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
       } else if (res?.type === 'texture2d') {
-        bufferParams.push(`texture2d<float> ${this.sanitizeId(resId)}_tex [[texture(${binding})]]`);
-        bufferParams.push(`sampler ${this.sanitizeId(resId)}_sampler [[sampler(${binding})]]`);
+        const isWrite = writeTextures.has(resId);
+        if (isWrite) {
+          bufferParams.push(`texture2d<float, access::write> ${this.sanitizeId(resId)}_tex [[texture(${binding})]]`);
+        } else {
+          bufferParams.push(`texture2d<float> ${this.sanitizeId(resId)}_tex [[texture(${binding})]]`);
+          bufferParams.push(`sampler ${this.sanitizeId(resId)}_sampler [[sampler(${binding})]]`);
+        }
       }
     }
 
@@ -495,6 +539,11 @@ export class MslGenerator {
       const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges);
       const bufName = this.sanitizeId(bufferId, 'buffer');
       lines.push(`${indent}${bufName}[int(${idx})] = ${val};`);
+    } else if (node.op === 'texture_store') {
+      const texId = node['tex'] as string;
+      const coords = this.resolveArg(node, 'coords', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      lines.push(`${indent}${this.sanitizeId(texId)}_tex.write(${val}, uint2(${coords}));`);
     } else if (node.op === 'func_return') {
       const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
       lines.push(`    return ${val};`);
@@ -613,17 +662,23 @@ export class MslGenerator {
       }
 
       case 'resource_get_size': {
-        // Return buffer size as a float3 (for compatibility with vec_get_element)
-        // TODO: We _must_ support dynamically sized resources! This doesn't work yet.
         const resId = node['resource'];
         const resDef = this.ir?.resources.find(r => r.id === resId);
+        if (resDef?.type === 'texture2d') {
+          // For textures in shader context, use runtime Metal calls
+          const texName = `${this.sanitizeId(resId)}_tex`;
+          return `float2(${texName}.get_width(), ${texName}.get_height())`;
+        }
+        // For buffers, resolve from IR metadata
         const size = resDef?.size && typeof resDef.size === 'object' && 'value' in resDef.size
           ? resDef.size.value : 1;
-        // For buffers, return (size, 1, 1)
-        if (typeof size === 'number') {
-          return `float3(${this.formatFloat(size)}, 1.0f, 1.0f)`;
+        if (Array.isArray(size)) {
+          return `float2(${this.formatFloat(size[0])}, ${this.formatFloat(size[1])})`;
         }
-        return 'float3(1.0f, 1.0f, 1.0f)';
+        if (typeof size === 'number') {
+          return `float2(${this.formatFloat(size)}, 1.0f)`;
+        }
+        return 'float2(1.0f, 1.0f)';
       }
 
       case 'vec_get_element': {
@@ -730,6 +785,14 @@ export class MslGenerator {
         return `${this.sanitizeId(targetId, 'func')}(${argExprs.join(', ')})`;
       }
 
+      case 'builtin_get': {
+        const name = node['name'] as string;
+        if (name === 'global_invocation_id') {
+          return 'float3(gid)';
+        }
+        throw new Error(`MSL Generator: Unsupported builtin '${name}'`);
+      }
+
       case 'texture_sample': {
         const texId = node['tex'] as string;
         const coordsExpr = this.resolveArg(node, 'coords', func, allFunctions, varMap, resourceBindings, emitPure, edges);
@@ -811,7 +874,7 @@ export class MslGenerator {
   private hasResult(op: string): boolean {
     const valueOps = [
       'literal', 'float', 'int', 'bool',
-      'var_get', 'buffer_load',
+      'var_get', 'buffer_load', 'builtin_get',
       'float2', 'float3', 'float4',
       'vec_dot', 'vec_length', 'vec_normalize', 'vec_swizzle', 'vec_get_element',
       'static_cast_float', 'static_cast_int', 'static_cast_bool',
@@ -826,7 +889,7 @@ export class MslGenerator {
 
   private isExecutable(op: string): boolean {
     return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
-      op === 'buffer_store' || op === 'func_return' || op === 'call_func' || op === 'array_set';
+      op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set';
   }
 
   private formatFloat(val: number): string {
