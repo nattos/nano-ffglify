@@ -141,6 +141,32 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
       tool_calls: [{ name: "final_response", arguments: { text: "I've created a precomputed blur pipeline IR document for you." } }]
     }
   ],
+  "introduce a compile error": {
+    text: "I'll purposely break the compilation by introducing an invalid operation...",
+    tool_calls: [
+      {
+        name: "patchIR",
+        arguments: { patches: [{ op: "replace", path: "/functions/1/nodes/2/op", value: "math_broken_op" }] }
+      },
+      {
+        name: "final_response",
+        arguments: { text: "I've introduced a breaking change. Let's see how the system reacts." }
+      }
+    ]
+  },
+  "fix the compile error": {
+    text: "Correcting the invalid operation now...",
+    tool_calls: [
+      {
+        name: "patchIR",
+        arguments: { patches: [{ op: "replace", path: "/functions/1/nodes/2/op", value: "math_mul" }] }
+      },
+      {
+        name: "final_response",
+        arguments: { text: "The operation has been restored to `math_mul`. Compilation should now succeed." }
+      }
+    ]
+  },
   "how do i use math_add": [
     {
       text: "Let me check the documentation for `math_add`...",

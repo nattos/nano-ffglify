@@ -83,6 +83,7 @@ export class EntityManager {
     }
 
     const operation = 'patch';
+    let editApplied = false;
     let validationErrors: ValidationError[] | undefined;
     let compilePromise: Promise<CompileResult> | undefined;
 
@@ -107,6 +108,7 @@ export class EntityManager {
         }
       }, { needsCompile: true });
       compilePromise = task.compileResult;
+      editApplied = true;
     } catch (e) {
       if (e instanceof EditNotValidError) {
         validationErrors ??= [];
@@ -115,7 +117,6 @@ export class EntityManager {
       }
     }
 
-    const editApplied = !validationErrors;
     let compileResult: CompileResult | undefined;
     if (editApplied && compilePromise) {
       compileResult = await compilePromise;
