@@ -15,8 +15,11 @@ import { INITIAL_DATABASE_STATE } from '../domain/init';
 import { createIsolatedEnv } from './isolation';
 import { LLMLogEntry } from '../domain/types';
 import { GoogleGenAIManager } from '../llm/llm-manager';
-import { AppController } from '../state/controller';
+import { AppController, MutateOptions, MutateTask } from '../state/controller';
 import { runInAction, toJS } from 'mobx';
+import { ReplManager } from '../runtime/repl-manager';
+import { CompileResult } from '../state/entity-api';
+import { validateIR } from '../ir/validator';
 
 const apiKey = import.meta.env.GOOGLE_API_KEY || "TEST_KEY";
 
@@ -31,6 +34,10 @@ export async function runScriptDebug(
   // Placeholder for real appState, to be assigned after env creation
   let refAppState: any = null;
   let refHistoryManager: any = null;
+
+  const scriptRepl = new ReplManager();
+  let lastCompiledIRJson: string | null = null;
+  let activeCompilePromise: Promise<CompileResult> | null = null;
 
   // Custom Controller to capture logs and Manage State
   // We use a Proxy to catch everything else as no-op
@@ -53,26 +60,80 @@ export async function runScriptDebug(
         });
       }
     },
-    mutate: (desc: string, src: string, recipe: any) => {
-      // Warning: This is a hacky way to access the history manager inside the isolated env
-      // because we don't have direct access to it from here easily without refactoring the factory to return it map.
-      // BUT wait! We DO have 'env.historyManager' returned from createIsolatedEnv!
-      // So we can implement this properly if we defer the execution or wrap it?
-
-      // Actually, we can just grab it from env globally (in this scope) once created.
-      // But 'env' is created AFTER this proxy.
-      // So we need a ref similar to refAppState.
-
+    mutate: (desc: string, src: string, recipe: any, options?: MutateOptions): MutateTask => {
       if (refHistoryManager) {
         refHistoryManager.record(desc, src as any, recipe);
       }
+
+      const task: MutateTask = {};
+      if (options?.needsCompile) {
+        task.compileResult = mockController.performCompile();
+      }
+      return task;
+    },
+    ensureCompiled: async () => {
+      if (scriptRepl.currentArtifacts) return true;
+      if (activeCompilePromise) {
+        const res = await activeCompilePromise;
+        return res.compileStatus === 'success';
+      }
+      const res = await mockController.performCompile();
+      return res.compileStatus === 'success';
+    },
+    performCompile: async (): Promise<CompileResult> => {
+      const ir = refAppState.database.ir;
+      const irJson = JSON.stringify(ir);
+      if (irJson === lastCompiledIRJson) {
+        return { compileStatus: 'success' };
+      }
+
+      activeCompilePromise = (async () => {
+        const errors = validateIR(ir);
+        if (errors.length) {
+          runInAction(() => { refAppState.local.validationErrors = errors; });
+          return { compileStatus: 'fail', errors };
+        }
+
+        const artifacts = await scriptRepl.compile(ir);
+        if (artifacts) {
+          scriptRepl.swap(artifacts);
+          runInAction(() => {
+            refAppState.local.compilationResult = {
+              js: artifacts.compiled.taskCode,
+              jsInit: artifacts.compiled.initCode,
+              wgsl: artifacts.wgsl
+            };
+            refAppState.local.validationErrors = [];
+          });
+          lastCompiledIRJson = irJson;
+          return { compileStatus: 'success' };
+        } else {
+          const vErrors = toJS(scriptRepl.validationErrors);
+          runInAction(() => { refAppState.local.validationErrors = vErrors; });
+          return { compileStatus: 'fail', errors: vErrors };
+        }
+      })();
+
+      const res = await activeCompilePromise;
+      activeCompilePromise = null;
+      return res;
+    },
+    debugValidateCurrentIR: () => {
+      const ir = refAppState.database.ir;
+      const errors = validateIR(ir);
+      runInAction(() => {
+        refAppState.local.validationErrors = errors;
+      });
+      return !errors.length;
     },
     logLLMInteraction: (entry: LLMLogEntry) => {
       // Deep clone to safely store snapshot
       logs.push(JSON.parse(JSON.stringify(entry)));
     },
     // Required stubs for DI
-    setActiveTab: () => { },
+    setActiveTab: (tab: any) => {
+      runInAction(() => { refAppState.local.settings.activeTab = tab; });
+    },
     setChatOpen: () => { },
     toggleMockLLM: () => { },
     undo: () => { },
@@ -84,7 +145,11 @@ export async function runScriptDebug(
     drillDown: () => { },
     goBack: () => { },
     goForward: () => { },
-    rewindToChat: () => { }
+    rewindToChat: () => { },
+    compileCurrentIR: async () => {
+      const res = await mockController.performCompile();
+      return res.compileStatus === 'success';
+    }
   }, {
     get: (target, prop) => {
       if (prop in target) return (target as any)[prop];

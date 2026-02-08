@@ -278,7 +278,7 @@ export class AppController {
     return task;
   }
 
-  private async ensureCompiled() {
+  public async ensureCompiled() {
     if (this.repl.currentArtifacts) {
       return true;
     }
@@ -291,7 +291,7 @@ export class AppController {
     }
   }
 
-  private async performCompile(): Promise<CompileResult> {
+  public async performCompile(): Promise<CompileResult> {
     // 1. Cancel previous in-flight compilation
     if (this.activeCompileResolver) {
       this.activeCompileResolver({ compileStatus: 'timeout' });
