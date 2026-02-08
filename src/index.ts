@@ -307,7 +307,15 @@ export class App extends MobxLitElement {
       });
     } catch (e) {
       console.error(e);
-      alert("Script failed: " + e);
+      this.scriptLogs = [{
+        id: 'unknown',
+        timestamp: Date.now(),
+        duration_ms: 0,
+        type: 'error',
+        prompt_snapshot: '',
+        response_snapshot: e?.toString() ?? 'unknown error'
+      }];
+      this.scriptFinalState = undefined;
     } finally {
       this.runningScriptLine = null;
     }
@@ -460,7 +468,7 @@ export class App extends MobxLitElement {
         ${local.settings.activeTab === 'raw_code' ? html`
           <div class="debug-panel" style="flex: 1; overflow: auto; padding: 1rem;">
             <div class="toolbar" style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-                <ui-button @click=${() => appController.validateCurrentIR()}>Validate</ui-button>
+                <ui-button @click=${() => appController.debugValidateCurrentIR()}>Validate</ui-button>
                 <ui-button @click=${() => appController.compileCurrentIR()}>Compile</ui-button>
             </div>
             <h3>IR Validation Errors</h3>

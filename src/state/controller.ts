@@ -133,7 +133,7 @@ export class AppController {
     });
   }
 
-  public validateCurrentIR() {
+  public debugValidateCurrentIR() {
     console.info("[AppController] Validating IR...");
     const ir = appState.database.ir;
     const errors = validateIR(ir);
@@ -199,9 +199,6 @@ export class AppController {
 
   public async compileCurrentIR(): Promise<boolean> {
     const res = await this.performCompile();
-    if (res.compileStatus === 'fail') {
-      alert("Compilation failed: " + (res.errors?.[0]?.message || "unknown error"));
-    }
     return res.compileStatus === 'success';
   }
 
@@ -321,14 +318,6 @@ export class AppController {
       }, 10000);
 
       const compileTask = (async (): Promise<CompileResult> => {
-        const isValid = this.validateCurrentIR();
-        if (!isValid) {
-          return {
-            compileStatus: 'fail',
-            errors: this.repl.validationErrors
-          };
-        }
-
         const artifacts = await this.repl.compile(ir);
         if (artifacts) {
           this.repl.swap(artifacts);
@@ -352,7 +341,7 @@ export class AppController {
         } else {
           return {
             compileStatus: 'fail',
-            errors: this.repl.validationErrors
+            errors: toJS(this.repl.validationErrors)
           };
         }
       })();
