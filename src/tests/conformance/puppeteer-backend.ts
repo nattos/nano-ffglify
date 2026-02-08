@@ -131,32 +131,40 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
   }
 };
 
+/**
+ * The backend executes mostly JS (CPU), but allows dispatching through
+ * the normal mechanisms to GPU, using WebGPU.
+ */
 export const BrowserCpuBackend: TestBackend = {
   name: 'CPU',
   createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
     return new EvaluationContext(ir, inputs);
   },
   run: async (ctx: EvaluationContext, entryPoint: string) => {
-    await runImplementation(ctx, entryPoint, 'ForceOntoGPU');
+    await runImplementation(ctx, entryPoint, 'WebGPU');
   },
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
     const ctx = new EvaluationContext(ir, inputs);
-    await runImplementation(ctx, entryPoint, 'ForceOntoGPU');
+    await runImplementation(ctx, entryPoint, 'WebGPU');
     return ctx;
   }
 };
 
+/**
+ * The backend emulates putting code directly on the GPU, using a mock
+ * dispatch, and WebGPU.
+ */
 export const BrowserGpuBackend: TestBackend = {
   name: 'GPU',
   createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
     return new EvaluationContext(ir, inputs);
   },
   run: async (ctx: EvaluationContext, entryPoint: string) => {
-    await runImplementation(ctx, entryPoint, 'WebGPU');
+    await runImplementation(ctx, entryPoint, 'ForceOntoGPU');
   },
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
     const ctx = new EvaluationContext(ir, inputs);
-    await runImplementation(ctx, entryPoint, 'WebGPU');
+    await runImplementation(ctx, entryPoint, 'ForceOntoGPU');
     return ctx;
   }
 };

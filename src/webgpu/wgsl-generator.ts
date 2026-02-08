@@ -149,6 +149,7 @@ export class WgslGenerator {
 
     // Assemble final shader code
     const finalLines: string[] = []; // Collect everything for the final string assembly
+    finalLines.push('#import "intrinsics.wgsl"');
     finalLines.push('');
 
     // Pre-validate

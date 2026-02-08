@@ -282,7 +282,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
           resourceDefs: resourceDefs
         });
 
-        const code = compilation.code;
+        const code = WgslGenerator.resolveImports(compilation);
 
         device.pushErrorScope('validation');
         const pipeline = await GpuCache.getComputePipeline(device, code);
