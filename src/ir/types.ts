@@ -368,6 +368,7 @@ export type BuiltinOp =
   | 'color_mix'     // { a: float4, b: float4, t: float } -> float4 (Porter-Duff)
   | 'vec_swizzle'   // { vec: T, channels: string("xy") } -> T'
   | 'vec_get_element' // { vec: T, index: int } -> float
+  | 'vec_set_element' // { vec: T, index: int, value: float } -> any
 
   // Matrices:
   | 'float3x3' // { ...9 floats }

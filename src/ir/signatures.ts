@@ -74,7 +74,8 @@ const UNARY_OPS: BuiltinOp[] = [
   'math_sinh', 'math_cosh', 'math_tanh', 'math_sign', 'math_exp', 'math_log', 'math_sqrt',
   'math_abs', 'math_ceil', 'math_floor', 'math_round',
   'math_fract', 'math_trunc',
-  'math_flush_subnormal', 'math_mantissa', 'math_exponent'
+  'math_flush_subnormal', 'math_mantissa', 'math_exponent',
+  'math_frexp_mantissa', 'math_frexp_exponent'
 ];
 
 // Helper to merge
@@ -84,6 +85,15 @@ const signatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { val: 'float2', scalar: 'float' }, output: 'float2' },
     { inputs: { val: 'float3', scalar: 'float' }, output: 'float3' },
     { inputs: { val: 'float4', scalar: 'float' }, output: 'float4' },
+  ],
+  'math_ldexp': [
+    { inputs: { fract: 'float', exp: 'int' }, output: 'float' },
+    { inputs: { fract: 'float2', exp: 'int' }, output: 'float2' },
+    { inputs: { fract: 'float3', exp: 'int' }, output: 'float3' },
+    { inputs: { fract: 'float4', exp: 'int' }, output: 'float4' },
+    { inputs: { fract: 'float2', exp: 'float2' }, output: 'float2' },
+    { inputs: { fract: 'float3', exp: 'float3' }, output: 'float3' },
+    { inputs: { fract: 'float4', exp: 'float4' }, output: 'float4' },
   ],
 };
 
@@ -175,7 +185,16 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   'vec_get_element': [
     { inputs: { vec: 'float2', index: 'int' }, output: 'float' },
     { inputs: { vec: 'float3', index: 'int' }, output: 'float' },
-    { inputs: { vec: 'float4', index: 'int' }, output: 'float' }
+    { inputs: { vec: 'float4', index: 'int' }, output: 'float' },
+    { inputs: { vec: 'float3x3', index: 'int' }, output: 'float' },
+    { inputs: { vec: 'float4x4', index: 'int' }, output: 'float' }
+  ],
+  'vec_set_element': [
+    { inputs: { vec: 'float2', index: 'int', value: 'float' }, output: 'any' },
+    { inputs: { vec: 'float3', index: 'int', value: 'float' }, output: 'any' },
+    { inputs: { vec: 'float4', index: 'int', value: 'float' }, output: 'any' },
+    { inputs: { vec: 'float3x3', index: 'int', value: 'float' }, output: 'any' },
+    { inputs: { vec: 'float4x4', index: 'int', value: 'float' }, output: 'any' }
   ],
   'vec_swizzle': [
     { inputs: { vec: 'float2', channels: 'string' }, output: 'any' },
@@ -268,12 +287,6 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   ],
   'math_pi': [{ inputs: {}, output: 'float' }],
   'math_e': [{ inputs: {}, output: 'float' }],
-  'math_ldexp': [{ inputs: { val: 'any', exp: 'any' }, output: 'any' }],
-  'math_frexp_mantissa': [{ inputs: { val: 'any' }, output: 'any' }],
-  'math_frexp_exponent': [{ inputs: { val: 'any' }, output: 'any' }],
-  'math_flush_subnormal': [{ inputs: { val: 'any' }, output: 'any' }],
-  'math_mantissa': [{ inputs: { val: 'any' }, output: 'any' }],
-  'math_exponent': [{ inputs: { val: 'any' }, output: 'any' }],
 
   // --- Quaternions ---
   'quat': [

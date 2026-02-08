@@ -107,7 +107,7 @@ const Float4x4Schema = z.array(z.number()).length(16);
 
 // Generic types for overloads
 const AnyScalar = z.union([FloatSchema, IntSchema, BoolSchema]);
-const AnyVector = z.union([Float2Schema, Float3Schema, Float4Schema]);
+const AnyVector = z.union([Float2Schema, Float3Schema, Float4Schema, Float3x3Schema, Float4x4Schema]);
 const AnyMat = z.union([Float3x3Schema, Float4x4Schema]);
 const AnyData = z.union([AnyScalar, AnyVector, AnyMat, z.array(z.any())]);
 
@@ -157,6 +157,7 @@ export interface MadArgs { a: any; b: any; c: any;[key: string]: any; }
 export interface ColorMixArgs { a: any; b: any; t: any;[key: string]: any; }
 export interface MathDivScalarArgs { val: any; scalar: any;[key: string]: any; }
 export interface VecGetElementArgs { vec: any; index: any;[key: string]: any; }
+export interface VecSetElementArgs { vec: any; index: any; value: any;[key: string]: any; }
 export interface TextureLoadArgs { tex: string; coords: any;[key: string]: any; }
 export interface TextureStoreArgs { tex: string; coords: any; value: any;[key: string]: any; }
 export interface Mat3x3Args { m00?: number; m01?: number; m02?: number; m10?: number; m11?: number; m12?: number; m20?: number; m21?: number; m22?: number; cols?: any; vals?: any;[key: string]: any; }
@@ -622,7 +623,8 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   // Vectors
   'vec_swizzle': VecSwizzleDef,
   'vec_mix': VecMixDef,
-  'vec_get_element': defineOp<VecGetElementArgs>({ doc: "Get element from vector", args: { vec: { type: AnyVector, doc: "Vector", refable: true }, index: { type: IntSchema, doc: "Index", refable: true } } }),
+  'vec_get_element': defineOp<VecGetElementArgs>({ doc: "Get element from vector or matrix", args: { vec: { type: AnyVector, doc: "Vector or Matrix", refable: true }, index: { type: IntSchema, doc: "Index", refable: true } } }),
+  'vec_set_element': defineOp<VecSetElementArgs>({ doc: "Set element in vector or matrix", args: { vec: { type: AnyVector, doc: "Vector or Matrix", refable: true }, index: { type: IntSchema, doc: "Index", refable: true }, value: { type: FloatSchema, doc: "Value", refable: true } } }),
 
   // Resources
   'texture_sample': TextureSampleDef,
@@ -765,6 +767,7 @@ export type OpArgs = {
   'vec_swizzle': VecSwizzleArgs;
   'vec_mix': VecMixArgs;
   'vec_get_element': VecGetElementArgs;
+  'vec_set_element': VecSetElementArgs;
   'texture_sample': TextureSampleArgs;
   'texture_load': TextureLoadArgs;
   'texture_store': TextureStoreArgs;
