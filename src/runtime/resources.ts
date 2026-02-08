@@ -23,6 +23,7 @@ export function makeResourceStates(ir: IRDocument): Map<string, ResourceState> {
     resources.set(res.id, {
       def: {
         ...res,
+        size: res.size,
         format: res.format ?? TextureFormat.RGBA8 // Default texture format
       },
       width,

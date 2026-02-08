@@ -46,11 +46,18 @@ export enum TextureFormat {
   R32F = 'r32f'        // Single Channel Full-Float
 }
 
+export type ResourceSize =
+  | { mode: 'fixed'; value: number | [number, number] }
+  | { mode: 'viewport'; scale?: number | [number, number] }
+  | { mode: 'reference'; target: string; scale?: number | [number, number] }
+  | { mode: 'cpu_driven' };
+
 export interface ResourceDef {
   id: string;
   type: 'texture2d' | 'buffer' | 'atomic_counter';
   dataType?: string;
   format?: TextureFormat;
+  size?: ResourceSize;
   sampler?: {
     wrap?: 'clamp' | 'repeat' | 'mirror';
     filter?: 'linear' | 'nearest';

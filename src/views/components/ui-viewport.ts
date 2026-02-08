@@ -257,7 +257,8 @@ export class UiViewport extends LitElement {
   }
 
   render() {
-    const outRes = this.runtime?.getResource('t_output');
+    const textureOutputId = this.runtime?.getPrimaryOutputId() ?? 't_output';
+    const outRes = this.runtime?.getResource(textureOutputId);
     return html`
             <canvas
               @dragover=${this.handleDragOver}

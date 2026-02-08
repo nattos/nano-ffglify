@@ -100,15 +100,20 @@ export class RuntimeManager {
       this.currentCompiled = artifacts;
       this.resources = makeResourceStates(ir);
 
-      // 1. Allocate all textures at PATCH_SIZE
+      // 1. Allocate all textures
       this.resources.forEach((state, id) => {
         if (state.def.type === 'texture2d') {
-          state.width = PATCH_SIZE.width;
-          state.height = PATCH_SIZE.height;
+          // Default to PATCH_SIZE if viewport mode or not fixed
+          const isViewport = state.def.size?.mode === 'viewport';
+          const width = isViewport ? PATCH_SIZE.width : state.width;
+          const height = isViewport ? PATCH_SIZE.height : state.height;
+
+          state.width = width;
+          state.height = height;
 
           state.gpuTexture = device.createTexture({
             label: `Resource: ${id}`,
-            size: [PATCH_SIZE.width, PATCH_SIZE.height],
+            size: [width, height],
             format: 'rgba8unorm', // Standard format for our internal patches
             usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST
           });
@@ -239,7 +244,8 @@ export class RuntimeManager {
       this.lastFrameTime = startTime;
 
       // Trigger callbacks with the primary output texture
-      const tOutput = this.resources.get('t_output');
+      const outputId = this.getPrimaryOutputId();
+      const tOutput = outputId ? this.resources.get(outputId) : null;
       if (tOutput && tOutput.gpuTexture) {
         this.onFrameCallbacks.forEach(cb => cb(tOutput.gpuTexture!));
       }
@@ -518,5 +524,32 @@ export class RuntimeManager {
 
   public getTextureInputIds(): string[] {
     return this.textureInputIds;
+  }
+
+  /**
+   * Identifies the primary output texture for the UI.
+   */
+  public getPrimaryOutputId(): string | null {
+    // 1. Prefer explicit output names
+    const candidates = ['t_output', 'output_tex', 'out_tex', 't_out'];
+    for (const id of candidates) {
+      if (this.resources.has(id)) return id;
+    }
+
+    // 2. Fallback to the last texture2d resource
+    let lastTexResId: string | null = null;
+    this.resources.forEach((res, id) => {
+      if (res.def.type === 'texture2d') {
+        lastTexResId = id;
+      }
+    });
+    if (lastTexResId) return lastTexResId;
+
+    // 3. Fallback to the last texture input
+    if (this.textureInputIds.length > 0) {
+      return this.textureInputIds[this.textureInputIds.length - 1];
+    }
+
+    return null;
   }
 }
