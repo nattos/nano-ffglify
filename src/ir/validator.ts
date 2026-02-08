@@ -402,6 +402,37 @@ export const validateResources = (doc: IRDocument, errors: LogicValidationError[
 export const validateInputs = (doc: IRDocument, errors: LogicValidationError[]) => {
   doc.inputs.forEach(input => {
     validateDataType(input.type, doc, errors, `Input '${input.id}'`);
+
+    const def = input.default;
+    if (def !== undefined) {
+      let providedType: string = typeof def;
+      if (Array.isArray(def)) {
+        if (def.length === 2) providedType = 'float2';
+        else if (def.length === 3) providedType = 'float3';
+        else if (def.length === 4) providedType = 'float4';
+        else if (def.length === 9) providedType = 'float3x3';
+        else if (def.length === 16) providedType = 'float4x4';
+        else providedType = 'array';
+      } else if (providedType === 'number') {
+        providedType = 'float';
+      } else if (providedType === 'boolean') {
+        providedType = 'bool';
+      }
+
+      const expected = input.type.toLowerCase();
+      const norm = (t: string) => t === 'boolean' ? 'bool' : t;
+      const e = norm(expected);
+      const p = norm(providedType);
+
+      const isCompat = e === p || (e === 'float' && p === 'int') || (e === 'int' && p === 'float');
+
+      if (!isCompat) {
+        errors.push({
+          message: `Input '${input.id}' default value type mismatch: expected ${input.type}, got ${typeof def === 'string' ? `"${def}"` : JSON.stringify(def)} (${providedType})`,
+          severity: 'error'
+        });
+      }
+    }
   });
 };
 

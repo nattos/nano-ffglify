@@ -393,4 +393,30 @@ describe('Zod Schema Validation (Structural)', () => {
       expect(err).toBeDefined();
     }
   });
+
+  it('should fail on string default for float input', () => {
+    const invalid: any = {
+      version: '1.0.0',
+      meta: { name: 'Bad Default' },
+      entryPoint: 'fn_main',
+      inputs: [{ id: 'u_val', type: 'float', default: '1.0' }],
+      resources: [],
+      structs: [],
+      functions: [{
+        id: 'fn_main',
+        type: 'cpu',
+        inputs: [],
+        outputs: [],
+        localVars: [],
+        nodes: []
+      }]
+    };
+    const result = validateIR(invalid);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const err = result.errors.find(e => e.message.toLowerCase().includes("default value type mismatch"));
+      expect(err).toBeDefined();
+      expect(err?.message).toContain("default value type mismatch: expected float, got \"1.0\" (string)");
+    }
+  });
 });
