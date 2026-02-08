@@ -159,7 +159,19 @@ export const MetalBackend: TestBackend = {
     for (const res of jsonResult.resources || []) {
       const state = ctx.resources.get(res.id);
       if (state) {
-        state.data = res.data;
+        // For typed buffers (float2/3/4), restructure flat data into nested arrays
+        const resDef = ir.resources.find(r => r.id === res.id);
+        const dataType = (resDef as any)?.dataType;
+        if (dataType === 'float4' || dataType === 'float3' || dataType === 'float2') {
+          const stride = dataType === 'float4' ? 4 : dataType === 'float3' ? 3 : 2;
+          const chunks: number[][] = [];
+          for (let j = 0; j < res.data.length; j += stride) {
+            chunks.push(res.data.slice(j, j + stride));
+          }
+          state.data = chunks as any;
+        } else {
+          state.data = res.data;
+        }
       }
     }
   },
