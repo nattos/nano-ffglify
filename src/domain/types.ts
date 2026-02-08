@@ -8,8 +8,9 @@
  * - Used by `state.ts` to define the shape of the database.
  */
 import { defineSchema } from './schemas';
-import { IRDocument as BaseIRDocument } from '../ir/types';
+import { IRDocument as BaseIRDocument, PRIMITIVE_TYPES } from '../ir/types';
 import { LogicValidationError } from '../ir/validator';
+import { BuiltinNameSchema } from '../ir/builtin-schemas';
 
 export type IRDocument = BaseIRDocument;
 
@@ -111,7 +112,13 @@ export const IRSchema = defineSchema<IRDocument>({
           comment: { type: 'string', description: 'Description', required: false },
           format: { type: 'string', description: 'Format hint', required: false },
           default: { type: 'any_value', description: 'Default value', required: false },
-          ui: { type: 'object', description: 'UI Hint', required: false, properties: {} }
+          ui: {
+            type: 'object', description: 'UI Hint', required: false, properties: {
+              min: { type: 'number', description: 'Minimum value', required: false },
+              max: { type: 'number', description: 'Maximum value', required: false },
+              widget: { type: 'string', description: 'Widget type', enum: ['slider', 'color_picker', 'text', 'toggle', 'file'], required: false }
+            }
+          }
         }
       }
     },
@@ -160,7 +167,22 @@ export const IRSchema = defineSchema<IRDocument>({
               wrap: { type: 'string', description: 'clamp, repeat, or mirror', required: true }
             }
           },
-          structType: { type: 'array', description: 'Custom layout members', required: false, items: { type: 'object', description: 'Member', properties: {} } as any }
+          structType: {
+            type: 'array',
+            description: 'Custom layout members (for buffers)',
+            required: false,
+            items: {
+              type: 'object',
+              description: 'Member',
+              properties: {
+                name: { type: 'string', description: 'Member name', required: true },
+                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                comment: { type: 'string', description: 'Description', required: false },
+                builtin: { type: 'string', description: 'Builtin annotation', required: false, enum: BuiltinNameSchema.options as string[] },
+                location: { type: 'number', description: 'Location index', required: false }
+              }
+            }
+          }
         }
       }
     },
@@ -178,8 +200,23 @@ export const IRSchema = defineSchema<IRDocument>({
         type: 'object',
         description: 'Struct definition',
         properties: {
-          id: { type: 'string', description: 'Type Name', required: true },
-          members: { type: 'array', description: 'Members', required: true, items: { type: 'object', description: 'Member', properties: {} } as any },
+          id: { type: 'string', description: 'Name of custom data type, which can be used to reference this struct for resources and variables etc. Structs can contain other structs this way as well.', required: true },
+          members: {
+            type: 'array',
+            description: 'Members',
+            required: true,
+            items: {
+              type: 'object',
+              description: 'Member',
+              properties: {
+                name: { type: 'string', description: 'Member name', required: true },
+                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                comment: { type: 'string', description: 'Description', required: false },
+                builtin: { type: 'string', description: 'Builtin annotation', required: false, enum: BuiltinNameSchema.options as string[] },
+                location: { type: 'number', description: 'Location index', required: false }
+              }
+            }
+          },
           comment: { type: 'string', description: 'Description', required: false }
         }
       }
@@ -195,10 +232,55 @@ export const IRSchema = defineSchema<IRDocument>({
           id: { type: 'string', description: 'Unique ID', required: true },
           type: { type: 'string', description: 'cpu or shader', required: true },
           comment: { type: 'string', description: 'Description', required: false },
-          inputs: { type: 'array', description: 'Args', required: true, items: { type: 'object', description: 'Port', properties: {} } as any },
-          outputs: { type: 'array', description: 'Returns', required: true, items: { type: 'object', description: 'Port', properties: {} } as any },
-          localVars: { type: 'array', description: 'Locals', required: true, items: { type: 'object', description: 'Variable', properties: {} } as any },
-          nodes: { type: 'array', description: 'Nodes', required: true, items: { type: 'object', description: 'Node', properties: {} } as any }
+          inputs: {
+            type: 'array', description: 'Args', required: true, items: {
+              type: 'object',
+              description: 'Port',
+              properties: {
+                id: { type: 'string', description: 'Unique ID', required: true },
+                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                comment: { type: 'string', description: 'Description', required: false },
+                builtin: { type: 'string', description: 'Builtin annotation', required: false, enum: BuiltinNameSchema.options as string[] },
+                location: { type: 'number', description: 'Location index', required: false }
+              }
+            }
+          },
+          outputs: {
+            type: 'array', description: 'Returns', required: true, items: {
+              type: 'object',
+              description: 'Port',
+              properties: {
+                id: { type: 'string', description: 'Unique ID', required: true },
+                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                comment: { type: 'string', description: 'Description', required: false },
+                builtin: { type: 'string', description: 'Builtin annotation', required: false, enum: BuiltinNameSchema.options as string[] },
+                location: { type: 'number', description: 'Location index', required: false }
+              }
+            }
+          },
+          localVars: {
+            type: 'array', description: 'Locals', required: true, items: {
+              type: 'object',
+              description: 'Variable',
+              properties: {
+                id: { type: 'string', description: 'Unique ID', required: true },
+                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                initialValue: { type: 'any_value', description: 'Initial value', required: false },
+                comment: { type: 'string', description: 'Description', required: false }
+              }
+            }
+          },
+          nodes: {
+            type: 'array', description: 'Nodes', required: true, items: {
+              type: 'object',
+              description: 'Node',
+              properties: {
+                id: { type: 'string', description: 'Unique ID', required: true },
+                op: { type: 'string', description: 'Op Code', required: true }, // BuiltinOp enum is handled by opDefToFunctionDeclaration, but for patching we allow string
+                comment: { type: 'string', description: 'Description', required: false }
+              }
+            }
+          }
         }
       }
     },
