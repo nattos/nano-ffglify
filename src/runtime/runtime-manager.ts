@@ -531,13 +531,22 @@ export class RuntimeManager {
    * Identifies the primary output texture for the UI.
    */
   public getPrimaryOutputId(): string | null {
-    // 1. Prefer explicit output names
+    // 1. Prefer explicit output flag
+    let explicitOutputId: string | null = null;
+    this.resources.forEach((res, id) => {
+      if (res.def.isOutput && res.def.type === 'texture2d') {
+        if (!explicitOutputId) explicitOutputId = id;
+      }
+    });
+    if (explicitOutputId) return explicitOutputId;
+
+    // 2. Prefer explicit output names
     const candidates = ['t_output', 'output_tex', 'out_tex', 't_out'];
     for (const id of candidates) {
       if (this.resources.has(id)) return id;
     }
 
-    // 2. Fallback to the last texture2d resource
+    // 3. Fallback to the last texture2d resource
     let lastTexResId: string | null = null;
     this.resources.forEach((res, id) => {
       if (res.def.type === 'texture2d') {

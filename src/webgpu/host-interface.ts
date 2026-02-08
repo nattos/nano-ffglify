@@ -70,6 +70,7 @@ export interface ResourceDef {
     clearValue?: any;        // Value to clear to (if clearing).
     cpuAccess: boolean;      // If true, enables Readback to Host (SLOW).
   };
+  isOutput?: boolean;
 }
 
 export interface ResourceState {

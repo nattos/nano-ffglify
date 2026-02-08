@@ -145,6 +145,12 @@ export interface ResourceDef {
     clearValue?: any;        // Value to clear to (if clearing).
     cpuAccess: boolean;      // If true, enables Readback to Host (SLOW).
   };
+
+  /**
+   * If true, this resource is considered a primary output for the shader graph.
+   * If multiple resources have this set, the first one is used as the main display.
+   */
+  isOutput?: boolean;
 }
 
 export type BuiltinName =

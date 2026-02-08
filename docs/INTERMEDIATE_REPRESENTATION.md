@@ -28,6 +28,7 @@ interface IRDocument {
     clearValue?: any;
     cpuAccess: boolean; // Need readback?
   };
+  isOutput?: boolean; // Explicitly mark as primary output
 }
 
 type ResourceSize =
