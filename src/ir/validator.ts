@@ -19,8 +19,8 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
 
   // Global Context for Type Resolution
   const resourceIds = new Set([
-    ...doc.resources.map(r => r.id),
-    ...doc.inputs.map(i => i.id)
+    ...(doc.resources || []).map(r => r.id),
+    ...(doc.inputs || []).map(i => i.id)
   ]);
 
   // Check Entry Point
@@ -49,8 +49,8 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
 
 export const inferFunctionTypes = (func: FunctionDef, ir: IRDocument): InferredTypes => {
   const resourceIds = new Set([
-    ...ir.resources.map(r => r.id),
-    ...ir.inputs.map(i => i.id)
+    ...(ir.resources || []).map(r => r.id),
+    ...(ir.inputs || []).map(i => i.id)
   ]);
   const cache: InferredTypes = new Map();
   const errors: LogicValidationError[] = [];
@@ -147,7 +147,7 @@ const resolveNodeType = (
     } else if (typeof val === 'string') {
       const refNode = func.nodes.find(n => n.id === val);
       const refInput = func.inputs.find(i => i.id === val);
-      const refGlobal = doc.inputs.find(i => i.id === val);
+      const refGlobal = doc.inputs?.find(i => i.id === val);
 
       const def = OpDefs[node.op as BuiltinOp];
       const isNameProperty = def?.args[key]?.isIdentifier ?? false;
@@ -298,7 +298,7 @@ const resolveNodeType = (
     if (node.op === 'var_get') {
       const varId = node['var'];
       const localVar = func.localVars.find(v => v.id === varId);
-      const globalVar = doc.inputs.find(i => i.id === varId);
+      const globalVar = doc.inputs?.find(i => i.id === varId);
       const type = localVar?.type || globalVar?.type || 'float';
       const vType = type === 'f32' ? 'float' : (type === 'i32' || type === 'int' ? 'int' : type as ValidationType);
       cache.set(nodeId, vType);
@@ -307,7 +307,7 @@ const resolveNodeType = (
 
     if (node.op === 'buffer_load') {
       const resId = node['buffer'];
-      const resDef = doc.resources.find(r => r.id === resId);
+      const resDef = doc.resources?.find(r => r.id === resId);
       const type = resDef?.dataType || 'float';
       const vType = type === 'f32' ? 'float' : (type === 'i32' || type === 'int' ? 'int' : type as ValidationType);
       cache.set(nodeId, vType);
@@ -401,7 +401,7 @@ const validateDataType = (type: string, doc: IRDocument, errors: LogicValidation
 };
 
 export const validateResources = (doc: IRDocument, errors: LogicValidationError[]) => {
-  doc.resources.forEach(res => {
+  (doc.resources || []).forEach(res => {
     // Validate Texture Format
     if (res.type === 'texture2d') {
       const fmt = (res as any).format;
@@ -433,7 +433,7 @@ export const validateResources = (doc: IRDocument, errors: LogicValidationError[
 };
 
 export const validateInputs = (doc: IRDocument, errors: LogicValidationError[]) => {
-  doc.inputs.forEach(input => {
+  (doc.inputs || []).forEach(input => {
     validateDataType(input.type, doc, errors, `Input '${input.id}'`);
 
     const def = input.default;
@@ -510,8 +510,8 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
     ...nodeIds,
     ...func.inputs.map(i => i.id),
     ...func.localVars.map(v => v.id),
-    ...doc.inputs.map(i => i.id),
-    ...doc.resources.map(r => r.id)
+    ...(doc.inputs || []).map(i => i.id),
+    ...(doc.resources || []).map(r => r.id)
   ]);
 
   edges.forEach(edge => {
@@ -535,7 +535,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
     if (node.op === 'var_get' || node.op === 'var_set') {
       const varId = node['var'];
       const isLocal = func.localVars.some(v => v.id === varId);
-      const isGlobal = doc.inputs.some(i => i.id === varId);
+      const isGlobal = (doc.inputs || []).some(i => i.id === varId);
       // Also check function arguments (inputs)
       const isArg = func.inputs.some(i => i.id === varId);
 
@@ -604,7 +604,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       if (typeof resId === 'string' && !resourceIds.has(resId)) {
         errors.push({ nodeId: node.id, functionId: func.id, message: `Referenced resource '${resId}' not found`, severity: 'error' });
       } else if (typeof resId === 'string') {
-        const resDef = doc.resources.find(r => r.id === resId);
+        const resDef = doc.resources?.find(r => r.id === resId);
         const index = node['index'];
 
         if (resDef && typeof index === 'number') {

@@ -2,19 +2,10 @@
  * @file chat-handler.ts
  * @description The "Brain" of the application. Manages the conversation loop:
  * User Input -> Prompt Building -> LLM API -> Response Parsing -> Tool Execution -> State Mutation.
- *
- * @external-interactions
- * - Calls `PromptBuilder` to format context.
- * - Calls `LLMManager` to hit the Gemini API.
- * - Calls `EntityManager` to apply tool side-effects.
- *
- * @pitfalls
- * - The `MAX_TURNS` loop prevents infinite tool recursion, but can fail complex multi-step tasks if too small.
- * - Tool arguments are not strictly typed at runtime unless `validateEntity` catches them.
  */
 import { appController, AppController } from '../state/controller';
 import { appState, AppState } from '../domain/state';
-import { GoogleGenAIManager, LLMManager } from './llm-manager';
+import { GoogleGenAIManager, LLMManager, llmManager } from './llm-manager';
 import { PromptBuilder } from '../domain/prompt-builder';
 import { entityManager, EntityManager } from '../state/entity-manager';
 import { IREditResponse, PatchIRRequest, ReplaceIRRequest } from '../state/entity-api';
@@ -77,9 +68,6 @@ export class ChatHandler {
         const cleanArgs: ReplaceIRRequest = effectiveArgs;
         const upsertRes = await this.entityManager.replaceIR(cleanArgs);
 
-        // TODO: Trigger and wait for result
-        // upsertRes.compileResult = undefined;
-
         this.appController.addChatMessage({
           role: 'tool-response',
           text: '',
@@ -92,9 +80,6 @@ export class ChatHandler {
       case 'patchIR': {
         const cleanArgs: PatchIRRequest = effectiveArgs;
         const patchRes = await this.entityManager.patchIR(cleanArgs);
-
-        // TODO: Trigger and wait for result
-        // upsertRes.compileResult = undefined;
 
         this.appController.addChatMessage({
           role: 'tool-response',
@@ -191,6 +176,6 @@ export class ChatHandler {
 export const chatHandler = new ChatHandler(
   appController,
   appState,
-  new GoogleGenAIManager(appController, PromptBuilder.buildWorkerSystemInstruction()),
+  llmManager,
   entityManager
 );

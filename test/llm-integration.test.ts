@@ -41,21 +41,26 @@ describe('LLM Integration Flow', () => {
     const response = {
       text: "Sure, created a shader graph.",
       tool_calls: [{
-        name: "upsertIR",
+        name: "replaceIR",
         arguments: {
-          entity: {
-            id: "ir_1",
-            version: "3.0.0",
-            meta: { name: "Blur Shader" },
-            entryPoint: "main",
-            functions: []
-          }
+          id: "ir_1",
+          version: "3.0.0",
+          meta: { name: "Blur Shader" },
+          entryPoint: "main",
+          functions: []
         }
       }]
     };
 
     // Use Mock Implementation
-    vi.spyOn(llmManager, 'generateResponse').mockResolvedValue(response);
+    vi.spyOn(llmManager, 'generateResponse').mockImplementation(async (prompt, options) => {
+      if (options?.executeTool) {
+        for (const call of response.tool_calls) {
+          await options.executeTool(call.name, call.arguments);
+        }
+      }
+      return response;
+    });
 
     // 2. Simulate User Message
     await chatHandler.handleUserMessage("Create a blur shader");
@@ -76,14 +81,19 @@ describe('LLM Integration Flow', () => {
     const response = {
       text: "Created graph",
       tool_calls: [{
-        name: "upsertIR",
-        arguments: {
-          entity: { id: "ir_undo", version: "3.0.0", meta: { name: "Undo Me" }, entryPoint: "main", functions: [] }
-        }
+        name: "replaceIR",
+        arguments: { id: "ir_undo", version: "3.0.0", meta: { name: "Undo Me" }, entryPoint: "main", functions: [] }
       }]
     };
 
-    vi.spyOn(llmManager, 'generateResponse').mockResolvedValue(response);
+    vi.spyOn(llmManager, 'generateResponse').mockImplementation(async (prompt, options) => {
+      if (options?.executeTool) {
+        for (const call of response.tool_calls) {
+          await options.executeTool(call.name, call.arguments);
+        }
+      }
+      return response;
+    });
 
     await chatHandler.handleUserMessage("Make a shader");
 
@@ -118,7 +128,7 @@ describe('LLM Integration Flow', () => {
     });
 
     // 2. Mock GenAI
-    vi.spyOn(llmManager, 'generateResponse').mockResolvedValue({ text: "Error avoided" });
+    vi.spyOn(llmManager, 'generateResponse').mockImplementation(async () => ({ text: "Error avoided" }));
 
     // 2. Trigger Chat
     await chatHandler.handleUserMessage("hi");

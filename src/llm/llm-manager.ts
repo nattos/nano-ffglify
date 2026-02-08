@@ -20,6 +20,8 @@ import { IRSchema } from "../domain/types";
 import { DEFAULT_LLM_MODEL } from "../constants";
 import { OpSignatures } from "../ir/signatures";
 import { ALL_EXAMPLES } from "../domain/example-ir";
+import { appController } from "../state/controller";
+import { PromptBuilder } from "../domain/prompt-builder";
 
 export interface LLMToolCall {
   name: string;
@@ -306,3 +308,8 @@ export class GoogleGenAIManager implements LLMManager {
     throw new Error("Impossible path");
   }
 }
+
+export const llmManager = new GoogleGenAIManager(
+  appController,
+  PromptBuilder.buildWorkerSystemInstruction()
+);
