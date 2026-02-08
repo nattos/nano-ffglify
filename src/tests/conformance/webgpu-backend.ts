@@ -51,6 +51,7 @@ export const WebGpuBackend: TestBackend = {
           device: device,
           executor: gpuExecutor,
           resources: ctx.resources,
+          inputs: ctx.inputs,
           logHandler: (msg, payload) => ctx.log.push({ type: 'log', target: msg, payload }),
           onResizeCallback: (id, size, format) => {
             ctx.log.push({ type: 'resize', target: id, payload: { size, format } });

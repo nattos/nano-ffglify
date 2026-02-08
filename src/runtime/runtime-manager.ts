@@ -170,6 +170,7 @@ export class RuntimeManager {
         device: device,
         executor: gpuExecutor,
         resources: this.resources,
+        inputs: this.inputs,
         logHandler: (msg, payload) => console.log(msg, payload),
       });
 

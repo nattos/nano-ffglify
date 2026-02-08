@@ -137,6 +137,11 @@ export type PrecomputedWriteOp =
  */
 export interface RuntimeGlobals {
   /**
+   * The global inputs for the current execution context.
+   */
+  readonly inputs: Map<string, RuntimeValue>;
+
+  /**
    * Dispatches a GPU compute shader.
    */
   dispatch(targetId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue>): Promise<void>;

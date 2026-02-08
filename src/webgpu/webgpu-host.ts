@@ -16,6 +16,7 @@ export interface IGpuExecutor {
  * Bridges the JIT-compiled CPU code with the GPU executor and resource state.
  */
 export class WebGpuHost implements RuntimeGlobals {
+  readonly inputs: Map<string, RuntimeValue>;
   readonly device;
   readonly executor;
   readonly resources;
@@ -27,6 +28,7 @@ export class WebGpuHost implements RuntimeGlobals {
       device: GPUDevice,
       executor: IGpuExecutor,
       resources: Map<string, ResourceState>,
+      inputs?: Map<string, RuntimeValue>,
       onResizeCallback?: (resId: string, size: number | number[], format?: string | number) => void,
       logHandler?: (message: string, payload?: any) => void
     }
@@ -34,12 +36,16 @@ export class WebGpuHost implements RuntimeGlobals {
     this.device = init.device;
     this.executor = init.executor;
     this.resources = init.resources;
+    this.inputs = init.inputs || new Map();
     this.onResizeCallback = init.onResizeCallback;
     this.logHandler = init.logHandler;
   }
 
   async dispatch(targetId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue>): Promise<void> {
-    await this.executor.executeShader(targetId, workgroups, args, this.resources);
+    // Merge global inputs with explicitly provided args.
+    // Explicit args override global inputs of the same name.
+    const mergedArgs = { ...Object.fromEntries(this.inputs.entries()), ...args };
+    await this.executor.executeShader(targetId, workgroups, mergedArgs, this.resources);
   }
 
   async draw(targetId: string, vertexId: string, fragmentId: string, vertexCount: number, pipeline: RenderPipelineDef): Promise<void> {
