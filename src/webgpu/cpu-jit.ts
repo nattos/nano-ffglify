@@ -213,7 +213,7 @@ require('./intrinsics.js');
       lines.push(`    });`);
       lines.push(`    pipelines.set('${id}', pipeline);`);
 
-      const precomputed = precomputeShaderInfo(data.metadata, ir.structs);
+      const precomputed = precomputeShaderInfo(data.metadata, ir.structs || []);
       lines.push(`    precomputedInfos.set('${id}', ${JSON.stringify(precomputed)});`);
       lines.push(`  }`);
     });
@@ -232,7 +232,7 @@ require('./intrinsics.js');
       lines.push(`     });`);
       lines.push(`     renderPipelines.set('${key}', pipeline);`);
 
-      const precomputed = precomputeShaderInfo(data.metadata, ir.structs);
+      const precomputed = precomputeShaderInfo(data.metadata, ir.structs || []);
       lines.push(`    precomputedInfos.set('${data.vertexId}', ${JSON.stringify(precomputed)});`);
       lines.push(`  }`);
     });

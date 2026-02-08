@@ -286,14 +286,13 @@ export function packBuffer(layout: BufferBlockLayout, values: Record<string, Run
   for (const field of layout.fields) {
     const val = values[field.name!];
     if (val === undefined) {
-      // console.warn(`[packBuffer] Missing value for field ${field.name}`);
+      console.log(`[packBuffer] Missing value for field ${field.name}`);
       continue;
     }
-    // console.log(`[packBuffer] Writing ${field.name} (${field.type}) at ${field.offset}:`, val);
     try {
       writeFieldRecursive(view, field.offset, val, field.type, layoutHelpers, mode);
     } catch (e) {
-      // console.error(`[packBuffer] Error writing ${field.name} at ${field.offset}:`, e);
+      console.error(`[packBuffer] Error writing ${field.name} at ${field.offset}:`, e);
       throw e;
     }
   }

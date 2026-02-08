@@ -137,11 +137,11 @@ export const BrowserCpuBackend: TestBackend = {
     return new EvaluationContext(ir, inputs);
   },
   run: async (ctx: EvaluationContext, entryPoint: string) => {
-    await runImplementation(ctx, entryPoint, 'WebGPU');
+    await runImplementation(ctx, entryPoint, 'ForceOntoGPU');
   },
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
     const ctx = new EvaluationContext(ir, inputs);
-    await runImplementation(ctx, entryPoint, 'WebGPU');
+    await runImplementation(ctx, entryPoint, 'ForceOntoGPU');
     return ctx;
   }
 };

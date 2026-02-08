@@ -27,6 +27,7 @@ export interface WgslOptions {
   workgroupSize?: [number, number, number];
   storageResources?: Set<string>; // Pre-calculated resources used with texture_store
   sampledResources?: Set<string>; // Pre-calculated resources used with texture_sample/texture_load
+  fullIr?: IRDocument; // Full IR document for global context
 }
 
 export interface CompilationMetadata {
@@ -56,6 +57,7 @@ export class WgslGenerator {
    */
   compileFunctions(functions: FunctionDef[], entryPointId: string, options: WgslOptions = {}, ir?: Partial<IRDocument>): CompilationResult {
     options.entryPointId = entryPointId; // Ensure options has the entry point ID
+    if (ir) options.fullIr = ir as IRDocument;
     const entryFunc = functions.find(f => f.id === entryPointId);
     if (!entryFunc) throw new Error(`Entry point function '${entryPointId}' not found`);
     options.entryPointId = entryPointId;
@@ -146,27 +148,35 @@ export class WgslGenerator {
     this.emitTextureSamplers(lines, options, fullIr, usedResources);
 
     // Assemble final shader code
-    const finalLines: string[] = [];
-    // diagnostic(off, derivative_uniformity);
+    const finalLines: string[] = []; // Collect everything for the final string assembly
     finalLines.push('');
 
     // Pre-validate
-    this.validateRecursion(ir?.functions || []);
+    this.validateRecursion(fullIr.functions || []);
 
     // 1. Emit Globals struct
     // Check if we have explicit globals in IR OR if we have mapped variables (Compute backend)
-    const hasGlobals = (ir?.globals && ir.globals.length > 0) || (options.varMap && options.varMap.size > 0);
-
-    if (hasGlobals && options.globalBufferBinding !== undefined) {
-      finalLines.push('struct GlobalsBuffer { data: array<f32> }');
-      finalLines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : GlobalsBuffer;`);
+    const hasGlobals = (fullIr.globals && fullIr.globals.length > 0) || (options.varMap && options.varMap.size > 0);
+    if (hasGlobals) {
+      if (options.globalBufferBinding === undefined) options.globalBufferBinding = 0;
+      finalLines.push(`struct Globals { data: array<f32> }`);
+      finalLines.push(`@group(0) @binding(${options.globalBufferBinding}) var<storage, read_write> b_globals : Globals;`);
       finalLines.push('');
     }
 
     // 2.5. Inputs Buffer (Uniforms / Non-Stage IO)
-    // For shaders, we use the function's own inputs. For direct execution of a graph, we might use global inputs.
-    const inputSource = (entryFunc.type === 'shader') ? entryFunc.inputs : fullIr.inputs;
-    const nonBuiltinInputs = inputSource.filter(i => !(i as any).builtin && i.type !== 'texture2d' && !options.varMap?.has(i.id));
+    // For shaders, we use both the function's own inputs AND global inputs.
+    // This allows shaders to access top-level graph parameters.
+    const inputSource = entryFunc.type === 'shader'
+      ? [...(fullIr.inputs || []), ...entryFunc.inputs]
+      : (fullIr.inputs || []);
+
+    // Deduplicate inputs by ID
+    const uniqueInputsMap = new Map();
+    inputSource.forEach(i => uniqueInputsMap.set(i.id, i));
+    const uniqueInputsList = Array.from(uniqueInputsMap.values());
+
+    const nonBuiltinInputs = uniqueInputsList.filter((i: any) => !i.builtin && i.type !== 'texture2d' && !options.varMap?.has(i.id));
 
     let inputLayout: BufferBlockLayout | undefined;
     const layout = new ShaderLayout(ir?.structs || []);
@@ -252,16 +262,20 @@ export class WgslGenerator {
       }
     });
 
-    finalLines.push(...lines);
-    finalLines.push(...functionLines);
+    // Merge everything
+    const finalCodeLines = [...finalLines, ...lines, ...functionLines];
+    const code = finalCodeLines.join('\n');
+
+
 
     const hasInputs = options.inputBinding !== undefined && (
       (options.stage === 'compute') || // Always have u_dispatch_size in compute
       nonBuiltinInputs.length > 0
     );
     const finalWorkgroupSize = options.workgroupSize || (options.stage === 'compute' ? [16, 16, 1] as [number, number, number] : [1, 1, 1] as [number, number, number]);
+
     return {
-      code: finalLines.join('\n'),
+      code,
       imports: {
         '#import "intrinsics.wgsl"': intrinsicsWgsl
       },
@@ -745,6 +759,16 @@ export class WgslGenerator {
       }
       return varId;
     }
+
+    // New logic: check global inputs from the IR document
+    // We must check BOTH the function's own inputs AND the global inputs
+    const globalInput = options.fullIr?.inputs?.find((i: any) => i.id === varId);
+    if (globalInput && options.inputBinding !== undefined) {
+      const expr = `b_inputs.${varId}`;
+      if (globalInput.type === 'bool') return `bool(${expr})`;
+      return expr;
+    }
+
     return varId;
   }
 
@@ -818,7 +842,7 @@ export class WgslGenerator {
           // Heuristic: check if resolved expression looks like integer array or look up source node
           const srcNode = func.nodes.find(n => n.id === vals);
           // If source is array_construct with int fill
-          if (srcNode && srcNode.op === 'array_construct') {
+          if (srcNode && (srcNode.op === 'array_construct' || srcNode.op === 'struct_construct')) {
             const fill = srcNode['fill'];
             if (typeof fill === 'number' && Number.isInteger(fill)) return `mat4_from_array_i32(${val})`;
           }

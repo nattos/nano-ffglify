@@ -7,6 +7,7 @@ import { TestBackend } from './types';
 import { WebGpuBackend } from './webgpu-backend';
 import { WgslGenerator } from '../../webgpu/wgsl-generator';
 import { GpuCache } from '../../webgpu/gpu-cache';
+import { ShaderLayout, packBuffer } from '../../webgpu/shader-layout';
 
 // Helper: Calculate size per element
 const getElementSize = (type?: string) => {
@@ -81,7 +82,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
         // 2. Allocate & Prepare Resources
         device.pushErrorScope('validation');
         const resourceBindings = new Map<string, number>();
-        let bindingCounter = 1; // 0 is reserved for Globals
+        let bindingCounter = 2; // 0 is Globals, 1 is Inputs
 
         for (const res of ir.resources) {
           if (res.type === 'buffer') {
@@ -235,11 +236,30 @@ export const ForceOntoGPUTestBackend: TestBackend = {
             targetEntryPoint = dispNode['func'];
             const targetFunc = ir.functions.find(f => f.id === targetEntryPoint);
             if (!targetFunc) throw new Error(`Dispatched function '${targetEntryPoint}' not found`);
-            // We reuse the original function for type inference context if needed,
-            // but strictly we should infer types for the target.
-            // WgslGenerator.compileFunctions handles dependency resolution.
           }
-          const dims = dispNode['dispatch'];
+          let dims = dispNode['dispatch'];
+
+          // Resolve string reference (e.g. 'tex_size' from resource_get_size)
+          if (typeof dims === 'string') {
+            const refNode = func.nodes.find(n => n.id === dims);
+            if (refNode && refNode.op === 'resource_get_size') {
+              const resId = refNode['resource'] as string;
+              const res = ir.resources.find(r => r.id === resId);
+              if (res && res.size?.mode === 'fixed') {
+                const val = res.size.value;
+                if (Array.isArray(val)) {
+                  dims = [val[0], val[1], 1];
+                } else {
+                  dims = [val, 1, 1];
+                }
+              }
+            } else {
+              // Try to get from inputs
+              const inputVal = ctx.getVar(dims);
+              if (Array.isArray(inputVal)) dims = inputVal;
+            }
+          }
+
           if (Array.isArray(dims)) {
             dispatchSize = [
               (dims[0] as number) || 1,
@@ -249,7 +269,9 @@ export const ForceOntoGPUTestBackend: TestBackend = {
           }
         }
 
+
         const compilation = new WgslGenerator().compile(ir, targetEntryPoint, {
+          stage: 'compute',
           globalBufferBinding: 0,
           inputBinding: 1,
           varMap: varMap,
@@ -259,27 +281,60 @@ export const ForceOntoGPUTestBackend: TestBackend = {
           samplerBindings: genSamplerBindings,
           resourceDefs: resourceDefs
         });
+
         const code = compilation.code;
 
         device.pushErrorScope('validation');
         const pipeline = await GpuCache.getComputePipeline(device, code);
 
         const error = await device.popErrorScope();
-        if (error) throw new Error(`WebGPU Error: ${error.message}`);
+        if (error) {
+          console.log("!!! WEBGPU ERROR !!!", error.message);
+          throw new Error(`WebGPU Error: ${error.message}`);
+        }
+
 
         const bindGroupEntries: GPUBindGroupEntry[] = [];
         if (code.includes('var<storage, read_write> b_globals') && globalBuffer) {
           bindGroupEntries.push({ binding: 0, resource: { buffer: globalBuffer } });
         }
-        if (code.includes('var<storage, read> b_inputs')) {
+        const layout = compilation.metadata.inputLayout;
+        if (layout) {
+          const wgSize = compilation.metadata.workgroupSize || [16, 16, 1];
+          const totalThreads = [
+            dispatchSize[0],
+            dispatchSize[1],
+            dispatchSize[2]
+          ];
+          // Determine workgroups needed to cover totalThreads
+          const workgroups = [
+            Math.ceil(totalThreads[0] / wgSize[0]),
+            Math.ceil(totalThreads[1] / wgSize[1]),
+            Math.ceil(totalThreads[2] / wgSize[2])
+          ];
+
+
+          const inputValues: Record<string, RuntimeValue> = {
+            u_dispatch_size: totalThreads
+          };
+          ctx.inputs.forEach((v, k) => {
+            inputValues[k] = v;
+          });
+
+
+          const packed = packBuffer(layout, inputValues, new ShaderLayout(ir.structs || []), 'std430');
+
+
           const buffer = device.createBuffer({
-            size: 16, // u_dispatch_size is 12 bytes + padding
+            size: packed.byteLength,
             usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_DST
           });
-          const data = new Uint32Array([dispatchSize[0], dispatchSize[1], dispatchSize[2], 0]);
-          device.queue.writeBuffer(buffer, 0, data);
+          device.queue.writeBuffer(buffer, 0, packed);
           bindGroupEntries.push({ binding: 1, resource: { buffer } });
           stagingBuffers.push(buffer); // Clean up later
+
+          // Use these for final dispatch
+          dispatchSize = workgroups;
         }
 
         resourceBindings.forEach((binding, id) => {
@@ -373,31 +428,25 @@ export const ForceOntoGPUTestBackend: TestBackend = {
 
         for (const [id, staging] of resStaging) {
           await staging.mapAsync((globalThis as any).GPUMapMode.READ);
-          const data = new Float32Array(staging.getMappedRange());
           const state = ctx.getResource(id);
 
           if (state.def.type === 'texture2d') {
-            const width = state.width || 1;
-            const height = state.height || 1;
-            let bpp = 4;
-            if (state.def.format === 'rgba32f') bpp = 16;
-            if (state.def.format === 'r32f') bpp = 4;
-
-            const floatsPerRow = (Math.ceil((width * bpp) / 256) * 256) / 4;
-            const validFloatsPerRow = (width * bpp) / 4;
-            const unpadded: number[] = [];
-            for (let y = 0; y < height; y++) {
-              unpadded.push(...Array.from(data.subarray(y * floatsPerRow, y * floatsPerRow + validFloatsPerRow)));
+            const bytesPerPixel = 4; // Assuming RGBA8
+            const bytesPerRow = Math.ceil((state.width * bytesPerPixel) / 256) * 256;
+            const unpadded: any[] = [];
+            for (let y = 0; y < state.height; y++) {
+              const rowBytes = new Uint8Array(staging.getMappedRange(y * bytesPerRow, bytesPerRow));
+              for (let x = 0; x < state.width; x++) {
+                const r = rowBytes[x * 4] / 255.0;
+                const g = rowBytes[x * 4 + 1] / 255.0;
+                const b = rowBytes[x * 4 + 2] / 255.0;
+                const a = rowBytes[x * 4 + 3] / 255.0;
+                unpadded.push([r, g, b, a]);
+              }
             }
-
-            if (bpp === 16) {
-              const vectors: number[][] = [];
-              for (let i = 0; i < unpadded.length; i += 4) vectors.push(unpadded.slice(i, i + 4));
-              state.data = vectors;
-            } else {
-              state.data = unpadded;
-            }
-          } else {
+            state.data = unpadded;
+          } else { // Buffer resource
+            const data = new Float32Array(staging.getMappedRange());
             const elFloats = getElementSize(state.def.dataType) / 4;
             if (elFloats > 1) {
               state.data = new Array(state.width);
@@ -409,6 +458,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
               state.data = Array.from(data);
             }
           }
+          staging.unmap();
         }
       } finally {
         globalBuffer?.destroy();
