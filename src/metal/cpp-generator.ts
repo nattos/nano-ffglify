@@ -179,6 +179,8 @@ export class CppGenerator {
       case 'float2': return 'std::array<float, 2>';
       case 'float3': return 'std::array<float, 3>';
       case 'float4': return 'std::array<float, 4>';
+      case 'float3x3': return 'std::array<float, 9>';
+      case 'float4x4': return 'std::array<float, 16>';
       default:
         // Check for array types like array<i32, 3>
         const arrayMatch = irType.match(/array<([^,]+),\s*(\d+)>/);
@@ -248,12 +250,12 @@ export class CppGenerator {
   private hasResult(op: string): boolean {
     const valueOps = [
       'float', 'int', 'uint', 'bool', 'literal', 'loop_index',
-      'float2', 'float3', 'float4',
+      'float2', 'float3', 'float4', 'float3x3', 'float4x4',
       'static_cast_float', 'static_cast_int',
       'var_get', 'buffer_load', 'vec_swizzle',
       'vec_get_element', 'call_func',
       'struct_construct', 'struct_extract',
-      'array_construct', 'array_extract',
+      'array_construct', 'array_extract', 'array_length',
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
@@ -428,33 +430,36 @@ export class CppGenerator {
       const dispatch = node['dispatch'] || [1, 1, 1];
 
       // Build dispatch dimensions
-      const dims = dispatch.map((d: number | string) => {
-        if (typeof d === 'number') return d.toString();
-        // For string references, resolve the argument
-        return this.resolveArg(node, 'dispatch', func, allFunctions, emitPure, edges);
-      });
       const dimX = typeof dispatch[0] === 'number' ? dispatch[0] : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_x']: dispatch[0] } as Node, 'dispatch_x', func, allFunctions, emitPure, edges);
       const dimY = typeof dispatch[1] === 'number' ? dispatch[1] : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_y']: dispatch[1] } as Node, 'dispatch_y', func, allFunctions, emitPure, edges);
       const dimZ = typeof dispatch[2] === 'number' ? dispatch[2] : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_z']: dispatch[2] } as Node, 'dispatch_z', func, allFunctions, emitPure, edges);
 
-      // Build args array for shader inputs
+      // Build args - serialize all inputs as flat floats for GPU marshalling
       const targetFuncDef = allFunctions.find(f => f.id === targetFunc);
-      const argParts: string[] = [];
-      if (targetFuncDef?.inputs) {
+      if (targetFuncDef?.inputs && targetFuncDef.inputs.length > 0) {
+        lines.push(`${indent}{`);
+        lines.push(`${indent}    std::vector<float> _shader_args;`);
+
         for (const input of targetFuncDef.inputs) {
+          let argExpr: string;
           if (node['args'] && node['args'][input.id]) {
             const argId = node['args'][input.id];
-            argParts.push(this.resolveArg({ ...node, [input.id]: argId } as Node, input.id, func, allFunctions, emitPure, edges));
+            argExpr = this.resolveArg({ ...node, [input.id]: argId } as Node, input.id, func, allFunctions, emitPure, edges);
           } else if (node[input.id] !== undefined) {
-            argParts.push(this.resolveArg(node, input.id, func, allFunctions, emitPure, edges));
+            argExpr = this.resolveArg(node, input.id, func, allFunctions, emitPure, edges);
           } else {
-            argParts.push('0.0f'); // Default
+            argExpr = '0.0f';
           }
-        }
-      }
-      const argsStr = argParts.length > 0 ? `, {${argParts.join(', ')}}` : '';
 
-      lines.push(`${indent}ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}${argsStr});`);
+          const irType = input.type || 'float';
+          this.emitArgFlattening(`${indent}    `, argExpr, irType, lines);
+        }
+
+        lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
+        lines.push(`${indent}}`);
+      } else {
+        lines.push(`${indent}ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ});`);
+      }
     } else if (this.hasResult(node.op)) {
       // Executable nodes with results (like call_func) need auto declarations
       const expr = this.compileExpression(node, func, allFunctions, true, emitPure, edges);
@@ -578,11 +583,29 @@ export class CppGenerator {
       case 'math_neq': return `((${a()}) != (${b()}) ? 1.0f : 0.0f)`;
 
       case 'float': return `static_cast<float>(${val()})`;
+      case 'int': return `static_cast<int>(${val()})`;
+      case 'bool': {
+        const v = node['val'];
+        if (typeof v === 'boolean') return v ? 'true' : 'false';
+        return `(${val()} != 0.0f)`;
+      }
       case 'static_cast_float': return `static_cast<float>(${val()})`;
+      case 'static_cast_int': return `static_cast<int>(${val()})`;
 
       case 'float2': return `std::array<float, 2>{${a('x')}, ${a('y')}}`;
       case 'float3': return `std::array<float, 3>{${a('x')}, ${a('y')}, ${a('z')}}`;
       case 'float4': return `std::array<float, 4>{${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}}`;
+
+      case 'float3x3': {
+        const vals = node['vals'] || [];
+        const items = (vals as number[]).map((v: number) => this.formatFloat(v));
+        return `std::array<float, 9>{${items.join(', ')}}`;
+      }
+      case 'float4x4': {
+        const vals = node['vals'] || [];
+        const items = (vals as number[]).map((v: number) => this.formatFloat(v));
+        return `std::array<float, 16>{${items.join(', ')}}`;
+      }
 
       case 'vec_dot': return `vec_dot(${a()}, ${b()})`;
       case 'vec_length': return `vec_length(${a()})`;
@@ -681,12 +704,39 @@ export class CppGenerator {
       case 'array_construct': {
         const length = node['length'] || 0;
         const fill = node['fill'];
-        // Determine element type based on fill value
-        const isInt = fill !== undefined && typeof fill === 'number' && Number.isInteger(fill);
-        const elemType = isInt ? 'int' : 'float';
-        const fillExpr = fill !== undefined
-          ? (typeof fill === 'number' ? (isInt ? String(fill) : this.formatFloat(fill)) : String(fill))
-          : (isInt ? '0' : '0.0f');
+        let fillExpr: string;
+        let elemType: string;
+
+        if (fill === undefined) {
+          fillExpr = '0.0f';
+          elemType = 'float';
+        } else if (typeof fill === 'number') {
+          if (Number.isInteger(fill)) {
+            fillExpr = String(fill);
+            elemType = 'int';
+          } else {
+            fillExpr = this.formatFloat(fill);
+            elemType = 'float';
+          }
+        } else if (typeof fill === 'string') {
+          // Could be a node reference
+          const refNode = func.nodes.find(n => n.id === fill);
+          if (refNode) {
+            emitPure(fill);
+            fillExpr = this.nodeResId(fill);
+            elemType = `decltype(${fillExpr})`;
+          } else if (func.localVars.some(v => v.id === fill)) {
+            fillExpr = this.sanitizeId(fill, 'var');
+            elemType = `decltype(${fillExpr})`;
+          } else {
+            fillExpr = fill;
+            elemType = 'float';
+          }
+        } else {
+          fillExpr = String(fill);
+          elemType = 'float';
+        }
+
         return `({auto _arr = std::array<${elemType}, ${length}>{}; for(auto& _e : _arr) _e = ${fillExpr}; _arr;})`;
       }
 
@@ -696,8 +746,88 @@ export class CppGenerator {
         return `${arrExpr}[static_cast<size_t>(${idx})]`;
       }
 
+      case 'array_length': {
+        const arrExpr = this.resolveArg(node, 'array', func, allFunctions, emitPure, edges);
+        return `static_cast<int>(${arrExpr}.size())`;
+      }
+
       default:
         throw new Error(`C++ Generator: Unsupported op '${node.op}'`);
+    }
+  }
+
+  /**
+   * Emit code to flatten a C++ expression of a given IR type into _shader_args vector.
+   * Handles scalars, vectors, matrices, structs, and arrays recursively.
+   */
+  private emitArgFlattening(indent: string, argExpr: string, irType: string, lines: string[]): void {
+    switch (irType) {
+      case 'float':
+        lines.push(`${indent}_shader_args.push_back(${argExpr});`);
+        break;
+      case 'int':
+      case 'i32':
+        lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}));`);
+        break;
+      case 'bool':
+        lines.push(`${indent}_shader_args.push_back(${argExpr} ? 1.0f : 0.0f);`);
+        break;
+      case 'float2':
+      case 'float3':
+      case 'float4':
+      case 'float3x3':
+      case 'float4x4':
+        lines.push(`${indent}_shader_args.insert(_shader_args.end(), ${argExpr}.begin(), ${argExpr}.end());`);
+        break;
+      default: {
+        // Check for struct type
+        const structDef = this.ir?.structs?.find(s => s.id === irType);
+        if (structDef) {
+          for (const member of structDef.members || []) {
+            const memberExpr = `${argExpr}.${this.sanitizeId(member.name, 'field')}`;
+            this.emitArgFlattening(indent, memberExpr, member.type, lines);
+          }
+          break;
+        }
+        // Check for fixed array: array<T, N>
+        const arrayMatch = irType.match(/array<([^,]+),\s*(\d+)>/);
+        if (arrayMatch) {
+          const elemType = arrayMatch[1].trim();
+          if (['float', 'int', 'i32', 'bool'].includes(elemType)) {
+            lines.push(`${indent}for (auto& _e : ${argExpr}) _shader_args.push_back(static_cast<float>(_e));`);
+          } else {
+            const len = parseInt(arrayMatch[2]);
+            for (let i = 0; i < len; i++) {
+              this.emitArgFlattening(indent, `${argExpr}[${i}]`, elemType, lines);
+            }
+          }
+          break;
+        }
+        // Check for dynamic array: T[]
+        const dynMatch = irType.match(/^(.+)\[\]$/);
+        if (dynMatch) {
+          const elemType = dynMatch[1].trim();
+          // Push length first, then flatten each element
+          lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}.size()));`);
+          const elemStructDef = this.ir?.structs?.find(s => s.id === elemType);
+          if (elemStructDef) {
+            // Struct element: flatten each member per element
+            lines.push(`${indent}for (size_t _i = 0; _i < ${argExpr}.size(); _i++) {`);
+            for (const member of elemStructDef.members || []) {
+              const memberExpr = `${argExpr}[_i].${this.sanitizeId(member.name, 'field')}`;
+              this.emitArgFlattening(`${indent}    `, memberExpr, member.type, lines);
+            }
+            lines.push(`${indent}}`);
+          } else {
+            lines.push(`${indent}for (size_t _i = 0; _i < ${argExpr}.size(); _i++) {`);
+            this.emitArgFlattening(`${indent}    `, `${argExpr}[_i]`, elemType, lines);
+            lines.push(`${indent}}`);
+          }
+          break;
+        }
+        // Fallback: try as float
+        lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}));`);
+      }
     }
   }
 }

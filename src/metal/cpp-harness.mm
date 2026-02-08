@@ -277,12 +277,19 @@ struct EvalContext {
     dispatchShaderImpl(funcName, dimX, dimY, dimZ, nullptr, 0);
   }
 
-  // Dispatch with args
+  // Dispatch with args (initializer list)
   void dispatchShader(const char *funcName, int dimX, int dimY, int dimZ,
                       std::initializer_list<float> args) {
     std::vector<float> argsVec(args);
     dispatchShaderImpl(funcName, dimX, dimY, dimZ, argsVec.data(),
                        argsVec.size());
+  }
+
+  // Dispatch with args (vector - used for complex type marshalling)
+  void dispatchShader(const char *funcName, int dimX, int dimY, int dimZ,
+                      const std::vector<float> &args) {
+    dispatchShaderImpl(funcName, dimX, dimY, dimZ,
+                       const_cast<float *>(args.data()), args.size());
   }
 
   void dispatchShaderImpl(const char *funcName, int dimX, int dimY, int dimZ,

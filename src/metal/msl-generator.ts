@@ -268,16 +268,11 @@ export class MslGenerator {
     // Build kernel signature with buffer bindings
     const bufferParams: string[] = [];
 
-    if (func.type === 'shader' && func.inputs && func.inputs.length > 0) {
-      // Emit inputs struct definition before kernel
-      lines.push(`struct ${this.sanitizeId(func.id, 'struct')}_Inputs {`);
-      for (const input of func.inputs) {
-        const type = this.irTypeToMsl(input.type || 'float');
-        lines.push(`  ${type} ${this.sanitizeId(input.id, 'field')};`);
-      }
-      lines.push('};');
-      lines.push('');
-      bufferParams.push(`constant ${this.sanitizeId(func.id, 'struct')}_Inputs& inputs [[buffer(0)]]`);
+    const hasShaderInputs = func.type === 'shader' && func.inputs && func.inputs.length > 0;
+
+    if (hasShaderInputs) {
+      // Use flat float buffer for marshalling - avoids type alignment issues
+      bufferParams.push('constant float* inputs [[buffer(0)]]');
     } else {
       bufferParams.push('device float* b_globals [[buffer(0)]]');
     }
@@ -288,7 +283,6 @@ export class MslGenerator {
         const elemType = this.irTypeToMsl(res.dataType || 'float');
         bufferParams.push(`device ${elemType}* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
       } else if (res?.type === 'texture2d') {
-        // Add texture and sampler bindings with distinct names
         bufferParams.push(`texture2d<float> ${this.sanitizeId(resId)}_tex [[texture(${binding})]]`);
         bufferParams.push(`sampler ${this.sanitizeId(resId)}_sampler [[sampler(${binding})]]`);
       }
@@ -298,6 +292,11 @@ export class MslGenerator {
     lines.push(`kernel void ${kernelName}(`);
     lines.push(`    ${bufferParams.join(',\n    ')},`);
     lines.push('    uint3 gid [[thread_position_in_grid]]) {');
+
+    // Emit input unpacking preamble - reconstruct typed locals from flat float buffer
+    if (hasShaderInputs) {
+      this.emitInputUnpacking(func, lines);
+    }
 
     const edges = reconstructEdges(func);
     this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges);
@@ -692,6 +691,15 @@ export class MslGenerator {
         return `${arrExpr}[int(${idx})]`;
       }
 
+      case 'array_length': {
+        const arrId = node['array'];
+        // For dynamic array inputs, we declared a _len variable in the preamble
+        if (typeof arrId === 'string' && func.inputs?.some(i => i.id === arrId)) {
+          return `${this.sanitizeId(arrId)}_len`;
+        }
+        return '0';
+      }
+
       case 'call_func': {
         const targetId = node['func'] as string;
         const targetFunc = allFunctions.find(f => f.id === targetId);
@@ -751,9 +759,9 @@ export class MslGenerator {
   }
 
   private getVariableExpr(varId: string, func: FunctionDef, varMap: Map<string, number>): string {
-    // Check if it's a shader function input
+    // Check if it's a shader function input - use the unpacked local variable
     if (func.type === 'shader' && func.inputs?.some(i => i.id === varId)) {
-      return `inputs.${this.sanitizeId(varId, 'field')}`;
+      return this.sanitizeId(varId);
     }
 
     // Check if it's a local variable
@@ -822,8 +830,10 @@ export class MslGenerator {
       'var_get', 'buffer_load',
       'float2', 'float3', 'float4',
       'vec_dot', 'vec_length', 'vec_normalize', 'vec_swizzle', 'vec_get_element',
+      'static_cast_float', 'static_cast_int', 'static_cast_bool',
       'struct_construct', 'struct_extract',
-      'array_construct', 'array_extract',
+      'array_construct', 'array_extract', 'array_length',
+      'resource_get_size',
       'call_func'
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
@@ -906,5 +916,168 @@ export class MslGenerator {
   private buildFuncParams(func: FunctionDef): string {
     if (!func.inputs || func.inputs.length === 0) return '';
     return ', ' + func.inputs.map(i => `float ${this.sanitizeId(i.id, 'var')}`).join(', ');
+  }
+
+  /**
+   * Get the flat float count for an IR type (for marshalling through flat float buffer).
+   */
+  private getTypeFlatSize(irType: string): number {
+    switch (irType) {
+      case 'float': case 'int': case 'i32': case 'bool': return 1;
+      case 'float2': return 2;
+      case 'float3': return 3;
+      case 'float4': return 4;
+      case 'float3x3': return 9;
+      case 'float4x4': return 16;
+      default: {
+        const structDef = this.ir?.structs?.find(s => s.id === irType);
+        if (structDef) {
+          return (structDef.members || []).reduce((sum, m) => sum + this.getTypeFlatSize(m.type), 0);
+        }
+        const arrayMatch = irType.match(/array<([^,]+),\s*(\d+)>/);
+        if (arrayMatch) {
+          return parseInt(arrayMatch[2]) * this.getTypeFlatSize(arrayMatch[1].trim());
+        }
+        return 1;
+      }
+    }
+  }
+
+  /**
+   * Emit code to unpack shader inputs from a flat float buffer into typed local variables.
+   */
+  private emitInputUnpacking(func: FunctionDef, lines: string[]): void {
+    let offset = 0;
+    for (const input of func.inputs || []) {
+      const irType = input.type || 'float';
+      const varName = this.sanitizeId(input.id);
+      offset = this.emitUnpackInput(varName, irType, offset, lines);
+      if (offset < 0) break; // Dynamic array consumed remainder
+    }
+  }
+
+  /**
+   * Emit unpacking code for a single input variable from the flat float buffer.
+   * Returns the new offset, or -1 if the rest of the buffer is consumed (dynamic array).
+   */
+  private emitUnpackInput(varName: string, irType: string, offset: number, lines: string[]): number {
+    switch (irType) {
+      case 'float':
+        lines.push(`    float ${varName} = inputs[${offset}];`);
+        return offset + 1;
+      case 'int': case 'i32':
+        lines.push(`    int ${varName} = int(inputs[${offset}]);`);
+        return offset + 1;
+      case 'bool':
+        lines.push(`    bool ${varName} = inputs[${offset}] != 0.0f;`);
+        return offset + 1;
+      case 'float2':
+        lines.push(`    float2 ${varName} = float2(inputs[${offset}], inputs[${offset + 1}]);`);
+        return offset + 2;
+      case 'float3':
+        lines.push(`    float3 ${varName} = float3(inputs[${offset}], inputs[${offset + 1}], inputs[${offset + 2}]);`);
+        return offset + 3;
+      case 'float4':
+        lines.push(`    float4 ${varName} = float4(inputs[${offset}], inputs[${offset + 1}], inputs[${offset + 2}], inputs[${offset + 3}]);`);
+        return offset + 4;
+      case 'float3x3': {
+        const indices = Array.from({length: 9}, (_, i) => `inputs[${offset + i}]`);
+        lines.push(`    float ${varName}[9] = {${indices.join(', ')}};`);
+        return offset + 9;
+      }
+      case 'float4x4': {
+        const indices = Array.from({length: 16}, (_, i) => `inputs[${offset + i}]`);
+        lines.push(`    float ${varName}[16] = {${indices.join(', ')}};`);
+        return offset + 16;
+      }
+      default: {
+        // Check for struct type
+        const structDef = this.ir?.structs?.find(s => s.id === irType);
+        if (structDef) {
+          const mslType = this.sanitizeId(irType, 'struct');
+          const memberExprs: string[] = [];
+          let memberOffset = offset;
+          for (const m of structDef.members || []) {
+            const mt = m.type;
+            if (mt === 'float') {
+              memberExprs.push(`inputs[${memberOffset}]`);
+              memberOffset += 1;
+            } else if (mt === 'int' || mt === 'i32') {
+              memberExprs.push(`int(inputs[${memberOffset}])`);
+              memberOffset += 1;
+            } else if (mt === 'float2') {
+              memberExprs.push(`float2(inputs[${memberOffset}], inputs[${memberOffset + 1}])`);
+              memberOffset += 2;
+            } else if (mt === 'float3') {
+              memberExprs.push(`float3(inputs[${memberOffset}], inputs[${memberOffset + 1}], inputs[${memberOffset + 2}])`);
+              memberOffset += 3;
+            } else if (mt === 'float4') {
+              memberExprs.push(`float4(inputs[${memberOffset}], inputs[${memberOffset + 1}], inputs[${memberOffset + 2}], inputs[${memberOffset + 3}])`);
+              memberOffset += 4;
+            } else {
+              memberExprs.push(`inputs[${memberOffset}]`);
+              memberOffset += this.getTypeFlatSize(mt);
+            }
+          }
+          lines.push(`    ${mslType} ${varName} = ${mslType}{${memberExprs.join(', ')}};`);
+          return memberOffset;
+        }
+
+        // Check for fixed array: array<T, N>
+        const arrayMatch = irType.match(/array<([^,]+),\s*(\d+)>/);
+        if (arrayMatch) {
+          const elemType = arrayMatch[1].trim();
+          const len = parseInt(arrayMatch[2]);
+          const mslElemType = this.irTypeToMsl(elemType);
+          const elemSize = this.getTypeFlatSize(elemType);
+          const indices = Array.from({length: len}, (_, i) => `inputs[${offset + i * elemSize}]`);
+          lines.push(`    ${mslElemType} ${varName}[${len}] = {${indices.join(', ')}};`);
+          return offset + len * elemSize;
+        }
+
+        // Dynamic array: T[]
+        const dynMatch = irType.match(/^(.+)\[\]$/);
+        if (dynMatch) {
+          const elemType = dynMatch[1].trim();
+          lines.push(`    int ${varName}_len = int(inputs[${offset}]);`);
+
+          const elemStructDef = this.ir?.structs?.find(s => s.id === elemType);
+          if (elemStructDef) {
+            // Struct array: declare local array and reconstruct from flat buffer
+            const mslType = this.sanitizeId(elemType, 'struct');
+            const elemFlatSize = this.getTypeFlatSize(elemType);
+            lines.push(`    ${mslType} ${varName}[64];`);
+            lines.push(`    for (int _i = 0; _i < ${varName}_len && _i < 64; _i++) {`);
+            let memberOff = 0;
+            for (const m of elemStructDef.members || []) {
+              const mt = m.type;
+              const fieldName = this.sanitizeId(m.name, 'field');
+              if (mt === 'float') {
+                lines.push(`        ${varName}[_i].${fieldName} = inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}];`);
+                memberOff += 1;
+              } else if (mt === 'int' || mt === 'i32') {
+                lines.push(`        ${varName}[_i].${fieldName} = int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}]);`);
+                memberOff += 1;
+              } else if (mt === 'float2') {
+                lines.push(`        ${varName}[_i].${fieldName} = float2(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}], inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 1}]);`);
+                memberOff += 2;
+              } else {
+                lines.push(`        ${varName}[_i].${fieldName} = inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}];`);
+                memberOff += this.getTypeFlatSize(mt);
+              }
+            }
+            lines.push(`    }`);
+          } else {
+            // Simple type dynamic array: use pointer into flat buffer
+            lines.push(`    constant float* ${varName} = &inputs[${offset + 1}];`);
+          }
+          return -1; // Dynamic array consumes the rest
+        }
+
+        // Fallback: single float
+        lines.push(`    float ${varName} = inputs[${offset}];`);
+        return offset + 1;
+      }
+    }
   }
 }
