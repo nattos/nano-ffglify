@@ -127,7 +127,7 @@ const resolveNodeType = (
   });
 
   // 2. Gather Input Types from Literal Props
-  const reservedKeys = new Set(['id', 'op', 'metadata', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', '_next', 'next', 'args', 'values']);
+  const reservedKeys = new Set(['id', 'op', 'metadata', 'exec_in', 'exec_out', 'exec_true', 'exec_false', 'exec_body', 'exec_completed', '_next', 'next', 'args', 'values', 'comment', 'id_var', 'id_val']);
 
   const processArg = (key: string, val: any) => {
     if (inputTypes[key]) return;

@@ -14,21 +14,31 @@ describe('Conformance: Integration - Noise Generator', () => {
   const ir: IRDocument = {
     version: '1.0.0',
     meta: { name: 'Simple Noise Generator' },
+    comment: 'GOLD STANDARD IR: Demonstrates pitfalls like built-in swizzling, input inheritance, and isOutput flag.',
     entryPoint: 'fn_main_cpu',
+
+    // Global inputs (Uniforms) available to both CPU and GPU functions.
     inputs: [
-      { id: 'scale', type: 'float', default: 10.0 },
-      { id: 'time', type: 'float', default: 0.0 }
+      { id: 'scale', type: 'float', default: 10.0, comment: 'Global scale for noise frequency.' },
+      { id: 'time', type: 'float', default: 0.0, comment: 'Global time for noise animation.' }
     ],
+
     resources: [
       {
         id: 'output_tex',
         type: 'texture2d',
         format: TextureFormat.RGBA8,
+        // mode: 'fixed' means it has own dimensions, 'viewport' means it follows the display.
         size: { mode: 'fixed', value: [256, 256] },
+        // IMPORTANT: 'storage' usage is required if using 'texture_store'.
         usage: 'storage',
+        // EXPLICIT OUTPUT: This tells the UI which texture to display by default.
+        isOutput: true,
+        comment: 'Primary display output. Requires "storage" usage for texture_store.',
         persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: true }
       }
     ],
+
     functions: [
       {
         id: 'fn_main_cpu',
@@ -36,9 +46,21 @@ describe('Conformance: Integration - Noise Generator', () => {
         inputs: [],
         outputs: [],
         localVars: [],
+        comment: 'Root CPU entry point. Handles high-level dispatch logic.',
         nodes: [
-          { id: 'tex_size', op: 'resource_get_size', resource: 'output_tex' },
-          { id: 'dispatch_noise', op: 'cmd_dispatch', func: 'fn_noise_gpu', dispatch: 'tex_size' }
+          {
+            id: 'get_tex_size',
+            op: 'resource_get_size',
+            resource: 'output_tex',
+            comment: 'PITFALL: Shaders expect workgroup-normalized dispatch sizes. resource_get_size provides raw dimensions.'
+          },
+          {
+            id: 'dispatch_noise',
+            op: 'cmd_dispatch',
+            func: 'fn_noise_gpu',
+            dispatch: 'get_tex_size',
+            comment: 'DISPATCH: Global inputs (scale, time) are automatically inherited.'
+          }
         ]
       },
       {
@@ -47,23 +69,57 @@ describe('Conformance: Integration - Noise Generator', () => {
         inputs: [],
         outputs: [],
         localVars: [],
+        comment: 'Compute kernel for noise generation.',
         nodes: [
-          { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
-          { id: 'pos_f2', op: 'vec_swizzle', vec: 'gid', channels: 'xy' },
-          { id: 'size_f2', op: 'resource_get_size', resource: 'output_tex' },
-          { id: 'uv', op: 'math_div', a: 'pos_f2', b: 'size_f2' },
-          { id: 'scale_val', op: 'var_get', var: 'scale' },
-          { id: 'scaled_uv', op: 'math_mul', a: 'uv', b: 'scale_val' },
-          { id: 'time_val', op: 'var_get', var: 'time' },
-          { id: 'time_vec', op: 'float2', x: 'time_val', y: 'time_val' },
-          { id: 'uv_animated', op: 'math_add', a: 'scaled_uv', b: 'time_vec' },
-          { id: 'const_a', op: 'float2', x: 12.9898, y: 78.233 },
-          { id: 'dot_val', op: 'vec_dot', a: 'uv_animated', b: 'const_a' },
-          { id: 'sin_val', op: 'math_sin', val: 'dot_val' },
-          { id: 'mul_val', op: 'math_mul', a: 'sin_val', b: 43758.5453 },
-          { id: 'noise_val', op: 'math_fract', val: 'mul_val' },
-          { id: 'color_out', op: 'float4', x: 'noise_val', y: 'noise_val', z: 'noise_val', w: 1.0 },
-          { id: 'store_node', op: 'texture_store', tex: 'output_tex', coords: 'pos_f2', value: 'color_out' }
+          {
+            id: 'in_gid',
+            op: 'builtin_get',
+            name: 'global_invocation_id',
+            comment: 'BUILT-INS: global_invocation_id is a vec3<u32>. Always swizzle to \'xy\' and cast to float if doing math.'
+          },
+          {
+            id: 'pixel_coords',
+            op: 'vec_swizzle',
+            vec: 'in_gid',
+            channels: 'xy',
+            comment: 'Cast to 2D coordinates for texture access.'
+          },
+          {
+            id: 'tex_dims',
+            op: 'resource_get_size',
+            resource: 'output_tex',
+            comment: 'RESISTANCE TO HARDCODING: Always use the resource size for normalization.'
+          },
+          { id: 'uv', op: 'math_div', a: 'pixel_coords', b: 'tex_dims' },
+
+          {
+            id: 'val_scale',
+            op: 'var_get',
+            var: 'scale',
+            comment: 'INPUT INHERITANCE: Getting globals via var_get.'
+          },
+          { id: 'scaled_uv', op: 'math_mul', a: 'uv', b: 'val_scale' },
+
+          { id: 'val_time', op: 'var_get', var: 'time' },
+          { id: 'time_offset', op: 'float2', x: 'val_time', y: 'val_time' },
+          { id: 'uv_animated', op: 'math_add', a: 'scaled_uv', b: 'time_offset' },
+
+          { id: 'hash_const', op: 'float2', x: 12.9898, y: 78.233 },
+          { id: 'dot_prod', op: 'vec_dot', a: 'uv_animated', b: 'hash_const' },
+          { id: 'sin_res', op: 'math_sin', val: 'dot_prod' },
+          { id: 'noise_raw', op: 'math_mul', a: 'sin_res', b: 43758.5453 },
+          { id: 'noise_final', op: 'math_fract', val: 'noise_raw' },
+
+          { id: 'rgba_out', op: 'float4', x: 'noise_final', y: 'noise_final', z: 'noise_final', w: 1.0 },
+
+          {
+            id: 'op_store',
+            op: 'texture_store',
+            tex: 'output_tex',
+            coords: 'pixel_coords',
+            value: 'rgba_out',
+            comment: 'STORAGE: Coordinates should be floats or ints; system handles casting.'
+          }
         ]
       }
     ]
