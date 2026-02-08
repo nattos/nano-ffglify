@@ -185,6 +185,9 @@ struct ResourceState {
 struct EvalContext {
   std::vector<ResourceState *> resources;
 
+  // IR global inputs (for input inheritance)
+  std::unordered_map<std::string, float> inputs;
+
   // Metal infrastructure
   id<MTLDevice> device = nil;
   id<MTLLibrary> library = nil;
@@ -192,8 +195,21 @@ struct EvalContext {
   std::unordered_map<std::string, id<MTLComputePipelineState>> pipelines;
   std::vector<id<MTLBuffer>> metalBuffers;
 
+  // Texture support
+  std::vector<bool> isTextureResource;
+  std::vector<int> texWidths;
+  std::vector<int> texHeights;
+  std::vector<id<MTLTexture>> metalTextures;
+
   ResourceState *getResource(size_t idx) {
     return idx < resources.size() ? resources[idx] : nullptr;
+  }
+
+  float getInput(const std::string &name) {
+    auto it = inputs.find(name);
+    if (it != inputs.end())
+      return it->second;
+    return 0.0f;
   }
 
   // Initialize Metal if not already done
@@ -248,26 +264,68 @@ struct EvalContext {
     return pipeline;
   }
 
-  // Sync CPU data to Metal buffers
+  // Sync CPU data to Metal buffers and textures
   void syncToMetal() {
     metalBuffers.clear();
-    for (auto *res : resources) {
-      size_t byteSize = res->data.size() * sizeof(float);
-      id<MTLBuffer> buffer =
-          [device newBufferWithBytes:res->data.data()
-                              length:byteSize
-                             options:MTLResourceStorageModeShared];
-      metalBuffers.push_back(buffer);
+    metalTextures.clear();
+    metalTextures.resize(resources.size(), nil);
+
+    for (size_t i = 0; i < resources.size(); ++i) {
+      auto *res = resources[i];
+      if (i < isTextureResource.size() && isTextureResource[i]) {
+        // Create a Metal texture for texture resources
+        MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
+        desc.textureType = MTLTextureType2D;
+        desc.pixelFormat = MTLPixelFormatRGBA8Unorm;
+        desc.width = texWidths[i];
+        desc.height = texHeights[i];
+        desc.usage = MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead;
+        desc.storageMode = MTLStorageModeShared;
+        id<MTLTexture> texture = [device newTextureWithDescriptor:desc];
+        metalTextures[i] = texture;
+        // Create a dummy buffer placeholder to keep indices aligned
+        float dummy = 0;
+        metalBuffers.push_back(
+            [device newBufferWithBytes:&dummy
+                                length:sizeof(float)
+                               options:MTLResourceStorageModeShared]);
+      } else {
+        size_t byteSize = res->data.size() * sizeof(float);
+        id<MTLBuffer> buffer =
+            [device newBufferWithBytes:res->data.data()
+                                length:byteSize
+                               options:MTLResourceStorageModeShared];
+        metalBuffers.push_back(buffer);
+        metalTextures.push_back(nil);
+      }
     }
   }
 
-  // Sync Metal buffers back to CPU
+  // Sync Metal buffers and textures back to CPU
   void syncFromMetal() {
-    for (size_t i = 0; i < metalBuffers.size() && i < resources.size(); ++i) {
-      float *ptr = (float *)[metalBuffers[i] contents];
-      size_t count = resources[i]->data.size();
-      for (size_t j = 0; j < count; ++j) {
-        resources[i]->data[j] = ptr[j];
+    for (size_t i = 0; i < resources.size(); ++i) {
+      if (i < metalTextures.size() && metalTextures[i] != nil) {
+        // Read back texture data as RGBA8 bytes, convert to floats
+        int w = texWidths[i];
+        int h = texHeights[i];
+        size_t bytesPerRow = w * 4; // RGBA8 = 4 bytes per pixel
+        std::vector<uint8_t> bytes(w * h * 4);
+        MTLRegion region = MTLRegionMake2D(0, 0, w, h);
+        [metalTextures[i] getBytes:bytes.data()
+                       bytesPerRow:bytesPerRow
+                        fromRegion:region
+                       mipmapLevel:0];
+        // Convert RGBA8 bytes to float (0.0-1.0 range)
+        resources[i]->data.resize(w * h * 4);
+        for (size_t j = 0; j < bytes.size(); ++j) {
+          resources[i]->data[j] = bytes[j] / 255.0f;
+        }
+      } else if (i < metalBuffers.size()) {
+        float *ptr = (float *)[metalBuffers[i] contents];
+        size_t count = resources[i]->data.size();
+        for (size_t j = 0; j < count; ++j) {
+          resources[i]->data[j] = ptr[j];
+        }
       }
     }
   }
@@ -324,9 +382,13 @@ struct EvalContext {
       [encoder setBuffer:argsBuffer offset:0 atIndex:0];
     }
 
-    // Bind resource buffers (starting at binding 1)
-    for (size_t i = 0; i < metalBuffers.size(); ++i) {
-      [encoder setBuffer:metalBuffers[i] offset:0 atIndex:i + 1];
+    // Bind resource buffers and textures (starting at binding 1)
+    for (size_t i = 0; i < resources.size(); ++i) {
+      if (i < metalTextures.size() && metalTextures[i] != nil) {
+        [encoder setTexture:metalTextures[i] atIndex:i + 1];
+      } else if (i < metalBuffers.size()) {
+        [encoder setBuffer:metalBuffers[i] offset:0 atIndex:i + 1];
+      }
     }
 
     MTLSize gridSize = MTLSizeMake(dimX, dimY, dimZ);
@@ -353,9 +415,10 @@ struct EvalContext {
 
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
-    // Parse arguments: [metallib_path] <buffer_sizes...>
+    // Parse arguments: [metallib_path] [-i name:value ...] <resource_specs...>
     // If first arg ends with .metallib, it's the shader library path
-    // Each other argument is a buffer size (for buffers) or "0" (placeholder)
+    // -i name:value sets an input variable
+    // Resource specs: <size> for buffers, T:<width>:<height> for textures
 
     EvalContext ctx;
     std::vector<ResourceState> resourceStorage;
@@ -372,11 +435,47 @@ int main(int argc, const char *argv[]) {
       }
     }
 
-    // Parse resource sizes from remaining command line args
+    // Parse -i input args first, then resource specs
+    std::vector<std::string> resourceArgs;
     for (int i = argStart; i < argc; ++i) {
-      size_t size = std::stoull(argv[i]);
-      resourceStorage.push_back(
-          ResourceState{std::vector<float>(size, 0.0f), size, 1});
+      std::string arg = argv[i];
+      if (arg == "-i" && i + 1 < argc) {
+        // Parse name:value
+        std::string input = argv[++i];
+        auto colonPos = input.find(':');
+        if (colonPos != std::string::npos) {
+          std::string name = input.substr(0, colonPos);
+          float value = std::stof(input.substr(colonPos + 1));
+          ctx.inputs[name] = value;
+        }
+      } else {
+        resourceArgs.push_back(arg);
+      }
+    }
+
+    // Parse resource specs
+    for (const auto &arg : resourceArgs) {
+      if (arg.size() > 2 && arg[0] == 'T' && arg[1] == ':') {
+        // Texture: T:<width>:<height>
+        auto firstColon = arg.find(':', 2);
+        int w = std::stoi(arg.substr(2, firstColon - 2));
+        int h = std::stoi(arg.substr(firstColon + 1));
+        // RGBA8 texture: w*h*4 floats
+        resourceStorage.push_back(
+            ResourceState{std::vector<float>(w * h * 4, 0.0f), (size_t)w,
+                          (size_t)h});
+        ctx.isTextureResource.push_back(true);
+        ctx.texWidths.push_back(w);
+        ctx.texHeights.push_back(h);
+      } else {
+        // Buffer: <size>
+        size_t size = std::stoull(arg);
+        resourceStorage.push_back(
+            ResourceState{std::vector<float>(size, 0.0f), size, 1});
+        ctx.isTextureResource.push_back(false);
+        ctx.texWidths.push_back(0);
+        ctx.texHeights.push_back(0);
+      }
     }
 
     // Set up context pointers
@@ -393,7 +492,8 @@ int main(int argc, const char *argv[]) {
       if (r > 0)
         std::cout << ",";
       auto *res = ctx.resources[r];
-      std::cout << "{\"data\":[";
+      bool isTex = r < ctx.isTextureResource.size() && ctx.isTextureResource[r];
+      std::cout << "{\"type\":\"" << (isTex ? "texture" : "buffer") << "\",\"data\":[";
       for (size_t i = 0; i < res->data.size(); ++i) {
         if (i > 0)
           std::cout << ",";

@@ -173,8 +173,16 @@ export class MslGenerator {
       const allFunctions = this.collectFunctions(entryFunc, ir.functions);
 
       // Allocate varMap for inputs and local vars (same as compile())
-      const inputs = (entryFunc.type === 'shader' ? entryFunc.inputs : ir.inputs) || [];
-      for (const input of inputs) {
+      // Use shader's own inputs if present, otherwise use IR globals
+      const funcInputs = (entryFunc.type === 'shader' ? entryFunc.inputs : ir.inputs) || [];
+      for (const input of funcInputs) {
+        if (!varMap.has(input.id)) {
+          varMap.set(input.id, varOffset);
+          varOffset += this.getTypeSize(input.type);
+        }
+      }
+      // Also allocate IR global inputs for input inheritance (var_get on globals)
+      for (const input of ir.inputs || []) {
         if (!varMap.has(input.id)) {
           varMap.set(input.id, varOffset);
           varOffset += this.getTypeSize(input.type);

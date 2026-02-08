@@ -88,8 +88,13 @@ export const CppMetalBackend: TestBackend = {
       throw new Error(`C++ compilation failed: ${e.stderr || e.message}`);
     }
 
-    // 6. Prepare resource sizes as arguments
-    const resourceSizes = ir.resources.map(r => {
+    // 6. Prepare resource specs as arguments
+    const resourceSpecs = ir.resources.map(r => {
+      if (r.type === 'texture2d') {
+        const size = r.size && typeof r.size === 'object' && 'value' in r.size ? r.size.value : [1, 1];
+        const [w, h] = Array.isArray(size) ? size : [size, 1];
+        return `T:${w}:${h}`;
+      }
       if (r.type === 'buffer') {
         const size = r.size && typeof r.size === 'object' && 'value' in r.size ? r.size.value : 100;
         return String(size);
@@ -97,39 +102,57 @@ export const CppMetalBackend: TestBackend = {
       return '0';
     });
 
-    // 7. Run executable with optional metallib path
+    // 7. Build input args from ctx.inputs
+    const inputArgs: string[] = [];
+    for (const [name, value] of ctx.inputs) {
+      const numVal = typeof value === 'number' ? value : Array.isArray(value) ? value[0] : 0;
+      inputArgs.push('-i', `${name}:${numVal}`);
+    }
+
+    // 8. Run executable with optional metallib path, inputs, and resource specs
     const metallibArg = metallibPath ? `"${metallibPath}" ` : '';
+    const inputArgsStr = inputArgs.length > 0 ? inputArgs.join(' ') + ' ' : '';
     let output: string;
     try {
-      output = execSync(`"${executablePath}" ${metallibArg}${resourceSizes.join(' ')}`, {
+      output = execSync(`"${executablePath}" ${metallibArg}${inputArgsStr}${resourceSpecs.join(' ')}`, {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        maxBuffer: 64 * 1024 * 1024, // 64MB for large texture outputs
       });
     } catch (e: any) {
       throw new Error(`C++ execution failed: ${e.stderr || e.message}`);
     }
 
-    // 7. Parse JSON output
+    // 9. Parse JSON output
     const result = JSON.parse(output.trim());
 
-    // 8. Update EvaluationContext with results
-    result.resources.forEach((res: { data: number[] }, i: number) => {
+    // 10. Update EvaluationContext with results
+    result.resources.forEach((res: { type?: string; data: number[] }, i: number) => {
       const resDef = ir.resources[i];
       const resId = resDef?.id;
       if (resId) {
         const state = ctx.resources.get(resId);
         if (state) {
-          // For typed buffers (float2/3/4), restructure flat data into nested arrays
-          const dataType = resDef?.dataType;
-          if (dataType === 'float4' || dataType === 'float3' || dataType === 'float2') {
-            const stride = dataType === 'float4' ? 4 : dataType === 'float3' ? 3 : 2;
+          if (res.type === 'texture' || resDef.type === 'texture2d') {
+            // Texture data: flat RGBA floats → restructure into [[r,g,b,a], ...] nested arrays
             const chunks: number[][] = [];
-            for (let j = 0; j < res.data.length; j += stride) {
-              chunks.push(res.data.slice(j, j + stride));
+            for (let j = 0; j < res.data.length; j += 4) {
+              chunks.push(res.data.slice(j, j + 4));
             }
             state.data = chunks as any;
           } else {
-            state.data = res.data;
+            // For typed buffers (float2/3/4), restructure flat data into nested arrays
+            const dataType = resDef?.dataType;
+            if (dataType === 'float4' || dataType === 'float3' || dataType === 'float2') {
+              const stride = dataType === 'float4' ? 4 : dataType === 'float3' ? 3 : 2;
+              const chunks: number[][] = [];
+              for (let j = 0; j < res.data.length; j += stride) {
+                chunks.push(res.data.slice(j, j + stride));
+              }
+              state.data = chunks as any;
+            } else {
+              state.data = res.data;
+            }
           }
         }
       }

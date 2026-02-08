@@ -256,6 +256,7 @@ export class CppGenerator {
       'vec_get_element', 'call_func',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length',
+      'resource_get_size',
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
@@ -430,17 +431,33 @@ export class CppGenerator {
       const dispatch = node['dispatch'] || [1, 1, 1];
 
       // Build dispatch dimensions
-      const dimX = typeof dispatch[0] === 'number' ? dispatch[0] : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_x']: dispatch[0] } as Node, 'dispatch_x', func, allFunctions, emitPure, edges);
-      const dimY = typeof dispatch[1] === 'number' ? dispatch[1] : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_y']: dispatch[1] } as Node, 'dispatch_y', func, allFunctions, emitPure, edges);
-      const dimZ = typeof dispatch[2] === 'number' ? dispatch[2] : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_z']: dispatch[2] } as Node, 'dispatch_z', func, allFunctions, emitPure, edges);
+      let dimX: string, dimY: string, dimZ: string;
+      if (typeof dispatch === 'string') {
+        // dispatch is a node reference (e.g., resource_get_size result)
+        const dispatchExpr = this.resolveArg(node, 'dispatch', func, allFunctions, emitPure, edges);
+        dimX = `static_cast<int>(${dispatchExpr}[0])`;
+        dimY = `static_cast<int>(${dispatchExpr}[1])`;
+        dimZ = '1';
+      } else if (Array.isArray(dispatch)) {
+        dimX = typeof dispatch[0] === 'number' ? String(dispatch[0]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_x']: dispatch[0] } as Node, 'dispatch_x', func, allFunctions, emitPure, edges);
+        dimY = typeof dispatch[1] === 'number' ? String(dispatch[1]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_y']: dispatch[1] } as Node, 'dispatch_y', func, allFunctions, emitPure, edges);
+        dimZ = typeof dispatch[2] === 'number' ? String(dispatch[2]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_z']: dispatch[2] } as Node, 'dispatch_z', func, allFunctions, emitPure, edges);
+      } else {
+        dimX = '1'; dimY = '1'; dimZ = '1';
+      }
 
       // Build args - serialize all inputs as flat floats for GPU marshalling
       const targetFuncDef = allFunctions.find(f => f.id === targetFunc);
-      if (targetFuncDef?.inputs && targetFuncDef.inputs.length > 0) {
+      const hasExplicitInputs = targetFuncDef?.inputs && targetFuncDef.inputs.length > 0;
+
+      // If shader has no explicit inputs but IR has global inputs, serialize those
+      const hasGlobalInputs = !hasExplicitInputs && this.ir?.inputs && this.ir.inputs.length > 0;
+
+      if (hasExplicitInputs) {
         lines.push(`${indent}{`);
         lines.push(`${indent}    std::vector<float> _shader_args;`);
 
-        for (const input of targetFuncDef.inputs) {
+        for (const input of targetFuncDef!.inputs!) {
           let argExpr: string;
           if (node['args'] && node['args'][input.id]) {
             const argId = node['args'][input.id];
@@ -452,6 +469,19 @@ export class CppGenerator {
           }
 
           const irType = input.type || 'float';
+          this.emitArgFlattening(`${indent}    `, argExpr, irType, lines);
+        }
+
+        lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
+        lines.push(`${indent}}`);
+      } else if (hasGlobalInputs) {
+        // Serialize IR global inputs into args buffer for the shader
+        lines.push(`${indent}{`);
+        lines.push(`${indent}    std::vector<float> _shader_args;`);
+
+        for (const input of this.ir!.inputs!) {
+          const irType = input.type || 'float';
+          const argExpr = `ctx.getInput("${input.id}")`;
           this.emitArgFlattening(`${indent}    `, argExpr, irType, lines);
         }
 
@@ -525,6 +555,8 @@ export class CppGenerator {
         const varId = node['var'];
         if (func.localVars.some(v => v.id === varId)) return this.sanitizeId(varId, 'var');
         if (func.inputs.some(i => i.id === varId)) return this.sanitizeId(varId, 'input');
+        // Fallback: check IR global inputs (input inheritance)
+        if (this.ir?.inputs?.some(i => i.id === varId)) return `ctx.getInput("${varId}")`;
         throw new Error(`Variable '${varId}' is not defined`);
       }
       case 'literal': {
@@ -749,6 +781,20 @@ export class CppGenerator {
       case 'array_length': {
         const arrExpr = this.resolveArg(node, 'array', func, allFunctions, emitPure, edges);
         return `static_cast<int>(${arrExpr}.size())`;
+      }
+
+      case 'resource_get_size': {
+        const resId = node['resource'];
+        const resDef = this.ir?.resources.find(r => r.id === resId);
+        const size = resDef?.size && typeof resDef.size === 'object' && 'value' in resDef.size
+          ? resDef.size.value : 1;
+        if (Array.isArray(size)) {
+          return `std::array<float, 2>{${this.formatFloat(size[0])}, ${this.formatFloat(size[1])}}`;
+        }
+        if (typeof size === 'number') {
+          return `std::array<float, 2>{${this.formatFloat(size)}, 1.0f}`;
+        }
+        return `std::array<float, 2>{1.0f, 1.0f}`;
       }
 
       default:
