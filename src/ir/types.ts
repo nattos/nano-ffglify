@@ -151,12 +151,6 @@ export interface ResourceDef {
    * If multiple resources have this set, the first one is used as the main display.
    */
   isOutput?: boolean;
-
-  /**
-   * Usage hint for the resource.
-   * For textures: 'sampled' (default), 'storage' (required for texture_store), or 'attachment'.
-   */
-  usage?: 'sampled' | 'storage' | 'attachment';
 }
 
 export type BuiltinName =

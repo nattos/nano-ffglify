@@ -30,11 +30,9 @@ describe('Conformance: Integration - Noise Generator', () => {
         format: TextureFormat.RGBA8,
         // mode: 'fixed' means it has own dimensions, 'viewport' means it follows the display.
         size: { mode: 'fixed', value: [256, 256] },
-        // IMPORTANT: 'storage' usage is required if using 'texture_store'.
-        usage: 'storage',
         // EXPLICIT OUTPUT: This tells the UI which texture to display by default.
         isOutput: true,
-        comment: 'Primary display output. Requires "storage" usage for texture_store.',
+        comment: 'Primary display output.',
         persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: true }
       }
     ],
