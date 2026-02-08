@@ -20,6 +20,7 @@ import { entityManager, EntityManager } from '../state/entity-manager';
 import { IREditResponse, PatchIRRequest, ReplaceIRRequest } from '../state/entity-api';
 import { BuiltinOp, OpDefs } from '../ir/builtin-schemas';
 import { opDefToFunctionDeclaration } from '../domain/schemas';
+import { ALL_EXAMPLES } from '../domain/example-ir';
 
 export class ChatHandler {
   constructor(
@@ -106,9 +107,46 @@ export class ChatHandler {
 
       case 'queryDocs': {
         const opName = effectiveArgs.op as BuiltinOp | undefined;
+        const exampleName = effectiveArgs.example as string | undefined;
+        const listType = effectiveArgs.list as 'op' | 'example' | undefined;
 
-        if (!opName) {
-          // List all operations
+        // 1. Handle Example Lookup
+        if (exampleName) {
+          const example = (ALL_EXAMPLES as any)[exampleName];
+          if (!example) {
+            return { end: false, response: { success: false, message: `Unknown example: ${exampleName}` } };
+          }
+          const queryRes: IREditResponse = { success: true, message: `Example IR: ${exampleName}`, docsResult: example };
+          this.appController.addChatMessage({
+            role: 'tool-response',
+            text: `Showing example IR for ${exampleName}`,
+            type: 'entity_update',
+            data: structuredClone(queryRes)
+          });
+          return { end: false, response: queryRes };
+        }
+
+        // 2. Handle Listing
+        if (listType === 'example') {
+          const lines = Object.entries(ALL_EXAMPLES).map(([key, ir]) => {
+            const metaName = (ir as any).meta?.name || 'Unnamed';
+            const comment = (ir as any).comment || '';
+            const line = `- **${key}** (${metaName})${comment ? `: ${comment}` : ''}`;
+            return line;
+          });
+          const summary = `Available Example IRs:\n\n${lines.join('\n')}`;
+          const queryRes: IREditResponse = { success: true, message: summary };
+          this.appController.addChatMessage({
+            role: 'tool-response',
+            text: summary,
+            type: 'text',
+            data: structuredClone(queryRes)
+          });
+          return { end: false, response: queryRes };
+        }
+
+        if (listType === 'op' || (!opName && !exampleName && !listType)) {
+          // List all operations (default if nothing else provided)
           const lines = Object.entries(OpDefs).map(([name, def]) => `- **${name}**: ${def.doc}`);
           const summary = `Available IR Operations:\n\n${lines.join('\n')}`;
 
@@ -122,20 +160,25 @@ export class ChatHandler {
           return { end: false, response: queryRes };
         }
 
-        const def = OpDefs[opName];
-        if (!def) {
-          return { end: false, response: { success: false, message: `Unknown operation: ${opName}` } };
+        // 3. Handle Op Lookup (existing behavior)
+        if (opName) {
+          const def = OpDefs[opName];
+          if (!def) {
+            return { end: false, response: { success: false, message: `Unknown operation: ${opName}` } };
+          }
+
+          const doc = opDefToFunctionDeclaration(opName, def);
+          const queryRes: IREditResponse = { success: true, message: `Documentation for ${opName}`, docsResult: doc };
+          this.appController.addChatMessage({
+            role: 'tool-response',
+            text: `Showing docs for ${opName}`,
+            type: 'entity_update',
+            data: structuredClone(queryRes)
+          });
+          return { end: false, response: queryRes };
         }
 
-        const doc = opDefToFunctionDeclaration(opName, def);
-        const queryRes: IREditResponse = { success: true, message: `Documentation for ${opName}`, docsResult: doc };
-        this.appController.addChatMessage({
-          role: 'tool-response',
-          text: `Showing docs for ${opName}`,
-          type: 'entity_update',
-          data: structuredClone(queryRes)
-        });
-        return { end: false, response: queryRes };
+        return { end: false, response: { success: false, message: 'Invalid queryDocs arguments' } };
       }
 
       default:

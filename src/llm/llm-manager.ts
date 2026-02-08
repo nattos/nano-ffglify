@@ -19,6 +19,7 @@ import { NOTES_MOCKS } from '../domain/mock-responses';
 import { IRSchema } from "../domain/types";
 import { DEFAULT_LLM_MODEL } from "../constants";
 import { OpSignatures } from "../ir/signatures";
+import { ALL_EXAMPLES } from "../domain/example-ir";
 
 export interface LLMToolCall {
   name: string;
@@ -80,7 +81,7 @@ export class GoogleGenAIManager implements LLMManager {
     // 3. Documentation Tools
     tools.push({
       name: "queryDocs",
-      description: "Look up the schema and documentation for a specific IR operation (op). If no op is provided, returns a summary list of all available operations.",
+      description: "Look up documentation for IR operations or example IR documents. Can also list all available operations or examples.",
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
@@ -88,7 +89,19 @@ export class GoogleGenAIManager implements LLMManager {
             type: SchemaType.STRING,
             format: 'enum',
             enum: Object.keys(OpSignatures),
-            description: "The name of the operation to look up (e.g., 'math_add', 'texture_sample').",
+            description: "The name of the operation to look up (e.g., 'math_add').",
+          },
+          example: {
+            type: SchemaType.STRING,
+            format: 'enum',
+            enum: Object.keys(ALL_EXAMPLES),
+            description: "The name of an example IR document to look up (e.g., 'noise_shader').",
+          },
+          list: {
+            type: SchemaType.STRING,
+            format: 'enum',
+            enum: ['op', 'example'],
+            description: "List all available 'op' (operations) or 'example' (IR documents).",
           }
         },
         required: []

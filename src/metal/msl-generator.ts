@@ -641,7 +641,7 @@ export class MslGenerator {
       case 'struct_construct': {
         const structType = node['type'] as string;
         const valuesObj = node['values'] as Record<string, any> || {};
-        const structDef = this.ir?.structs.find(s => s.id === structType);
+        const structDef = (this.ir?.structs ?? []).find(s => s.id === structType);
         if (!structDef) throw new Error(`MslGenerator: Struct '${structType}' not found`);
 
         // Build constructor with members in order
@@ -981,12 +981,12 @@ export class MslGenerator {
         lines.push(`    float4 ${varName} = float4(inputs[${offset}], inputs[${offset + 1}], inputs[${offset + 2}], inputs[${offset + 3}]);`);
         return offset + 4;
       case 'float3x3': {
-        const indices = Array.from({length: 9}, (_, i) => `inputs[${offset + i}]`);
+        const indices = Array.from({ length: 9 }, (_, i) => `inputs[${offset + i}]`);
         lines.push(`    float ${varName}[9] = {${indices.join(', ')}};`);
         return offset + 9;
       }
       case 'float4x4': {
-        const indices = Array.from({length: 16}, (_, i) => `inputs[${offset + i}]`);
+        const indices = Array.from({ length: 16 }, (_, i) => `inputs[${offset + i}]`);
         lines.push(`    float ${varName}[16] = {${indices.join(', ')}};`);
         return offset + 16;
       }
@@ -1030,7 +1030,7 @@ export class MslGenerator {
           const len = parseInt(arrayMatch[2]);
           const mslElemType = this.irTypeToMsl(elemType);
           const elemSize = this.getTypeFlatSize(elemType);
-          const indices = Array.from({length: len}, (_, i) => `inputs[${offset + i * elemSize}]`);
+          const indices = Array.from({ length: len }, (_, i) => `inputs[${offset + i * elemSize}]`);
           lines.push(`    ${mslElemType} ${varName}[${len}] = {${indices.join(', ')}};`);
           return offset + len * elemSize;
         }
