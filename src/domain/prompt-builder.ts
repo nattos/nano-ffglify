@@ -11,6 +11,7 @@
  * - The `EXAMPLES` string is critical for teaching the LLM how to use tools. If tools change, examples MUST be updated.
  * - Context window size is finite; sending the *entire* database in `buildContext` will eventually hit limits. Pagination or RAG needed for large apps.
  */
+import { PRIMITIVE_TYPES } from '../ir/types';
 import { CombinedAgentState } from './types';
 
 export class PromptBuilder {
@@ -53,8 +54,53 @@ Judicially expose input parameters for "tweaking" and "playability". Try to keep
 
 Tone of responses: Make responses feel less like a dusty textbook and more like grabbing a coffee with a senior designer who actually wants the user to succeed. Try to balance being authoritative enough on shader concepts and art direction, yet accessible enough to explain "what is a vector" to a total newbie.
 
+Nodes:
+
+Functions contain nodes. All nodes have an \`id\` property, which allows its output to be referenced by other nodes. All nodes also have an \`op\` property, which must specify one of the built-in ops.
+
+Nodes may also have additional properties, defined per op type. For example, the following node packs the outputs from a node named \`x\` and \`x\` into a \`float2\`.
+
+\`\`\`
+{ id: 'coords', op: 'float2', x: 'x', y: 'y' }
+\`\`\`
+
+Many node properties can either be literals, or references to other nodes. Check the docs.
+
+Types:
+
+The following primitive types are available: [${PRIMITIVE_TYPES.join, ', '}]
+
+Arrays are also available, and may either be fixed or dynamic size. Dynamic sized arrays are only available as global "resources". These translate to GPU buffers. Fixed sized arrays are also allowed for local variables.
+
+Struct types are also available, to define custom types, also critical for defining vertex attributes like "position".
+
+Execution Semantics:
+
+1. **Nodes Categories**:
+   - **Executable Nodes**: Side-effect operations (e.g. \`cmd_*\`, \`flow_*\`, \`*_store\`, \`call_func\`, \`var_set\`, \`array_set\`).
+     These nodes have execution flow defined by properties like \`exec_in\`, \`exec_out\`, \`exec_true\`, \`exec_false\`, or \`exec_body\`.
+   - **Pure Nodes**: Data operations (e.g. \`math_*\`, \`vec_*\`, \`struct_*\`, \`var_get\`).
+     These nodes have NO side effects and produce values. They are evaluated primarily via "Pull" from Executable nodes.
+
+2. **Entry Points**: Execution begins at "Entry Nodes". An Entry Node is any Executable Node that has NO incoming execution dependency (e.g. no \`exec_in\` pointing to it, or it's the start of the chain).
+
+3. **Flow (Control Flow)**:
+   - The executor maintains a queue of Executable Nodes.
+   - Execution proceeds via properties defined in the node's schema:
+     - \`exec_in\`: (Input) A reference to a node that must execute *before* this node.
+     - \`exec_out\`: (Output) A reference to the node that executes *after* this node (standard sequence).
+     - \`exec_true\` / \`exec_false\`: (Output) Branch destinations for \`flow_branch\`.
+     - \`exec_body\` / \`exec_completed\`: (Output) Loop body and post-loop destinations for \`flow_loop\`.
+
+4. **Data Resolution (Data Flow)**:
+   - Pure nodes are evaluated **lazily** and **synchronously** when an Executable Node (or another Pure node) references their ID in a property.
+   - **State Access**: \`var_get\` reads the variable's value *at the moment of evaluation*.
+   - This means if \`Executable A\` mutates \`Var X\`, and \`Executable B\` (which runs after A) consumes \`var_get(X)\`, B sees the new value.
+
+5. **Recursion**: Recursive function calls (direct or indirect) are **FORBIDDEN** and must cause a runtime error.
+
 ## Operational Strategy
-- USE THE DOCS: You do not know the inputs/outputs of specific "ops." Always call \`queryDocs\` before introducing or modifying a node to ensure parameter accuracy.
+- USE THE DOCS: You do not know the inputs/outputs of specific "ops." Call \`queryDocs\` before introducing or modifying a node to ensure parameter accuracy.
 - CHOOSE THE TOOL:
     - Use \`patchIR\` for incremental changes (RFC 6902 syntax).
     - Use \`replaceIR\` for structural overhauls.

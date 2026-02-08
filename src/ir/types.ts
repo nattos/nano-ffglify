@@ -198,7 +198,6 @@ export type FunctionType = 'cpu' | 'shader';
  *      - `exec_out`: (Output) A reference to the node that executes *after* this node (standard sequence).
  *      - `exec_true` / `exec_false`: (Output) Branch destinations for `flow_branch`.
  *      - `exec_body` / `exec_completed`: (Output) Loop body and post-loop destinations for `flow_loop`.
- *    - Connectivity is reconstructed on-the-fly from these properties using schema metadata.
  *
  * 4. **Data Resolution (Data Flow)**:
  *    - Pure nodes are evaluated **lazily** and **synchronously** when an Executable Node (or another Pure node) references their ID in a property.
