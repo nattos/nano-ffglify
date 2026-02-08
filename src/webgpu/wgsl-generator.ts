@@ -291,7 +291,7 @@ export class WgslGenerator {
       });
     }
     if (!options.stage) options.stage = 'compute';
-    // if (options.inputBinding === undefined) options.inputBinding = 1; // Do not force default, let caller decide
+    if (options.inputBinding === undefined) options.inputBinding = 1;
     if (!options.resourceBindings) {
       options.resourceBindings = new Map();
       let bindingIdx = 2;
@@ -486,6 +486,7 @@ export class WgslGenerator {
         const wgSize = options.workgroupSize || [16, 16, 1];
         lines.push(`@compute @workgroup_size(${wgSize[0]}, ${wgSize[1]}, ${wgSize[2]})`);
         lines.push(`fn main(${computeBuiltins.join(', ')}) {`);
+        if (this.allUsedBuiltins.has('global_invocation_id')) lines.push(`  GlobalInvocationID = gid;`);
         if (this.allUsedBuiltins.has('local_invocation_id')) lines.push(`  LocalInvocationID = lid;`);
         if (this.allUsedBuiltins.has('workgroup_id')) lines.push(`  WorkgroupID = wid;`);
         if (this.allUsedBuiltins.has('local_invocation_index')) lines.push(`  LocalInvocationIndex = lidx;`);
@@ -1036,13 +1037,16 @@ export class WgslGenerator {
       const name = node['name'];
       const outType = options.nodeTypes?.get(node.id) || 'float3';
       let expr = 'gid';
-      if (name === 'global_invocation_id') expr = 'gid';
-      else if (name === 'local_invocation_id') expr = 'lid';
-      else if (name === 'workgroup_id') expr = 'wid';
-      else if (name === 'local_invocation_index') expr = 'lidx';
-      else if (name === 'num_workgroups') expr = 'nw';
-      else if (name === 'frag_coord') expr = 'f_coord';
-      else if (name === 'front_facing') expr = 'f_facing';
+      if (name === 'global_invocation_id') expr = 'GlobalInvocationID';
+      else if (name === 'local_invocation_id') expr = 'LocalInvocationID';
+      else if (name === 'workgroup_id') expr = 'WorkgroupID';
+      else if (name === 'local_invocation_index') expr = 'LocalInvocationIndex';
+      else if (name === 'num_workgroups') expr = 'NumWorkgroups';
+      else if (name === 'frag_coord') expr = 'FragCoord';
+      else if (name === 'front_facing') expr = 'FrontFacing';
+      else if (name === 'position') expr = 'Position';
+      else if (name === 'vertex_index') expr = 'VertexIndex';
+      else if (name === 'instance_index') expr = 'InstanceIndex';
 
       // Built-ins in WGSL are often u32 or vecN<u32>.
       // Our IR often expects floats for generic math.

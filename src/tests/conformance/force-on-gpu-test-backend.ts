@@ -251,6 +251,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
 
         const compilation = new WgslGenerator().compile(ir, targetEntryPoint, {
           globalBufferBinding: 0,
+          inputBinding: 1,
           varMap: varMap,
           varTypes: varTypes,
           nodeTypes: nodeTypes as any,
@@ -269,6 +270,16 @@ export const ForceOntoGPUTestBackend: TestBackend = {
         const bindGroupEntries: GPUBindGroupEntry[] = [];
         if (code.includes('var<storage, read_write> b_globals') && globalBuffer) {
           bindGroupEntries.push({ binding: 0, resource: { buffer: globalBuffer } });
+        }
+        if (code.includes('var<storage, read> b_inputs')) {
+          const buffer = device.createBuffer({
+            size: 16, // u_dispatch_size is 12 bytes + padding
+            usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_DST
+          });
+          const data = new Uint32Array([dispatchSize[0], dispatchSize[1], dispatchSize[2], 0]);
+          device.queue.writeBuffer(buffer, 0, data);
+          bindGroupEntries.push({ binding: 1, resource: { buffer } });
+          stagingBuffers.push(buffer); // Clean up later
         }
 
         resourceBindings.forEach((binding, id) => {
