@@ -6,6 +6,7 @@ import { PrecomputedShaderInfo, PrecomputedInputLayout, PrecomputedWriteOp, Prec
 export function precomputeShaderInfo(meta: CompilationMetadata, structDefs: StructDef[]): PrecomputedShaderInfo {
   const layout = new ShaderLayout(structDefs);
   const info: PrecomputedShaderInfo = {
+    workgroupSize: meta.workgroupSize,
     inputBinding: meta.inputBinding,
     resourceBindings: Array.from(meta.resourceBindings.entries()).map(([id, binding]) => {
       const type = meta.resourceTypes.get(id) || 'buffer';

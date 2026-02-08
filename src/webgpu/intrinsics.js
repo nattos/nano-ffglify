@@ -170,12 +170,17 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
       const pipeline = pipelines.get(funcId);
 
       const entries = [];
+      const normalizedDim = [
+        dim[0] || 1,
+        dim[1] || 1,
+        dim[2] || 1
+      ];
 
       // 1. Inputs
       if (info.inputLayout) {
         const layout = info.inputLayout;
         let requiredSize = layout.totalSize;
-        const inputs = { ...args, u_dispatch_size: dim };
+        const inputs = { ...args, u_dispatch_size: normalizedDim };
 
         if (layout.hasRuntimeArray && layout.runtimeArray) {
           const arr = inputs[layout.runtimeArray.name];
@@ -241,7 +246,13 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
         });
         pass.setBindGroup(0, bindGroup);
       }
-      pass.dispatchWorkgroups(dim[0], dim[1], dim[2]);
+      const wgSize = info.workgroupSize || [16, 16, 1];
+      const workgroups = [
+        Math.ceil(normalizedDim[0] / wgSize[0]),
+        Math.ceil(normalizedDim[1] / wgSize[1]),
+        Math.ceil(normalizedDim[2] / wgSize[2])
+      ];
+      pass.dispatchWorkgroups(workgroups[0], workgroups[1], workgroups[2]);
       pass.end();
       device.queue.submit([encoder.finish()]);
     },

@@ -91,6 +91,7 @@ export interface ResourceState {
 }
 
 export interface PrecomputedShaderInfo {
+  workgroupSize?: [number, number, number];
   inputBinding?: number;
   inputLayout?: PrecomputedInputLayout;
   resourceBindings: { id: string, binding: number, type: 'texture2d' | 'buffer' }[];
