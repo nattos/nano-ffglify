@@ -73,7 +73,7 @@ export function compileCppHost(options: CppCompileOptions): string {
   const frameworkFlags = frameworks.map(f => `-framework ${f}`).join(' ');
 
   // Compile with clang++
-  const cmd = `clang++ -std=c++17 -O2 ${frameworkFlags} ${extraFlags.join(' ')} "${sourcePath}" -o "${outputPath}"`;
+  const cmd = `clang++ -std=c++17 -O2 -D GL_SILENCE_DEPRECATION ${frameworkFlags} ${extraFlags.join(' ')} "${sourcePath}" -o "${outputPath}"`;
   execSync(cmd, {
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -155,10 +155,15 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
   const cmd = `clang++ ${flags} ${includeFlags} ${frameworkFlags} "${sources.join('" "')}" -o "${binaryPath}"`;
 
   // console.log('Compiling FFGL plugin:', cmd);
-  execSync(cmd, {
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  try {
+    execSync(cmd, {
+      encoding: 'utf-8',
+      stdio: 'inherit',
+    });
+  } catch (e) {
+    console.error('Compilation failed');
+    throw e;
+  }
 
   // Code Sign (Required for ARM64)
   try {
