@@ -107,15 +107,7 @@ export class MslGenerator {
     this.emitStructs(ir.structs || [], lines);
 
     // Emit helper functions
-    lines.push('// Helper functions');
-    lines.push('inline float safe_div(float a, float b) { return b != 0.0f ? a / b : 0.0f; }');
-    lines.push('inline float2 safe_div(float2 a, float b) { return b != 0.0f ? a / b : float2(0.0f); }');
-    lines.push('inline float3 safe_div(float3 a, float b) { return b != 0.0f ? a / b : float3(0.0f); }');
-    lines.push('inline float4 safe_div(float4 a, float b) { return b != 0.0f ? a / b : float4(0.0f); }');
-    lines.push('inline float2 safe_div(float2 a, float2 b) { return float2(safe_div(a.x, b.x), safe_div(a.y, b.y)); }');
-    lines.push('inline float3 safe_div(float3 a, float3 b) { return float3(safe_div(a.x, b.x), safe_div(a.y, b.y), safe_div(a.z, b.z)); }');
-    lines.push('inline float4 safe_div(float4 a, float4 b) { return float4(safe_div(a.x, b.x), safe_div(a.y, b.y), safe_div(a.z, b.z), safe_div(a.w, b.w)); }');
-    lines.push('');
+    this.emitHelperFunctions(lines);
 
     // Emit non-entry functions
     for (const func of allFunctions) {
@@ -152,15 +144,7 @@ export class MslGenerator {
     }
 
     // Emit helper functions
-    lines.push('// Helper functions');
-    lines.push('inline float safe_div(float a, float b) { return b != 0.0f ? a / b : 0.0f; }');
-    lines.push('inline float2 safe_div(float2 a, float b) { return b != 0.0f ? a / b : float2(0.0f); }');
-    lines.push('inline float3 safe_div(float3 a, float b) { return b != 0.0f ? a / b : float3(0.0f); }');
-    lines.push('inline float4 safe_div(float4 a, float b) { return b != 0.0f ? a / b : float4(0.0f); }');
-    lines.push('inline float2 safe_div(float2 a, float2 b) { return float2(safe_div(a.x, b.x), safe_div(a.y, b.y)); }');
-    lines.push('inline float3 safe_div(float3 a, float3 b) { return float3(safe_div(a.x, b.x), safe_div(a.y, b.y), safe_div(a.z, b.z)); }');
-    lines.push('inline float4 safe_div(float4 a, float4 b) { return float4(safe_div(a.x, b.x), safe_div(a.y, b.y), safe_div(a.z, b.z), safe_div(a.w, b.w)); }');
-    lines.push('');
+    this.emitHelperFunctions(lines);
 
     // Emit struct definitions
     this.emitStructs(ir.structs || [], lines);
@@ -260,27 +244,34 @@ export class MslGenerator {
   }
 
   private collectFunctions(entry: FunctionDef, all: FunctionDef[]): FunctionDef[] {
-    const collected = new Set<string>([entry.id]);
-    const queue = [entry];
+    const collected = new Set<string>();
     const result: FunctionDef[] = [];
 
-    while (queue.length > 0) {
-      const func = queue.shift()!;
-      result.push(func);
-
+    // DFS with cycle detection
+    const visiting = new Set<string>();
+    const visit = (func: FunctionDef) => {
+      if (collected.has(func.id)) return;
+      if (visiting.has(func.id)) {
+        throw new Error(`Recursion detected: cyclic dependency involving '${func.id}'`);
+      }
+      visiting.add(func.id);
       for (const node of func.nodes) {
         if (node.op === 'call_func') {
           const targetId = node['func'];
-          if (!collected.has(targetId)) {
-            const target = all.find(f => f.id === targetId);
-            if (target) {
-              collected.add(targetId);
-              queue.push(target);
-            }
+          // Self-recursion
+          if (targetId === func.id) {
+            throw new Error(`Recursion detected: '${func.id}' calls itself`);
           }
+          const target = all.find(f => f.id === targetId);
+          if (target) visit(target);
         }
       }
-    }
+      visiting.delete(func.id);
+      collected.add(func.id);
+      result.push(func);
+    };
+
+    visit(entry);
     return result;
   }
 
@@ -296,6 +287,144 @@ export class MslGenerator {
       }
       lines.push('};');
     }
+    lines.push('');
+  }
+
+  private emitHelperFunctions(lines: string[]) {
+    lines.push('// Helper functions');
+    // Safe division
+    lines.push('inline float safe_div(float a, float b) { return b != 0.0f ? a / b : 0.0f; }');
+    lines.push('inline float2 safe_div(float2 a, float b) { return b != 0.0f ? a / b : float2(0.0f); }');
+    lines.push('inline float3 safe_div(float3 a, float b) { return b != 0.0f ? a / b : float3(0.0f); }');
+    lines.push('inline float4 safe_div(float4 a, float b) { return b != 0.0f ? a / b : float4(0.0f); }');
+    lines.push('inline float2 safe_div(float2 a, float2 b) { return float2(safe_div(a.x, b.x), safe_div(a.y, b.y)); }');
+    lines.push('inline float3 safe_div(float3 a, float3 b) { return float3(safe_div(a.x, b.x), safe_div(a.y, b.y), safe_div(a.z, b.z)); }');
+    lines.push('inline float4 safe_div(float4 a, float4 b) { return float4(safe_div(a.x, b.x), safe_div(a.y, b.y), safe_div(a.z, b.z), safe_div(a.w, b.w)); }');
+    lines.push('');
+    // Comparison helpers — overloaded for scalar and vector types
+    lines.push('inline float cmp_eq(float a, float b) { return a == b ? 1.0f : 0.0f; }');
+    lines.push('inline float2 cmp_eq(float2 a, float2 b) { return select(float2(0.0f), float2(1.0f), a == b); }');
+    lines.push('inline float3 cmp_eq(float3 a, float3 b) { return select(float3(0.0f), float3(1.0f), a == b); }');
+    lines.push('inline float4 cmp_eq(float4 a, float4 b) { return select(float4(0.0f), float4(1.0f), a == b); }');
+    lines.push('inline float cmp_neq(float a, float b) { return a != b ? 1.0f : 0.0f; }');
+    lines.push('inline float2 cmp_neq(float2 a, float2 b) { return select(float2(0.0f), float2(1.0f), a != b); }');
+    lines.push('inline float3 cmp_neq(float3 a, float3 b) { return select(float3(0.0f), float3(1.0f), a != b); }');
+    lines.push('inline float4 cmp_neq(float4 a, float4 b) { return select(float4(0.0f), float4(1.0f), a != b); }');
+    lines.push('inline float cmp_lt(float a, float b) { return a < b ? 1.0f : 0.0f; }');
+    lines.push('inline float2 cmp_lt(float2 a, float2 b) { return select(float2(0.0f), float2(1.0f), a < b); }');
+    lines.push('inline float3 cmp_lt(float3 a, float3 b) { return select(float3(0.0f), float3(1.0f), a < b); }');
+    lines.push('inline float4 cmp_lt(float4 a, float4 b) { return select(float4(0.0f), float4(1.0f), a < b); }');
+    lines.push('inline float cmp_lte(float a, float b) { return a <= b ? 1.0f : 0.0f; }');
+    lines.push('inline float2 cmp_lte(float2 a, float2 b) { return select(float2(0.0f), float2(1.0f), a <= b); }');
+    lines.push('inline float3 cmp_lte(float3 a, float3 b) { return select(float3(0.0f), float3(1.0f), a <= b); }');
+    lines.push('inline float4 cmp_lte(float4 a, float4 b) { return select(float4(0.0f), float4(1.0f), a <= b); }');
+    lines.push('inline float cmp_gt(float a, float b) { return a > b ? 1.0f : 0.0f; }');
+    lines.push('inline float2 cmp_gt(float2 a, float2 b) { return select(float2(0.0f), float2(1.0f), a > b); }');
+    lines.push('inline float3 cmp_gt(float3 a, float3 b) { return select(float3(0.0f), float3(1.0f), a > b); }');
+    lines.push('inline float4 cmp_gt(float4 a, float4 b) { return select(float4(0.0f), float4(1.0f), a > b); }');
+    lines.push('inline float cmp_gte(float a, float b) { return a >= b ? 1.0f : 0.0f; }');
+    lines.push('inline float2 cmp_gte(float2 a, float2 b) { return select(float2(0.0f), float2(1.0f), a >= b); }');
+    lines.push('inline float3 cmp_gte(float3 a, float3 b) { return select(float3(0.0f), float3(1.0f), a >= b); }');
+    lines.push('inline float4 cmp_gte(float4 a, float4 b) { return select(float4(0.0f), float4(1.0f), a >= b); }');
+    lines.push('');
+    // Select helper — overloaded for scalar and vector types
+    lines.push('inline float msl_select(float f, float t, float cond) { return cond != 0.0f ? t : f; }');
+    lines.push('inline float2 msl_select(float2 f, float2 t, float cond) { return cond != 0.0f ? t : f; }');
+    lines.push('inline float3 msl_select(float3 f, float3 t, float cond) { return cond != 0.0f ? t : f; }');
+    lines.push('inline float4 msl_select(float4 f, float4 t, float cond) { return cond != 0.0f ? t : f; }');
+    lines.push('inline float2 msl_select(float2 f, float2 t, float2 cond) { return select(f, t, cond != 0.0f); }');
+    lines.push('inline float3 msl_select(float3 f, float3 t, float3 cond) { return select(f, t, cond != 0.0f); }');
+    lines.push('inline float4 msl_select(float4 f, float4 t, float4 cond) { return select(f, t, cond != 0.0f); }');
+    lines.push('');
+    // NaN/Inf/Finite helpers — overloaded for scalar and vector
+    lines.push('inline float msl_is_nan(float v) { return isnan(v) ? 1.0f : 0.0f; }');
+    lines.push('inline float2 msl_is_nan(float2 v) { return select(float2(0.0f), float2(1.0f), isnan(v)); }');
+    lines.push('inline float3 msl_is_nan(float3 v) { return select(float3(0.0f), float3(1.0f), isnan(v)); }');
+    lines.push('inline float4 msl_is_nan(float4 v) { return select(float4(0.0f), float4(1.0f), isnan(v)); }');
+    lines.push('inline float msl_is_inf(float v) { return isinf(v) ? 1.0f : 0.0f; }');
+    lines.push('inline float2 msl_is_inf(float2 v) { return select(float2(0.0f), float2(1.0f), isinf(v)); }');
+    lines.push('inline float3 msl_is_inf(float3 v) { return select(float3(0.0f), float3(1.0f), isinf(v)); }');
+    lines.push('inline float4 msl_is_inf(float4 v) { return select(float4(0.0f), float4(1.0f), isinf(v)); }');
+    lines.push('inline float msl_is_finite(float v) { return (!isnan(v) && !isinf(v)) ? 1.0f : 0.0f; }');
+    lines.push('inline float2 msl_is_finite(float2 v) { return select(float2(0.0f), float2(1.0f), !isnan(v) && !isinf(v)); }');
+    lines.push('inline float3 msl_is_finite(float3 v) { return select(float3(0.0f), float3(1.0f), !isnan(v) && !isinf(v)); }');
+    lines.push('inline float4 msl_is_finite(float4 v) { return select(float4(0.0f), float4(1.0f), !isnan(v) && !isinf(v)); }');
+    lines.push('');
+    // Flush subnormal helper
+    lines.push('inline float flush_subnormal(float v) { return (v != 0.0f && abs(v) < 1.175494e-38f) ? 0.0f : v; }');
+    lines.push('');
+    // Exponent/mantissa helpers (IEEE 754)
+    lines.push('inline float get_exponent(float v) {');
+    lines.push('  if (v == 0.0f) return 0.0f;');
+    lines.push('  int exp_val; frexp(v, exp_val);');
+    lines.push('  return float(exp_val);');
+    lines.push('}');
+    lines.push('inline float get_mantissa(float v) {');
+    lines.push('  if (v == 0.0f) return 0.0f;');
+    lines.push('  int exp_val; return frexp(v, exp_val);');
+    lines.push('}');
+    lines.push('');
+    // Matrix inverse (4x4)
+    lines.push('inline float4x4 mat_inverse(float4x4 m) {');
+    lines.push('  float4 c0 = m[0], c1 = m[1], c2 = m[2], c3 = m[3];');
+    lines.push('  float4 r0, r1, r2, r3;');
+    lines.push('  r0.x = c1.y*c2.z*c3.w - c1.y*c2.w*c3.z - c2.y*c1.z*c3.w + c2.y*c1.w*c3.z + c3.y*c1.z*c2.w - c3.y*c1.w*c2.z;');
+    lines.push('  r0.y = -c0.y*c2.z*c3.w + c0.y*c2.w*c3.z + c2.y*c0.z*c3.w - c2.y*c0.w*c3.z - c3.y*c0.z*c2.w + c3.y*c0.w*c2.z;');
+    lines.push('  r0.z = c0.y*c1.z*c3.w - c0.y*c1.w*c3.z - c1.y*c0.z*c3.w + c1.y*c0.w*c3.z + c3.y*c0.z*c1.w - c3.y*c0.w*c1.z;');
+    lines.push('  r0.w = -c0.y*c1.z*c2.w + c0.y*c1.w*c2.z + c1.y*c0.z*c2.w - c1.y*c0.w*c2.z - c2.y*c0.z*c1.w + c2.y*c0.w*c1.z;');
+    lines.push('  float det = c0.x*r0.x + c1.x*r0.y + c2.x*r0.z + c3.x*r0.w;');
+    lines.push('  if (abs(det) < 1e-10) return m;');
+    lines.push('  float invDet = 1.0f / det;');
+    lines.push('  r1.x = -c1.x*c2.z*c3.w + c1.x*c2.w*c3.z + c2.x*c1.z*c3.w - c2.x*c1.w*c3.z - c3.x*c1.z*c2.w + c3.x*c1.w*c2.z;');
+    lines.push('  r1.y = c0.x*c2.z*c3.w - c0.x*c2.w*c3.z - c2.x*c0.z*c3.w + c2.x*c0.w*c3.z + c3.x*c0.z*c2.w - c3.x*c0.w*c2.z;');
+    lines.push('  r1.z = -c0.x*c1.z*c3.w + c0.x*c1.w*c3.z + c1.x*c0.z*c3.w - c1.x*c0.w*c3.z - c3.x*c0.z*c1.w + c3.x*c0.w*c1.z;');
+    lines.push('  r1.w = c0.x*c1.z*c2.w - c0.x*c1.w*c2.z - c1.x*c0.z*c2.w + c1.x*c0.w*c2.z + c2.x*c0.z*c1.w - c2.x*c0.w*c1.z;');
+    lines.push('  r2.x = c1.x*c2.y*c3.w - c1.x*c2.w*c3.y - c2.x*c1.y*c3.w + c2.x*c1.w*c3.y + c3.x*c1.y*c2.w - c3.x*c1.w*c2.y;');
+    lines.push('  r2.y = -c0.x*c2.y*c3.w + c0.x*c2.w*c3.y + c2.x*c0.y*c3.w - c2.x*c0.w*c3.y - c3.x*c0.y*c2.w + c3.x*c0.w*c2.y;');
+    lines.push('  r2.z = c0.x*c1.y*c3.w - c0.x*c1.w*c3.y - c1.x*c0.y*c3.w + c1.x*c0.w*c3.y + c3.x*c0.y*c1.w - c3.x*c0.w*c1.y;');
+    lines.push('  r2.w = -c0.x*c1.y*c2.w + c0.x*c1.w*c2.y + c1.x*c0.y*c2.w - c1.x*c0.w*c2.y - c2.x*c0.y*c1.w + c2.x*c0.w*c1.y;');
+    lines.push('  r3.x = -c1.x*c2.y*c3.z + c1.x*c2.z*c3.y + c2.x*c1.y*c3.z - c2.x*c1.z*c3.y - c3.x*c1.y*c2.z + c3.x*c1.z*c2.y;');
+    lines.push('  r3.y = c0.x*c2.y*c3.z - c0.x*c2.z*c3.y - c2.x*c0.y*c3.z + c2.x*c0.z*c3.y + c3.x*c0.y*c2.z - c3.x*c0.z*c2.y;');
+    lines.push('  r3.z = -c0.x*c1.y*c3.z + c0.x*c1.z*c3.y + c1.x*c0.y*c3.z - c1.x*c0.z*c3.y - c3.x*c0.y*c1.z + c3.x*c0.z*c1.y;');
+    lines.push('  r3.w = c0.x*c1.y*c2.z - c0.x*c1.z*c2.y - c1.x*c0.y*c2.z + c1.x*c0.z*c2.y + c2.x*c0.y*c1.z - c2.x*c0.z*c1.y;');
+    lines.push('  return float4x4(r0*invDet, r1*invDet, r2*invDet, r3*invDet);');
+    lines.push('}');
+    lines.push('');
+    // Quaternion helpers (w,x,y,z = q.w,q.x,q.y,q.z ; stored as float4(x,y,z,w))
+    lines.push('inline float4 quat_mul(float4 a, float4 b) {');
+    lines.push('  return float4(a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,');
+    lines.push('                a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,');
+    lines.push('                a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,');
+    lines.push('                a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z);');
+    lines.push('}');
+    lines.push('inline float3 quat_rotate(float3 v, float4 q) {');
+    lines.push('  float3 u = q.xyz; float s = q.w;');
+    lines.push('  return 2.0f*dot(u,v)*u + (s*s - dot(u,u))*v + 2.0f*s*cross(u,v);');
+    lines.push('}');
+    lines.push('inline float4 quat_slerp(float4 a, float4 b, float t) {');
+    lines.push('  float d = dot(a, b);');
+    lines.push('  if (d < 0.0f) { b = -b; d = -d; }');
+    lines.push('  if (d > 0.9995f) return normalize(mix(a, b, t));');
+    lines.push('  float theta = acos(clamp(d, -1.0f, 1.0f));');
+    lines.push('  float sn = sin(theta);');
+    lines.push('  return (sin((1.0f-t)*theta)/sn)*a + (sin(t*theta)/sn)*b;');
+    lines.push('}');
+    lines.push('inline float4x4 quat_to_mat4(float4 q) {');
+    lines.push('  float x=q.x, y=q.y, z=q.z, w=q.w;');
+    lines.push('  return float4x4(');
+    lines.push('    float4(1-2*(y*y+z*z), 2*(x*y+w*z), 2*(x*z-w*y), 0),');
+    lines.push('    float4(2*(x*y-w*z), 1-2*(x*x+z*z), 2*(y*z+w*x), 0),');
+    lines.push('    float4(2*(x*z+w*y), 2*(y*z-w*x), 1-2*(x*x+y*y), 0),');
+    lines.push('    float4(0, 0, 0, 1));');
+    lines.push('}');
+    lines.push('');
+    // Color mix (premultiplied alpha blend)
+    lines.push('inline float4 color_mix_impl(float4 a, float4 b) {');
+    lines.push('  float totalAlpha = a.w + b.w;');
+    lines.push('  if (totalAlpha < 1e-6f) return float4(0.0f);');
+    lines.push('  float3 blended = (a.xyz * a.w + b.xyz * b.w) / totalAlpha;');
+    lines.push('  return float4(blended, totalAlpha * 0.5f);');
+    lines.push('}');
     lines.push('');
   }
 
@@ -384,6 +513,38 @@ export class MslGenerator {
     const edges = reconstructEdges(func);
     this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, true);
 
+    // Kernel epilogue: write all local vars to b_globals for readback
+    // (func_return paths do their own writeback and return early)
+    if (!hasShaderInputs) {
+      lines.push('    // Write local vars to globals for readback');
+      for (const v of func.localVars || []) {
+        const offset = varMap.get(v.id);
+        if (offset === undefined) continue;
+        const varName = this.sanitizeId(v.id, 'var');
+        const varType = v.type || 'float';
+        const typeSize = this.getTypeSize(varType);
+        if (typeSize === 1) {
+          lines.push(`    b_globals[${offset}] = ${varName};`);
+        } else if (varType === 'float3x3') {
+          for (let col = 0; col < 3; col++) {
+            for (let row = 0; row < 3; row++) {
+              lines.push(`    b_globals[${offset + col * 3 + row}] = ${varName}[${col}][${row}];`);
+            }
+          }
+        } else if (varType === 'float4x4') {
+          for (let col = 0; col < 4; col++) {
+            for (let row = 0; row < 4; row++) {
+              lines.push(`    b_globals[${offset + col * 4 + row}] = ${varName}[${col}][${row}];`);
+            }
+          }
+        } else {
+          for (let i = 0; i < typeSize; i++) {
+            lines.push(`    b_globals[${offset + i}] = ${varName}[${i}];`);
+          }
+        }
+      }
+    }
+
     lines.push('}');
   }
 
@@ -428,7 +589,7 @@ export class MslGenerator {
     );
 
     for (const entry of entryNodes) {
-      this.emitChain(entry, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges);
+      this.emitChain(entry, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel);
     }
   }
 
@@ -441,6 +602,7 @@ export class MslGenerator {
     resourceBindings: Map<string, number>,
     emitPure: (id: string) => void,
     edges: Edge[],
+    isKernel: boolean = false,
     visited: Set<string> = new Set(),
     indent: string = '    '
   ) {
@@ -467,10 +629,10 @@ export class MslGenerator {
 
       // Handle control flow
       if (curr.op === 'flow_branch') {
-        this.emitBranch(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited));
+        this.emitBranch(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited));
         return;
       } else if (curr.op === 'flow_loop') {
-        this.emitLoop(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited));
+        this.emitLoop(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited));
         return;
       } else if (curr.op === 'func_return') {
         const val = this.resolveArg(curr, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
@@ -480,11 +642,25 @@ export class MslGenerator {
           if (typeof retVarId === 'string' && varMap.has(retVarId)) {
             const offset = varMap.get(retVarId)!;
             const localVar = func.localVars?.find(v => v.id === retVarId);
-            const typeSize = localVar ? this.getTypeSize(localVar.type || 'float') : 1;
+            const varType = localVar?.type || 'float';
+            const typeSize = localVar ? this.getTypeSize(varType) : 1;
             if (typeSize === 1) {
               lines.push(`${indent}b_globals[${offset}] = ${val};`);
+            } else if (varType === 'float3x3') {
+              // Matrix: val[col][row]
+              for (let col = 0; col < 3; col++) {
+                for (let row = 0; row < 3; row++) {
+                  lines.push(`${indent}b_globals[${offset + col * 3 + row}] = ${val}[${col}][${row}];`);
+                }
+              }
+            } else if (varType === 'float4x4') {
+              for (let col = 0; col < 4; col++) {
+                for (let row = 0; row < 4; row++) {
+                  lines.push(`${indent}b_globals[${offset + col * 4 + row}] = ${val}[${col}][${row}];`);
+                }
+              }
             } else {
-              // Vector/matrix: write each component
+              // Vector: write each component
               for (let i = 0; i < typeSize; i++) {
                 lines.push(`${indent}b_globals[${offset + i}] = ${val}[${i}];`);
               }
@@ -497,7 +673,7 @@ export class MslGenerator {
         return;
       } else {
         // Emit this node
-        this.emitNode(curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, indent);
+        this.emitNode(curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, indent, isKernel);
       }
 
       // Follow execution edges
@@ -516,17 +692,18 @@ export class MslGenerator {
     resourceBindings: Map<string, number>,
     emitPure: (id: string) => void,
     edges: Edge[],
+    isKernel: boolean,
     visited: Set<string>
   ) {
     const cond = this.resolveArg(node, 'cond', func, allFunctions, varMap, resourceBindings, emitPure, edges);
     lines.push(`${indent}if (${cond}) {`);
     const trueEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_true' && e.type === 'execution');
     const trueNode = trueEdge ? func.nodes.find(n => n.id === trueEdge.to) : undefined;
-    if (trueNode) this.emitChain(trueNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited), indent + '  ');
+    if (trueNode) this.emitChain(trueNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ');
     lines.push(`${indent}} else {`);
     const falseEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_false' && e.type === 'execution');
     const falseNode = falseEdge ? func.nodes.find(n => n.id === falseEdge.to) : undefined;
-    if (falseNode) this.emitChain(falseNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited), indent + '  ');
+    if (falseNode) this.emitChain(falseNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ');
     lines.push(`${indent}}`);
   }
 
@@ -540,6 +717,7 @@ export class MslGenerator {
     resourceBindings: Map<string, number>,
     emitPure: (id: string) => void,
     edges: Edge[],
+    isKernel: boolean,
     visited: Set<string>
   ) {
     const start = this.resolveArg(node, 'start', func, allFunctions, varMap, resourceBindings, emitPure, edges);
@@ -549,12 +727,12 @@ export class MslGenerator {
 
     const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
     const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;
-    if (bodyNode) this.emitChain(bodyNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, new Set(visited), indent + '  ');
+    if (bodyNode) this.emitChain(bodyNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ');
     lines.push(`${indent}}`);
 
     const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
     const nextNode = compEdge ? func.nodes.find(n => n.id === compEdge.to) : undefined;
-    if (nextNode) this.emitChain(nextNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, visited, indent);
+    if (nextNode) this.emitChain(nextNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, visited, indent);
   }
 
   private emitNode(
@@ -566,7 +744,8 @@ export class MslGenerator {
     resourceBindings: Map<string, number>,
     emitPure: (id: string) => void,
     edges: Edge[],
-    indent: string = '    '
+    indent: string = '    ',
+    isKernel: boolean = false
   ) {
     if (node.op === 'var_set') {
       const valNodeRef = node['val'];
@@ -605,7 +784,37 @@ export class MslGenerator {
       lines.push(`${indent}${this.sanitizeId(texId)}_tex.write(${val}, uint2(${coords}));`);
     } else if (node.op === 'func_return') {
       const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
-      lines.push(`    return ${val};`);
+      if (isKernel) {
+        const retVarId = node['val'];
+        if (typeof retVarId === 'string' && varMap.has(retVarId)) {
+          const offset = varMap.get(retVarId)!;
+          const localVar = func.localVars?.find(v => v.id === retVarId);
+          const varType = localVar?.type || 'float';
+          const typeSize = localVar ? this.getTypeSize(varType) : 1;
+          if (typeSize === 1) {
+            lines.push(`${indent}b_globals[${offset}] = ${val};`);
+          } else if (varType === 'float3x3') {
+            for (let col = 0; col < 3; col++) {
+              for (let row = 0; row < 3; row++) {
+                lines.push(`${indent}b_globals[${offset + col * 3 + row}] = ${val}[${col}][${row}];`);
+              }
+            }
+          } else if (varType === 'float4x4') {
+            for (let col = 0; col < 4; col++) {
+              for (let row = 0; row < 4; row++) {
+                lines.push(`${indent}b_globals[${offset + col * 4 + row}] = ${val}[${col}][${row}];`);
+              }
+            }
+          } else {
+            for (let i = 0; i < typeSize; i++) {
+              lines.push(`${indent}b_globals[${offset + i}] = ${val}[${i}];`);
+            }
+          }
+        }
+        lines.push(`${indent}return;`);
+      } else {
+        lines.push(`${indent}return ${val};`);
+      }
     } else if (this.hasResult(node.op)) {
       const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges);
       lines.push(`    auto ${this.nodeResId(node.id)} = ${expr};`);
@@ -661,7 +870,6 @@ export class MslGenerator {
       // Math ops - Metal uses same names as GLSL/WGSL
       case 'math_add': return `(${a()} + ${b()})`;
       case 'math_mad': return `fma(${a()}, ${b()}, ${a('c')})`;
-      case 'math_select': return `(${a('cond')} != 0.0f ? ${a('true')} : ${a('false')})`;
       case 'math_sub': return `(${a()} - ${b()})`;
       case 'math_mul': return `(${a()} * ${b()})`;
       case 'math_div': return `safe_div(${a()}, ${b()})`;
@@ -696,14 +904,47 @@ export class MslGenerator {
       case 'math_smoothstep': return `smoothstep(${a('edge0')}, ${a('edge1')}, ${a('val')})`;
       case 'math_mix': return `mix(${a()}, ${b()}, ${a('t')})`;
       case 'math_lerp': return `mix(${a()}, ${b()}, ${a('t')})`;
+      case 'math_trunc': return `trunc(${a('val')})`;
+      case 'math_is_nan': return `msl_is_nan(${a('val')})`;
+      case 'math_is_inf': return `msl_is_inf(${a('val')})`;
+      case 'math_is_finite': return `msl_is_finite(${a('val')})`;
+      case 'math_flush_subnormal': return `flush_subnormal(${a('val')})`;
+      case 'math_exponent': return `get_exponent(${a('val')})`;
+      case 'math_mantissa': return `get_mantissa(${a('val')})`;
 
-      // Comparisons
-      case 'math_eq': return `(${a()} == ${b()} ? 1.0f : 0.0f)`;
-      case 'math_neq': return `(${a()} != ${b()} ? 1.0f : 0.0f)`;
-      case 'math_lt': return `(${a()} < ${b()} ? 1.0f : 0.0f)`;
-      case 'math_lte': return `(${a()} <= ${b()} ? 1.0f : 0.0f)`;
-      case 'math_gt': return `(${a()} > ${b()} ? 1.0f : 0.0f)`;
-      case 'math_gte': return `(${a()} >= ${b()} ? 1.0f : 0.0f)`;
+      // Comparisons — use overloaded helpers for vector compatibility
+      case 'math_eq': return `cmp_eq(${a()}, ${b()})`;
+      case 'math_neq': return `cmp_neq(${a()}, ${b()})`;
+      case 'math_lt': return `cmp_lt(${a()}, ${b()})`;
+      case 'math_lte': case 'math_le': return `cmp_lte(${a()}, ${b()})`;
+      case 'math_gt': return `cmp_gt(${a()}, ${b()})`;
+      case 'math_gte': case 'math_ge': return `cmp_gte(${a()}, ${b()})`;
+
+      // Logic ops
+      case 'math_and': return `((${a()} != 0.0f && ${b()} != 0.0f) ? 1.0f : 0.0f)`;
+      case 'math_or': return `((${a()} != 0.0f || ${b()} != 0.0f) ? 1.0f : 0.0f)`;
+      case 'math_not': return `(${a('val')} == 0.0f ? 1.0f : 0.0f)`;
+      case 'math_xor': return `(((${a()} != 0.0f) != (${b()} != 0.0f)) ? 1.0f : 0.0f)`;
+
+      // Matrix ops
+      case 'mat_identity': {
+        const size = node['size'] || 4;
+        if (size === 3) return 'float3x3(1,0,0, 0,1,0, 0,0,1)';
+        return 'float4x4(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1)';
+      }
+      case 'mat_mul': return `(${a()} * ${b()})`;
+      case 'mat_inverse': return `mat_inverse(${a('val')})`;
+
+      // Quaternion ops
+      case 'quat_mul': return `quat_mul(${a()}, ${b()})`;
+      case 'quat_rotate': return `quat_rotate(${a('v')}, ${a('q')})`;
+      case 'quat_slerp': return `quat_slerp(${a()}, ${b()}, ${a('t')})`;
+      case 'quat_to_float4x4': return `quat_to_mat4(${a('q')})`;
+
+      // Color ops
+      case 'color_mix': return `color_mix_impl(${a()}, ${b()})`;
+
+      case 'math_select': return `msl_select(${a('false')}, ${a('true')}, ${a('cond')})`;
 
       // Vector ops
       case 'vec_dot': return `dot(${a()}, ${b()})`;
@@ -963,7 +1204,10 @@ export class MslGenerator {
       'array_construct', 'array_extract', 'array_length',
       'resource_get_size',
       'texture_sample',
-      'call_func'
+      'call_func',
+      'mat_identity', 'mat_mul', 'mat_inverse',
+      'quat_mul', 'quat_rotate', 'quat_slerp', 'quat_to_float4x4',
+      'color_mix'
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
@@ -1003,7 +1247,9 @@ export class MslGenerator {
       case 'bool': return 'bool';
       case 'float2': return 'float2';
       case 'float3': return 'float3';
-      case 'float4': return 'float4';
+      case 'float4': case 'quat': return 'float4';
+      case 'float3x3': return 'float3x3';
+      case 'float4x4': return 'float4x4';
       default:
         if (irType.startsWith('array<')) {
           // Parse array<elem, len> and return Metal array type
@@ -1044,7 +1290,9 @@ export class MslGenerator {
     if (!type) return 1;
     if (type === 'float2') return 2;
     if (type === 'float3') return 3;
-    if (type === 'float4') return 4;
+    if (type === 'float4' || type === 'quat') return 4;
+    if (type === 'float3x3') return 9;
+    if (type === 'float4x4') return 16;
     return 1;
   }
 

@@ -134,9 +134,14 @@ export const MetalBackend: TestBackend = {
     const allArgs = [...bufferArgs, ...textureArgs.map(t => `-t ${t}`)];
     const cmd = `"${harness}" "${sourceFile}" ${globalsSize} ${allArgs.join(' ')}`;
 
+    if (process.env.MSL_DEBUG) {
+      console.log('[MetalBackend] cmd:', cmd);
+      console.log('[MetalBackend] globalsSize:', globalsSize);
+    }
     let output: string;
     try {
       output = execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+      if (process.env.MSL_DEBUG) console.log('[MetalBackend] output:', output.trim().substring(0, 200));
     } catch (e: any) {
       const stderr = e.stderr || '';
       const stdout = e.stdout || '';
@@ -176,11 +181,22 @@ export const MetalBackend: TestBackend = {
     }
 
     // 7. Read back globals buffer to reconstruct local vars and return value
+    // Ensure a stack frame exists for var storage
+    if (ctx.stack.length === 0) {
+      ctx.pushFrame(entryPoint);
+    }
     const globalsData: (number | null)[] = jsonResult.globals || [];
     const varMap = result.metadata.varMap as Map<string, number>;
+    if (process.env.MSL_DEBUG) {
+      console.log('[MetalBackend] globalsData:', JSON.stringify(globalsData));
+      console.log('[MetalBackend] varMap:', varMap ? JSON.stringify([...varMap.entries()]) : 'null');
+      const ef = ir.functions.find(f => f.id === entryPoint);
+      console.log('[MetalBackend] localVars:', JSON.stringify(ef?.localVars));
+    }
     if (varMap && globalsData.length > 0) {
       const entryFunc = ir.functions.find(f => f.id === entryPoint);
       if (entryFunc) {
+
         // Check if there's a func_return node to determine the return variable
         const returnNode = entryFunc.nodes.find(n => n.op === 'func_return');
         const returnVarId = returnNode ? (returnNode as any).val : undefined;
