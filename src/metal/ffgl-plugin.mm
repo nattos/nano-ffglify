@@ -521,8 +521,8 @@ struct EvalContext {
   }
 };
 
-// Include generated code
-#include "generated/logic.cpp"
+// Forward declarations of generated functions
+void func_main(EvalContext &ctx);
 
 static const char _blitFromRectVertexShaderCode[] = R"(#version 410 core
 uniform vec2 MaxUV;
@@ -567,12 +567,15 @@ extern "C" void RegisterMetalTextureForGL(unsigned int glHandle,
 
 class NanoPlugin : public CFFGLPlugin {
 public:
+  void init_plugin();
+  void map_params(EvalContext &ctx);
+
+public:
   NanoPlugin() : CFFGLPlugin() {
     SetMinInputs(MIN_INPUTS);
     SetMaxInputs(MAX_INPUTS);
 
-    SetParamInfo(0, "Scale", FF_TYPE_STANDARD, 0.5f);
-    SetParamInfo(1, "Time", FF_TYPE_STANDARD, 0.0f);
+    init_plugin();
 
     _device = MTLCreateSystemDefaultDevice();
     _commandQueue = [_device newCommandQueue];
@@ -632,14 +635,11 @@ public:
     EvalContext ctx;
     ctx.initMetal(_device, _commandQueue, _library);
 
-    float scale = GetFloatParameter(0) * 20.0f;
-    float time = GetFloatParameter(1) * 100.0f;
-    ctx.inputs["scale"] = scale;
-    ctx.inputs["time"] = time;
+    map_params(ctx);
 
     // Resource mapping:
     // Index 0: Output texture
-    // Index 1, 2, ...: Input textures
+    // Index 1, 2, ...: Input textures (from IR inputs)
 
     ResourceState outputState;
     outputState.width = targetWidth;
@@ -649,6 +649,7 @@ public:
     ctx.resources.push_back(&outputState);
 
     std::vector<std::unique_ptr<ResourceState>> inputStates;
+    // Map host input textures to ctx.resources (following IR inputs order)
     for (unsigned int i = 0; i < pGL->numInputTextures && i < MAX_INPUTS; ++i) {
       if (pGL->inputTextures[i] != nullptr) {
         auto inputState = std::make_unique<ResourceState>();
@@ -714,11 +715,16 @@ private:
   ffglex::FFGLScreenQuad _screenQuad;
 };
 
+// Include generated code
+#define PLUGIN_CLASS NanoPlugin
+#include "generated/logic.cpp"
+#undef PLUGIN_CLASS
+
 static CFFGLPluginInfo PluginInfo(PluginFactory<NanoPlugin>, PLUGIN_CODE,
+
                                   PLUGIN_NAME,
                                   2, // API Major
                                   1, // API Minor
                                   1, // Plugin Major
                                   0, // Plugin Minor
-                                  PLUGIN_TYPE, "Nano FFGL Plugin",
-                                  "Nano FFGL by Google DeepMind");
+                                  PLUGIN_TYPE, "Nano FFGL Plugin", "Nano FFGL");

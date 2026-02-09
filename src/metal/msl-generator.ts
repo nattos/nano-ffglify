@@ -83,6 +83,11 @@ export class MslGenerator {
     // Resource bindings
     const resourceBindings = options.resourceBindings || new Map<string, number>();
     let bindingCounter = 1; // 0 is reserved for globals
+    for (const input of ir.inputs || []) {
+      if (input.type === 'texture2d' && !resourceBindings.has(input.id)) {
+        resourceBindings.set(input.id, bindingCounter++);
+      }
+    }
     for (const res of ir.resources || []) {
       if (!resourceBindings.has(res.id)) {
         resourceBindings.set(res.id, bindingCounter++);
@@ -159,6 +164,11 @@ export class MslGenerator {
     // Default resource bindings if not provided
     if (!options.resourceBindings) {
       let bindingCounter = 1;
+      for (const input of ir.inputs || []) {
+        if (input.type === 'texture2d' && !resourceBindings.has(input.id)) {
+          resourceBindings.set(input.id, bindingCounter++);
+        }
+      }
       for (const res of ir.resources || []) {
         if (!resourceBindings.has(res.id)) {
           resourceBindings.set(res.id, bindingCounter++);
@@ -325,11 +335,15 @@ export class MslGenerator {
     }
 
     for (const [resId, binding] of resourceBindings) {
-      const res = this.ir?.resources.find(r => r.id === resId);
-      if (res?.type === 'buffer') {
+      const res = this.ir?.resources.find(r => r.id === resId) ||
+        this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d');
+      if (!res) continue;
+
+      if ('type' in res && res.type === 'buffer') {
         const elemType = this.irTypeToMsl(res.dataType || 'float');
         bufferParams.push(`device ${elemType}* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
-      } else if (res?.type === 'texture2d') {
+      } else {
+        // Must be texture2d (either from resources or inputs)
         const isWrite = writeTextures.has(resId);
         if (isWrite) {
           bufferParams.push(`texture2d<float, access::write> ${this.sanitizeId(resId)}_tex [[texture(${binding})]]`);
@@ -671,14 +685,16 @@ export class MslGenerator {
 
       case 'resource_get_size': {
         const resId = node['resource'];
-        const resDef = this.ir?.resources.find(r => r.id === resId);
-        if (resDef?.type === 'texture2d') {
+        const resDef = this.ir?.resources.find(r => r.id === resId) ||
+          this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d');
+
+        if (resDef && (resDef.type === 'texture2d')) {
           // For textures in shader context, use runtime Metal calls
           const texName = `${this.sanitizeId(resId)}_tex`;
           return `float2(${texName}.get_width(), ${texName}.get_height())`;
         }
-        // For buffers, resolve from IR metadata
-        const size = resDef?.size && typeof resDef.size === 'object' && 'value' in resDef.size
+        // For buffers or fixed-size resources, resolve from IR metadata
+        const size = resDef && 'size' in resDef && typeof resDef.size === 'object' && 'value' in resDef.size
           ? resDef.size.value : 1;
         if (Array.isArray(size)) {
           return `float2(${this.formatFloat(size[0])}, ${this.formatFloat(size[1])})`;

@@ -124,6 +124,29 @@ export class CppGenerator {
       lines.push('');
     }
 
+    // FFGL Plugin Helpers
+    lines.push('// FFGL Plugin Helpers');
+    lines.push('void PLUGIN_CLASS::init_plugin() {');
+    const params = ir.inputs.filter(i => i.type !== 'texture2d');
+    params.forEach((p, idx) => {
+      const label = p.label || p.id;
+      const def = p.default !== undefined ? p.default : 0.5;
+      lines.push(`    SetParamInfo(${idx}, "${label}", FF_TYPE_STANDARD, ${this.formatFloat(def)});`);
+    });
+    lines.push('}');
+    lines.push('');
+
+    lines.push('void PLUGIN_CLASS::map_params(EvalContext& ctx) {');
+    params.forEach((p, idx) => {
+      // Map back to inputs. Scale can be handled here or in IR math.
+      // For now, standard 0..1 mapping.
+      lines.push(`    ctx.inputs["${p.id}"] = GetFloatParameter(${idx});`);
+    });
+    lines.push('}');
+    lines.push('');
+
+
+
     // Build shader function info for Metal compilation
     const shaderFunctions: ShaderFunctionInfo[] = Array.from(shaderFuncs.entries()).map(([id, func]) => ({
       id,
@@ -275,7 +298,7 @@ export class CppGenerator {
 
   private isExecutable(op: string): boolean {
     return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
-      op === 'buffer_store' || op === 'func_return' || op === 'call_func' || op === 'array_set';
+      op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set';
   }
 
   private inferCppType(node: Node): string {
@@ -461,6 +484,8 @@ export class CppGenerator {
         const sizeExpr = this.resolveArg(node, 'size', func, allFunctions, emitPure, edges);
         lines.push(`${indent}ctx.resizeResource(${resIdx}, static_cast<int>(${sizeExpr}), ${stride}, ${clearOnResize ? 'true' : 'false'});`);
       }
+    } else if (node.op === 'texture_store') {
+      // Texture store is handled by Metal on GPU. CPU fallback is no-op.
     } else if (node.op === 'cmd_dispatch') {
       // Emit dispatch to Metal compute shader
       const targetFunc = node['func'];
@@ -925,7 +950,12 @@ export class CppGenerator {
 
       case 'resource_get_size': {
         const resId = node['resource'];
-        const resIdx = this.ir?.resources.findIndex(r => r.id === resId) ?? -1;
+        const allRes = [
+          ...(this.ir?.resources.filter(r => r.isOutput) || []),
+          ...(this.ir?.inputs.filter(i => i.type === 'texture2d') || []),
+          ...(this.ir?.resources.filter(r => !r.isOutput) || [])
+        ];
+        const resIdx = allRes.findIndex(r => r.id === resId);
         return `std::array<float, 2>{static_cast<float>(ctx.resources[${resIdx}]->width), static_cast<float>(ctx.resources[${resIdx}]->height)}`;
       }
 

@@ -161,9 +161,9 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
 
   // Plugin Type and Input Constraints
   const inputCount = options.textureInputCount ?? 0;
-  let pluginType = 1; // Default to Effect if unknown
-  if (inputCount === 0) pluginType = 0; // Source
-  if (inputCount === 1) pluginType = 1; // Effect
+  let pluginType = 0; // Default to Effect (0 in this SDK)
+  if (inputCount === 0) pluginType = 1; // Source (1 in this SDK)
+  if (inputCount === 1) pluginType = 0; // Effect (0 in this SDK)
   if (inputCount >= 2) pluginType = 2; // Mixer
 
   // Compiler flags
@@ -186,12 +186,14 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
 
   // console.log('Compiling FFGL plugin:', cmd);
   try {
-    execSync(cmd, {
+    const output = execSync(cmd, {
       encoding: 'utf-8',
-      stdio: 'inherit',
+      stdio: 'pipe',
     });
-  } catch (e) {
+  } catch (e: any) {
     console.error('Compilation failed');
+    if (e.stdout) console.error(e.stdout);
+    if (e.stderr) console.error(e.stderr);
     throw e;
   }
 

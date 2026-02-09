@@ -111,6 +111,7 @@ describe('FFGL Build Pipeline', () => {
     expect(json.name).toBe(NOISE_SHADER.meta.name.slice(0, 16));
     expect(json.width).toBe(640);
     expect(json.height).toBe(480);
+    expect(json.type).toBe(1); // FF_SOURCE (1 in this SDK)
     expect(json.image).toBeDefined();
     expect(json.image.length).toBeGreaterThan(0);
 
@@ -160,11 +161,11 @@ describe('FFGL Build Pipeline', () => {
     const MIXER_SHADER = {
       meta: { name: 'Simple Mixer' },
       resources: [
-        { id: 'out_tex', type: 'texture2d', isOutput: true },
-        { id: 'in_tex1', type: 'texture2d' },
-        { id: 'in_tex2', type: 'texture2d' }
+        { id: 'out_tex', type: 'texture2d', isOutput: true }
       ],
       inputs: [
+        { id: 'in_tex1', type: 'texture2d' },
+        { id: 'in_tex2', type: 'texture2d' },
         { id: 'mix', type: 'f32', default: 0.5 }
       ],
       functions: [
@@ -231,8 +232,83 @@ describe('FFGL Build Pipeline', () => {
     const json = JSON.parse(runResult.trim());
     expect(json.success).toBe(true);
     expect(json.id).toBe('MIXR');
-    // FFGL Mixer type is 2
-    // We can't easily check the plugin type from the runner's JSON output yet
-    // unless we update the runner to report it.
+    expect(json.type).toBe(2); // FF_MIXER
+  });
+
+  test('should generate and compile an EFFECT plugin (brightness)', () => {
+    const BRIGHTNESS_EFFECT = {
+      meta: { name: 'Brightness Effect' },
+      resources: [
+        { id: 'out_tex', type: 'texture2d', isOutput: true }
+      ],
+      inputs: [
+        { id: 'in_tex', type: 'texture2d' },
+        { id: 'brightness', type: 'f32', default: 0.5 }
+      ],
+      functions: [
+        {
+          id: 'fn_brightness_gpu',
+          type: 'shader',
+          inputs: [{ id: 'b_val', type: 'f32' }],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'size', op: 'resource_get_size', resource: 'out_tex' },
+            { id: 'gid_raw', op: 'builtin_get', name: 'global_invocation_id' },
+            { id: 'gid', op: 'vec_swizzle', vec: 'gid_raw', channels: 'xy' },
+            { id: 'uv', op: 'float2', x: 0.5, y: 0.5 },
+            { id: 'tex_color', op: 'texture_sample', tex: 'in_tex', coords: 'uv' },
+            { id: 'b_vec', op: 'float4', x: 'b_val', y: 'b_val', z: 'b_val', w: 1.0 },
+            { id: 'final_color', op: 'math_add', a: 'tex_color', b: 'b_vec' },
+            { id: 'store', op: 'texture_store', tex: 'out_tex', coords: 'gid', value: 'final_color' }
+          ]
+        },
+        {
+          id: 'fn_main_cpu',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'out_size', op: 'resource_get_size', resource: 'out_tex' },
+            { id: 'disp', op: 'cmd_dispatch', func: 'fn_brightness_gpu', dispatch: 'out_size', args: { 'b_val': 'brightness' } }
+          ]
+        }
+      ]
+    };
+
+    const cppGen = new CppGenerator();
+    // @ts-ignore
+    const { code: cppCode, shaderFunctions } = cppGen.compile(BRIGHTNESS_EFFECT, 'fn_main_cpu');
+    fs.writeFileSync(path.join(generatedDir, 'logic.cpp'), cppCode);
+
+    const mslGen = new MslGenerator();
+    // @ts-ignore
+    const { code: mslCode } = mslGen.compileLibrary(BRIGHTNESS_EFFECT, shaderFunctions.map(s => s.id));
+    const shaderPath = path.join(generatedDir, 'shaders.metal');
+    fs.writeFileSync(shaderPath, mslCode);
+    const { metallibPath } = compileMetalShader(shaderPath, buildDir);
+
+    const brightnessPluginPath = path.join(buildDir, 'BrightnessEffect.bundle');
+    const result = compileFFGLPlugin({
+      outputPath: brightnessPluginPath,
+      name: 'Brightness Effect',
+      pluginId: 'BRGT',
+      textureInputCount: 1
+    });
+
+    expect(fs.existsSync(result)).toBe(true);
+
+    const resourcesDir = path.join(result, 'Contents/Resources');
+    if (!fs.existsSync(resourcesDir)) fs.mkdirSync(resourcesDir, { recursive: true });
+    fs.copyFileSync(metallibPath, path.join(resourcesDir, 'default.metallib'));
+
+    // Run the brightness effect
+    const cmd = `"${runnerPath}" "${result}"`;
+    const runResult = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+    const json = JSON.parse(runResult.trim());
+    expect(json.success).toBe(true);
+    expect(json.id).toBe('BRGT');
+    expect(json.type).toBe(0); // FF_EFFECT (0 in this SDK)
   });
 });

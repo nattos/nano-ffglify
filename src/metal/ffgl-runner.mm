@@ -155,6 +155,8 @@ int main(int argc, const char *argv[]) {
       pluginID = idBuf;
     }
 
+    unsigned int pluginType = info ? info->PluginType : 0;
+
     // 4. Initialize Plugin
     // FF_INITIALISE_V2 is mandatory for FFGL 2.0+
     FFMixed result = plugMain(
@@ -286,6 +288,7 @@ int main(int argc, const char *argv[]) {
               << "\"success\": true, "
               << "\"name\": \"" << pluginName << "\", "
               << "\"id\": \"" << pluginID << "\", "
+              << "\"type\": " << pluginType << ", "
               << "\"width\": " << width << ", "
               << "\"height\": " << height << ", "
               << "\"image\": \"" << b64 << "\""
