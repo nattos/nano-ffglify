@@ -21,6 +21,10 @@ void RegisterMetalTextureForGL(unsigned int glHandle, void *mtlTexturePtr);
 
 #import "AAPLOpenGLMetalInteropTexture.h"
 #include <FFGLSDK.h>
+#include <ffglex/FFGLScopedFBOBinding.h>
+#include <ffglex/FFGLScopedSamplerActivation.h>
+#include <ffglex/FFGLScopedShaderBinding.h>
+#include <ffglex/FFGLScopedTextureBinding.h>
 
 #ifndef PLUGIN_NAME
 #define PLUGIN_NAME "NanoFFGL"
@@ -561,21 +565,38 @@ void main() {
 }
 )";
 
+static const char _blitFromTex2DVertexShaderCode[] = R"(#version 410 core
+uniform vec2 MaxUV;
+
+layout(location = 0) in vec4 vPosition;
+layout(location = 1) in vec2 vUV;
+
+out vec2 uv;
+
+void main() {
+  gl_Position = vPosition;
+  uv = vUV;
+  uv = uv * MaxUV;
+}
+)";
+
+static const char _blitFromTex2DFragmentShaderCode[] = R"(#version 410 core
+uniform sampler2D InputTexture;
+
+in vec2 uv;
+
+out vec4 fragColor;
+
+void main() {
+  fragColor = texture(InputTexture, uv);
+}
+)";
+
 inline FFGLTexCoords GetMaxGLTexCoordsRect(int width, int height) {
   FFGLTexCoords texCoords;
   texCoords.s = ((GLfloat)width);
   texCoords.t = ((GLfloat)height);
   return texCoords;
-}
-
-static std::unordered_map<unsigned int, id<MTLTexture>> g_GLToMetalTextures;
-
-extern "C" void RegisterMetalTextureForGL(unsigned int glHandle,
-                                          void *mtlTexturePtr) {
-  g_GLToMetalTextures[glHandle] = (__bridge id<MTLTexture>)mtlTexturePtr;
-  fprintf(stderr, "[Plugin] Registered GL handle %u to Metal texture %p\n",
-          glHandle, mtlTexturePtr);
-  fflush(stderr);
 }
 
 class NanoPlugin : public CFFGLPlugin {
@@ -622,13 +643,17 @@ public:
   FFResult InitGL(const FFGLViewportStruct *vp) override {
     _blitShader.Compile(_blitFromRectVertexShaderCode,
                         _blitFromRectFragmentShaderCode);
+    _blitShader2D.Compile(_blitFromTex2DVertexShaderCode,
+                          _blitFromTex2DFragmentShaderCode);
     _screenQuad.Initialise();
     return CFFGLPlugin::InitGL(vp);
   }
 
   FFResult DeInitGL() override {
     _blitShader.FreeGLResources();
+    _blitShader2D.FreeGLResources();
     _screenQuad.Release();
+    _inputInterops.clear();
     return FF_SUCCESS;
   }
 
@@ -653,6 +678,54 @@ public:
                        height:targetHeight];
     }
 
+    // 1. Manage input interops
+    if (_inputInterops.size() < pGL->numInputTextures) {
+      _inputInterops.resize(pGL->numInputTextures, nil);
+    }
+    for (unsigned int i = 0; i < pGL->numInputTextures && i < MAX_INPUTS; ++i) {
+      if (pGL->inputTextures[i] != nullptr) {
+        const auto *pInput = pGL->inputTextures[i];
+        if (!_inputInterops[i] ||
+            _inputInterops[i].width != pInput->HardwareWidth ||
+            _inputInterops[i].height != pInput->HardwareHeight) {
+          _inputInterops[i] = [[AAPLOpenGLMetalInteropTexture alloc]
+              initWithMetalDevice:_device
+                    openGLContext:[NSOpenGLContext currentContext]
+                  createOpenGLFBO:YES
+                 metalPixelFormat:MTLPixelFormatBGRA8Unorm
+                            width:pInput->HardwareWidth
+                           height:pInput->HardwareHeight];
+        }
+
+        // Blit host -> interop
+        {
+          ffglex::ScopedFBOBinding fboBinding(
+              _inputInterops[i].openGLFBO, ffglex::ScopedFBOBinding::RB_REVERT);
+          glViewport(0, 0, pInput->HardwareWidth, pInput->HardwareHeight);
+
+          // Detect target or just try RECT first as it's common on macOS
+          bool isRect = true;
+          auto &shader = isRect ? _blitShader : _blitShader2D;
+          GLenum target = isRect ? GL_TEXTURE_RECTANGLE : GL_TEXTURE_2D;
+
+          ffglex::ScopedShaderBinding shaderBinding(shader.GetGLID());
+          ffglex::ScopedSamplerActivation activateSampler(0);
+          ffglex::ScopedTextureBinding textureBinding(target, pInput->Handle);
+
+          glSamplerParameteri(GL_TEXTURE0, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+          glSamplerParameteri(GL_TEXTURE0, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+          shader.Set("InputTexture", 0);
+          FFGLTexCoords maxCoords =
+              isRect ? GetMaxGLTexCoordsRect(pInput->Width, pInput->Height)
+                     : (FFGLTexCoords){1.0f, 1.0f};
+          shader.Set("MaxUV", maxCoords.s, maxCoords.t);
+          _screenQuad.Draw();
+        }
+      }
+    }
+    glFlush();
+
     EvalContext ctx;
     ctx.initMetal(_device, _commandQueue, _library);
 
@@ -668,33 +741,20 @@ public:
     outputState.isExternal = true;
     outputState.externalTexture = _interopTexture.metalTexture;
 
-    fprintf(stderr, "[Plugin] ProcessOpenGL entered, numInputTextures: %u\n",
-            pGL->numInputTextures);
-    fflush(stderr);
     std::vector<std::unique_ptr<ResourceState>> inputStates;
-    // Map host input textures to ctx.resources (following IR inputs order)
-    for (unsigned int i = 0; i < pGL->numInputTextures && i < MAX_INPUTS; ++i) {
-      if (pGL->inputTextures[i] != nullptr) {
-        auto inputState = std::make_unique<ResourceState>();
-        inputState->width = pGL->inputTextures[i]->HardwareWidth;
-        inputState->height = pGL->inputTextures[i]->HardwareHeight;
-        inputState->isExternal = true;
+    std::vector<ResourceState *> inputPtrs;
 
-        auto it = g_GLToMetalTextures.find(pGL->inputTextures[i]->Handle);
-        if (it != g_GLToMetalTextures.end()) {
-          inputState->externalTexture = it->second;
-          fprintf(stderr,
-                  "[Plugin] Found Metal texture for input %u (GL handle %u)\n",
-                  i, pGL->inputTextures[i]->Handle);
-          fflush(stderr);
-        }
+    for (unsigned int i = 0; i < pGL->numInputTextures && i < MAX_INPUTS; ++i) {
+      if (_inputInterops[i] != nil) {
+        auto inputState = std::make_unique<ResourceState>();
+        inputState->width = _inputInterops[i].width;
+        inputState->height = _inputInterops[i].height;
+        inputState->isExternal = true;
+        inputState->externalTexture = _inputInterops[i].metalTexture;
+        inputPtrs.push_back(inputState.get());
         inputStates.push_back(std::move(inputState));
       }
     }
-
-    std::vector<ResourceState *> inputPtrs;
-    for (auto &s : inputStates)
-      inputPtrs.push_back(s.get());
 
     setup_resources(ctx, &outputState, inputPtrs);
 
@@ -744,7 +804,9 @@ private:
   std::map<unsigned int, float> _params;
 
   ffglex::FFGLShader _blitShader;
+  ffglex::FFGLShader _blitShader2D;
   ffglex::FFGLScreenQuad _screenQuad;
+  std::vector<AAPLOpenGLMetalInteropTexture *> _inputInterops;
 
   std::vector<ResourceState> _internalResources;
 };
