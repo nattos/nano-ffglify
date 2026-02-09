@@ -5,6 +5,7 @@
 #import <Metal/Metal.h>
 #include <array>
 #include <cmath>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -469,6 +470,10 @@ struct EvalContext {
   std::vector<int> texHeights;
   std::vector<id<MTLTexture>> metalTextures;
 
+  // Sampler configuration per texture: 0=repeat, 1=clamp
+  std::vector<int> texWrapModes;
+  std::vector<id<MTLSamplerState>> metalSamplers;
+
   ResourceState *getResource(size_t idx) {
     return idx < resources.size() ? resources[idx] : nullptr;
   }
@@ -527,11 +532,114 @@ struct EvalContext {
     }
   }
 
+  void resizeResource2DWithClear(size_t idx, int w, int h, std::initializer_list<float> clearVal) {
+    if (idx < resources.size()) {
+      auto *res = resources[idx];
+      res->width = static_cast<size_t>(w);
+      res->height = static_cast<size_t>(h);
+      size_t total = static_cast<size_t>(w) * static_cast<size_t>(h);
+      bool isTex = idx < isTextureResource.size() && isTextureResource[idx];
+      size_t elemSize = isTex ? 4 : 1;
+      std::vector<float> pattern(clearVal);
+      // Pad pattern to elemSize if needed
+      while (pattern.size() < elemSize) pattern.push_back(0.0f);
+      res->data.resize(total * elemSize);
+      for (size_t i = 0; i < total; ++i) {
+        for (size_t j = 0; j < elemSize && j < pattern.size(); ++j) {
+          res->data[i * elemSize + j] = pattern[j];
+        }
+      }
+      actionLog.push_back({"resize", "", w, h});
+    }
+  }
+
   float getInput(const std::string &name) {
     auto it = inputs.find(name);
     if (it != inputs.end())
       return it->second;
     return 0.0f;
+  }
+
+  // CPU-side texture sampling (for CPU functions that sample textures directly)
+  // wrapMode: 0=repeat, 1=clamp, 2=mirror
+  // filterMode: 0=nearest, 1=linear
+  // elemStride: number of floats per texel (1 for R32F, 4 for RGBA8)
+  std::array<float, 4> sampleTexture(size_t resIdx, float u, float v, int wrapMode, int filterMode, int elemStride) {
+    if (resIdx >= resources.size()) return {0, 0, 0, 0};
+    auto *res = resources[resIdx];
+    int w = static_cast<int>(res->width);
+    int h = static_cast<int>(res->height);
+    if (w <= 0 || h <= 0) return {0, 0, 0, 0};
+
+    auto applyWrap = [](float coord, int mode) -> float {
+      if (mode == 1) { // clamp
+        return std::max(0.0f, std::min(1.0f, coord));
+      } else if (mode == 2) { // mirror
+        float c = fmod(coord, 2.0f);
+        if (c < 0) c += 2.0f;
+        return c > 1.0f ? 2.0f - c : c;
+      } else { // repeat
+        return coord - floorf(coord);
+      }
+    };
+
+    auto getSample = [&](int x, int y) -> std::array<float, 4> {
+      // Apply wrap in pixel space
+      if (wrapMode == 1) { // clamp
+        x = std::max(0, std::min(w - 1, x));
+        y = std::max(0, std::min(h - 1, y));
+      } else if (wrapMode == 0) { // repeat
+        x = ((x % w) + w) % w;
+        y = ((y % h) + h) % h;
+      } else if (wrapMode == 2) { // mirror
+        int mx = ((x % (2 * w)) + (2 * w)) % (2 * w);
+        x = mx >= w ? 2 * w - 1 - mx : mx;
+        int my = ((y % (2 * h)) + (2 * h)) % (2 * h);
+        y = my >= h ? 2 * h - 1 - my : my;
+      }
+      size_t idx = y * w + x;
+      std::array<float, 4> result = {0, 0, 0, 1};
+      size_t base = idx * elemStride;
+      for (int i = 0; i < elemStride && i < 4 && base + i < res->data.size(); ++i) {
+        result[i] = res->data[base + i];
+      }
+      // For single-channel textures, replicate to RGB
+      if (elemStride == 1) {
+        result[1] = result[0];
+        result[2] = result[0];
+        result[3] = 1.0f;
+      }
+      return result;
+    };
+
+    float wu = applyWrap(u, wrapMode);
+    float wv = applyWrap(v, wrapMode);
+
+    if (filterMode == 0) { // nearest
+      int x = std::min(static_cast<int>(wu * w), w - 1);
+      int y = std::min(static_cast<int>(wv * h), h - 1);
+      return getSample(x, y);
+    } else { // linear (bilinear)
+      float tx = wu * w - 0.5f;
+      float ty = wv * h - 0.5f;
+      int x0 = static_cast<int>(floorf(tx));
+      int y0 = static_cast<int>(floorf(ty));
+      float fx = tx - x0;
+      float fy = ty - y0;
+
+      auto s00 = getSample(x0, y0);
+      auto s10 = getSample(x0 + 1, y0);
+      auto s01 = getSample(x0, y0 + 1);
+      auto s11 = getSample(x0 + 1, y0 + 1);
+
+      std::array<float, 4> result;
+      for (int i = 0; i < 4; ++i) {
+        float r0 = s00[i] * (1 - fx) + s10[i] * fx;
+        float r1 = s01[i] * (1 - fx) + s11[i] * fx;
+        result[i] = r0 * (1 - fy) + r1 * fy;
+      }
+      return result;
+    }
   }
 
   // Initialize Metal if not already done
@@ -591,6 +699,8 @@ struct EvalContext {
     metalBuffers.clear();
     metalTextures.clear();
     metalTextures.resize(resources.size(), nil);
+    metalSamplers.clear();
+    metalSamplers.resize(resources.size(), nil);
 
     for (size_t i = 0; i < resources.size(); ++i) {
       auto *res = resources[i];
@@ -605,6 +715,37 @@ struct EvalContext {
         desc.storageMode = MTLStorageModeShared;
         id<MTLTexture> texture = [device newTextureWithDescriptor:desc];
         metalTextures[i] = texture;
+
+        // Upload pre-populated texture data if available (float RGBA → RGBA8 bytes)
+        if (!res->data.empty()) {
+          int w = texWidths[i];
+          int h = texHeights[i];
+          size_t pixelCount = w * h;
+          if (res->data.size() >= pixelCount * 4) {
+            std::vector<uint8_t> bytes(pixelCount * 4);
+            for (size_t j = 0; j < pixelCount * 4; ++j) {
+              float v = std::max(0.0f, std::min(1.0f, res->data[j]));
+              bytes[j] = static_cast<uint8_t>(v * 255.0f + 0.5f);
+            }
+            MTLRegion region = MTLRegionMake2D(0, 0, w, h);
+            [texture replaceRegion:region mipmapLevel:0 withBytes:bytes.data() bytesPerRow:w * 4];
+          }
+        }
+
+        // Create sampler for this texture
+        MTLSamplerDescriptor *samplerDesc = [[MTLSamplerDescriptor alloc] init];
+        samplerDesc.minFilter = MTLSamplerMinMagFilterNearest;
+        samplerDesc.magFilter = MTLSamplerMinMagFilterNearest;
+        int wrapMode = (i < texWrapModes.size()) ? texWrapModes[i] : 0;
+        if (wrapMode == 1) {
+          samplerDesc.sAddressMode = MTLSamplerAddressModeClampToEdge;
+          samplerDesc.tAddressMode = MTLSamplerAddressModeClampToEdge;
+        } else {
+          samplerDesc.sAddressMode = MTLSamplerAddressModeRepeat;
+          samplerDesc.tAddressMode = MTLSamplerAddressModeRepeat;
+        }
+        metalSamplers[i] = [device newSamplerStateWithDescriptor:samplerDesc];
+
         // Create a dummy buffer placeholder to keep indices aligned
         float dummy = 0;
         metalBuffers.push_back(
@@ -704,10 +845,14 @@ struct EvalContext {
       [encoder setBuffer:argsBuffer offset:0 atIndex:0];
     }
 
-    // Bind resource buffers and textures (starting at binding 1)
+    // Bind resource buffers, textures, and samplers (starting at binding 1)
     for (size_t i = 0; i < resources.size(); ++i) {
       if (i < metalTextures.size() && metalTextures[i] != nil) {
         [encoder setTexture:metalTextures[i] atIndex:i + 1];
+        // Bind sampler at same index for read-access textures
+        if (i < metalSamplers.size() && metalSamplers[i] != nil) {
+          [encoder setSamplerState:metalSamplers[i] atIndex:i + 1];
+        }
       } else if (i < metalBuffers.size()) {
         [encoder setBuffer:metalBuffers[i] offset:0 atIndex:i + 1];
       }
@@ -757,8 +902,9 @@ int main(int argc, const char *argv[]) {
       }
     }
 
-    // Parse -i input args first, then resource specs
+    // Parse -i input args, -d data file, then resource specs
     std::vector<std::string> resourceArgs;
+    std::string dataFilePath;
     for (int i = argStart; i < argc; ++i) {
       std::string arg = argv[i];
       if (arg == "-i" && i + 1 < argc) {
@@ -770,6 +916,8 @@ int main(int argc, const char *argv[]) {
           float value = std::stof(input.substr(colonPos + 1));
           ctx.inputs[name] = value;
         }
+      } else if (arg == "-d" && i + 1 < argc) {
+        dataFilePath = argv[++i];
       } else {
         resourceArgs.push_back(arg);
       }
@@ -778,10 +926,18 @@ int main(int argc, const char *argv[]) {
     // Parse resource specs
     for (const auto &arg : resourceArgs) {
       if (arg.size() > 2 && arg[0] == 'T' && arg[1] == ':') {
-        // Texture: T:<width>:<height>
+        // Texture: T:<width>:<height>[:<wrap>]
         auto firstColon = arg.find(':', 2);
+        auto secondColon = arg.find(':', firstColon + 1);
         int w = std::stoi(arg.substr(2, firstColon - 2));
-        int h = std::stoi(arg.substr(firstColon + 1));
+        std::string hStr = (secondColon != std::string::npos) ?
+          arg.substr(firstColon + 1, secondColon - firstColon - 1) :
+          arg.substr(firstColon + 1);
+        int h = std::stoi(hStr);
+        int wrap = 0; // 0=repeat, 1=clamp
+        if (secondColon != std::string::npos) {
+          wrap = std::stoi(arg.substr(secondColon + 1));
+        }
         // RGBA8 texture: w*h*4 floats
         resourceStorage.push_back(
             ResourceState{std::vector<float>(w * h * 4, 0.0f), (size_t)w,
@@ -789,8 +945,23 @@ int main(int argc, const char *argv[]) {
         ctx.isTextureResource.push_back(true);
         ctx.texWidths.push_back(w);
         ctx.texHeights.push_back(h);
+        ctx.texWrapModes.push_back(wrap);
+      } else if (arg.size() > 2 && arg[0] == 'B' && arg[1] == ':') {
+        // Buffer with stride: B:<size>:<stride>
+        auto firstColon = arg.find(':', 2);
+        size_t size = std::stoull(arg.substr(2, firstColon - 2));
+        size_t stride = 1;
+        if (firstColon != std::string::npos) {
+          stride = std::stoull(arg.substr(firstColon + 1));
+        }
+        size_t totalFloats = size * stride;
+        resourceStorage.push_back(
+            ResourceState{std::vector<float>(totalFloats, 0.0f), size, 1});
+        ctx.isTextureResource.push_back(false);
+        ctx.texWidths.push_back(0);
+        ctx.texHeights.push_back(0);
       } else {
-        // Buffer: <size>
+        // Buffer: <size> (legacy format, stride=1)
         size_t size = std::stoull(arg);
         resourceStorage.push_back(
             ResourceState{std::vector<float>(size, 0.0f), size, 1});
@@ -803,6 +974,41 @@ int main(int argc, const char *argv[]) {
     // Set up context pointers
     for (auto &res : resourceStorage) {
       ctx.resources.push_back(&res);
+    }
+
+    // Load pre-populated resource data from JSON file if provided
+    if (!dataFilePath.empty()) {
+      std::ifstream dataFile(dataFilePath);
+      if (dataFile.is_open()) {
+        std::string json((std::istreambuf_iterator<char>(dataFile)),
+                          std::istreambuf_iterator<char>());
+        // Simple JSON parser for {"idx": [float, ...], ...}
+        size_t pos = 0;
+        while ((pos = json.find('"', pos)) != std::string::npos) {
+          pos++; // skip opening quote
+          size_t endQuote = json.find('"', pos);
+          if (endQuote == std::string::npos) break;
+          int idx = std::stoi(json.substr(pos, endQuote - pos));
+          pos = json.find('[', endQuote);
+          if (pos == std::string::npos) break;
+          pos++; // skip [
+          std::vector<float> values;
+          while (pos < json.size() && json[pos] != ']') {
+            while (pos < json.size() && (json[pos] == ' ' || json[pos] == ',')) pos++;
+            if (pos < json.size() && json[pos] != ']') {
+              size_t numEnd = pos;
+              while (numEnd < json.size() && json[numEnd] != ',' && json[numEnd] != ']' && json[numEnd] != ' ')
+                numEnd++;
+              values.push_back(std::stof(json.substr(pos, numEnd - pos)));
+              pos = numEnd;
+            }
+          }
+          if (idx >= 0 && (size_t)idx < resourceStorage.size()) {
+            resourceStorage[idx].data = values;
+          }
+          if (pos < json.size()) pos++; // skip ]
+        }
+      }
     }
 
     // Call generated entry point

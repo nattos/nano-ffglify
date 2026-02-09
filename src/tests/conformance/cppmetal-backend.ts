@@ -89,18 +89,48 @@ export const CppMetalBackend: TestBackend = {
     }
 
     // 6. Prepare resource specs as arguments
-    const resourceSpecs = ir.resources.map(r => {
+    const resourceSpecs = ir.resources.map((r, idx) => {
       if (r.type === 'texture2d') {
         const size = r.size && typeof r.size === 'object' && 'value' in r.size ? r.size.value : [1, 1];
         const [w, h] = Array.isArray(size) ? size : [size, 1];
-        return `T:${w}:${h}`;
+        const sampler = (r as any).sampler;
+        const wrap = sampler?.wrap === 'clamp' ? 1 : 0;
+        return `T:${w}:${h}:${wrap}`;
       }
       if (r.type === 'buffer') {
         const size = r.size && typeof r.size === 'object' && 'value' in r.size ? r.size.value : 100;
-        return String(size);
+        const dt = (r as any).dataType;
+        const stride = dt === 'float4' ? 4 : dt === 'float3' ? 3 : dt === 'float2' ? 2 : 1;
+        return `B:${size}:${stride}`;
       }
       return '0';
     });
+
+    // 6b. Write pre-populated resource data to a data file
+    const resourceData: { [idx: number]: number[] } = {};
+    ir.resources.forEach((r, idx) => {
+      const state = ctx.resources.get(r.id);
+      if (state && state.data && state.data.length > 0) {
+        // Flatten nested arrays (e.g. [[1,0,0,1], [0,1,0,1]] → [1,0,0,1,0,1,0,1])
+        const flat: number[] = [];
+        for (const elem of state.data) {
+          if (Array.isArray(elem)) {
+            for (const v of elem as number[]) flat.push(v);
+          } else {
+            flat.push(elem as number);
+          }
+        }
+        if (flat.length > 0) {
+          resourceData[idx] = flat;
+        }
+      }
+    });
+    let dataFileArg = '';
+    if (Object.keys(resourceData).length > 0) {
+      const dataFilePath = path.join(buildDir, 'resource_data.json');
+      fs.writeFileSync(dataFilePath, JSON.stringify(resourceData));
+      dataFileArg = `-d "${dataFilePath}" `;
+    }
 
     // 7. Build input args from ctx.inputs
     const inputArgs: string[] = [];
@@ -109,12 +139,12 @@ export const CppMetalBackend: TestBackend = {
       inputArgs.push('-i', `${name}:${numVal}`);
     }
 
-    // 8. Run executable with optional metallib path, inputs, and resource specs
+    // 8. Run executable with optional metallib path, inputs, data file, and resource specs
     const metallibArg = metallibPath ? `"${metallibPath}" ` : '';
     const inputArgsStr = inputArgs.length > 0 ? inputArgs.join(' ') + ' ' : '';
     let output: string;
     try {
-      output = execSync(`"${executablePath}" ${metallibArg}${inputArgsStr}${resourceSpecs.join(' ')}`, {
+      output = execSync(`"${executablePath}" ${metallibArg}${inputArgsStr}${dataFileArg}${resourceSpecs.join(' ')}`, {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         maxBuffer: 64 * 1024 * 1024, // 64MB for large texture outputs

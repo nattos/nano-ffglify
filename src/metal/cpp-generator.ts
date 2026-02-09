@@ -124,8 +124,8 @@ export class CppGenerator {
       lines.push('');
     }
 
-    // FFGL Plugin Helpers
-    lines.push('// FFGL Plugin Helpers');
+    // FFGL Plugin Helpers (guarded - only compiled when PLUGIN_CLASS is defined)
+    lines.push('#ifdef PLUGIN_CLASS');
     lines.push('void PLUGIN_CLASS::init_plugin() {');
     const params = ir.inputs.filter(i => i.type !== 'texture2d');
     params.forEach((p, idx) => {
@@ -143,6 +143,7 @@ export class CppGenerator {
       lines.push(`    ctx.inputs["${p.id}"] = GetFloatParameter(${idx});`);
     });
     lines.push('}');
+    lines.push('#endif');
     lines.push('');
 
     lines.push('void PLUGIN_CLASS::setup_resources(EvalContext& ctx, ResourceState* outputRes, const std::vector<ResourceState*>& inputRes) {');
@@ -327,7 +328,7 @@ export class CppGenerator {
       'vec_get_element', 'call_func',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length',
-      'resource_get_size',
+      'resource_get_size', 'resource_get_format',
       'math_pi', 'math_e',
       'mat_identity', 'mat_mul', 'mat_inverse', 'mat_transpose',
       'quat', 'quat_identity', 'quat_mul', 'quat_rotate', 'quat_slerp', 'quat_to_float4x4',
@@ -516,12 +517,18 @@ export class CppGenerator {
       // Compute element stride from dataType (float4=4, float3=3, float2=2, float=1)
       const dataType = resDef?.dataType;
       const stride = dataType === 'float4' ? 4 : dataType === 'float3' ? 3 : dataType === 'float2' ? 2 : 1;
+      const clearVal = node['clear'];
       const sizeVal = node['size'];
       if (Array.isArray(sizeVal) && sizeVal.length === 2) {
         // 2D size [width, height] for textures
         const wExpr = typeof sizeVal[0] === 'number' ? String(sizeVal[0]) : this.resolveArg(node, 'size', func, allFunctions, emitPure, edges) + '[0]';
         const hExpr = typeof sizeVal[1] === 'number' ? String(sizeVal[1]) : this.resolveArg(node, 'size', func, allFunctions, emitPure, edges) + '[1]';
-        lines.push(`${indent}ctx.resizeResource2D(${resIdx}, ${wExpr}, ${hExpr}, ${clearOnResize ? 'true' : 'false'});`);
+        if (Array.isArray(clearVal)) {
+          const clearItems = clearVal.map((v: number) => this.formatFloat(v)).join(', ');
+          lines.push(`${indent}ctx.resizeResource2DWithClear(${resIdx}, ${wExpr}, ${hExpr}, {${clearItems}});`);
+        } else {
+          lines.push(`${indent}ctx.resizeResource2D(${resIdx}, ${wExpr}, ${hExpr}, ${clearOnResize ? 'true' : 'false'});`);
+        }
       } else {
         const sizeExpr = this.resolveArg(node, 'size', func, allFunctions, emitPure, edges);
         lines.push(`${indent}ctx.resizeResource(${resIdx}, static_cast<int>(${sizeExpr}), ${stride}, ${clearOnResize ? 'true' : 'false'});`);
@@ -863,8 +870,21 @@ export class CppGenerator {
       case 'quat_slerp': return `quat_slerp(${a()}, ${b()}, ${a('t')})`;
       case 'quat_to_float4x4': return `quat_to_float4x4(${a('q')})`;
 
-      // Texture sampling (CPU fallback - returns zero)
-      case 'texture_sample': return `std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}`;
+      // Texture sampling (CPU-side sampling from resource data)
+      case 'texture_sample': {
+        const texId = node['tex'] as string;
+        const resIdx = this.ir?.resources.findIndex(r => r.id === texId) ?? -1;
+        const resDef = this.ir?.resources.find(r => r.id === texId);
+        const sampler = (resDef as any)?.sampler;
+        const wrapMap: Record<string, number> = { 'repeat': 0, 'clamp': 1, 'mirror': 2 };
+        const filterMap: Record<string, number> = { 'nearest': 0, 'linear': 1 };
+        const wrapMode = wrapMap[sampler?.wrap ?? 'clamp'] ?? 1;
+        const filterMode = filterMap[sampler?.filter ?? 'nearest'] ?? 0;
+        const fmt = resDef?.format;
+        const elemStride = (fmt === 'r32f' || fmt === 'r16f' || fmt === 'r8') ? 1 : 4;
+        const coordsExpr = this.resolveArg(node, 'coords', func, allFunctions, emitPure, edges);
+        return `ctx.sampleTexture(${resIdx}, ${coordsExpr}[0], ${coordsExpr}[1], ${wrapMode}, ${filterMode}, ${elemStride})`;
+      }
 
       case 'call_func': {
         const targetFunc = node['func'];
@@ -996,6 +1016,18 @@ export class CppGenerator {
         const allRes = this.getAllResources();
         const resIdx = allRes.findIndex(r => r.id === resId);
         return `std::array<float, 2>{static_cast<float>(ctx.resources[${resIdx}]->width), static_cast<float>(ctx.resources[${resIdx}]->height)}`;
+      }
+
+      case 'resource_get_format': {
+        const resId = node['resource'];
+        const resDef = this.ir?.resources.find(r => r.id === resId);
+        const formatMap: Record<string, number> = {
+          'unknown': 0, 'rgba8': 1, 'rgba16f': 2, 'rgba32f': 3,
+          'r8': 4, 'r16f': 5, 'r32f': 6,
+        };
+        const fmt = resDef?.format ?? 'rgba8';
+        const fmtId = formatMap[fmt] ?? 0;
+        return `${this.formatFloat(fmtId)}`;
       }
 
       default:
