@@ -310,5 +310,17 @@ describe('FFGL Build Pipeline', () => {
     expect(json.success).toBe(true);
     expect(json.id).toBe('BRGT');
     expect(json.type).toBe(0); // FF_EFFECT (0 in this SDK)
+    expect(json.image).toBeDefined();
+    expect(json.image.length).toBeGreaterThan(0);
+
+    const buffer = Buffer.from(json.image, 'base64');
+    let hasNonZero = false;
+    for (let i = 0; i < buffer.length; ++i) {
+      if (buffer[i] > 0) {
+        hasNonZero = true;
+        break;
+      }
+    }
+    expect(hasNonZero).toBe(true);
   });
 });

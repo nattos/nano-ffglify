@@ -393,6 +393,7 @@ struct EvalContext {
   id<MTLDevice> device = nil;
   id<MTLLibrary> library = nil;
   id<MTLCommandQueue> commandQueue = nil;
+  id<MTLSamplerState> samplerState = nil;
   std::unordered_map<std::string, id<MTLComputePipelineState>> pipelines;
 
   ResourceState *getResource(size_t idx) {
@@ -427,6 +428,13 @@ struct EvalContext {
     device = existingDevice;
     commandQueue = existingQueue;
     library = existingLib;
+
+    MTLSamplerDescriptor *samplerDesc = [MTLSamplerDescriptor new];
+    samplerDesc.minFilter = MTLSamplerMinMagFilterLinear;
+    samplerDesc.magFilter = MTLSamplerMinMagFilterLinear;
+    samplerDesc.sAddressMode = MTLSamplerAddressModeClampToEdge;
+    samplerDesc.tAddressMode = MTLSamplerAddressModeClampToEdge;
+    samplerState = [device newSamplerStateWithDescriptor:samplerDesc];
   }
 
   id<MTLComputePipelineState> getPipeline(const std::string &funcName) {
@@ -489,6 +497,7 @@ struct EvalContext {
       auto *res = resources[i];
       if (res->isExternal && res->externalTexture) {
         [encoder setTexture:res->externalTexture atIndex:i + 1];
+        [encoder setSamplerState:samplerState atIndex:i + 1];
       }
     }
 
@@ -563,6 +572,8 @@ static std::unordered_map<unsigned int, id<MTLTexture>> g_GLToMetalTextures;
 extern "C" void RegisterMetalTextureForGL(unsigned int glHandle,
                                           void *mtlTexturePtr) {
   g_GLToMetalTextures[glHandle] = (__bridge id<MTLTexture>)mtlTexturePtr;
+  fprintf(stderr, "[Plugin] Registered GL handle %u to Metal texture %p\n",
+          glHandle, mtlTexturePtr);
 }
 
 class NanoPlugin : public CFFGLPlugin {
@@ -572,6 +583,7 @@ public:
 
 public:
   NanoPlugin() : CFFGLPlugin() {
+    fprintf(stderr, "[Plugin] NanoPlugin constructor\n");
     SetMinInputs(MIN_INPUTS);
     SetMaxInputs(MAX_INPUTS);
 
@@ -648,6 +660,8 @@ public:
     outputState.externalTexture = _interopTexture.metalTexture;
     ctx.resources.push_back(&outputState);
 
+    fprintf(stderr, "[Plugin] ProcessOpenGL entered, numInputTextures: %u\n",
+            pGL->numInputTextures);
     std::vector<std::unique_ptr<ResourceState>> inputStates;
     // Map host input textures to ctx.resources (following IR inputs order)
     for (unsigned int i = 0; i < pGL->numInputTextures && i < MAX_INPUTS; ++i) {
@@ -660,6 +674,14 @@ public:
         auto it = g_GLToMetalTextures.find(pGL->inputTextures[i]->Handle);
         if (it != g_GLToMetalTextures.end()) {
           inputState->externalTexture = it->second;
+          fprintf(stderr,
+                  "[Plugin] Found Metal texture for input %u (GL handle %u)\n",
+                  i, pGL->inputTextures[i]->Handle);
+        } else {
+          fprintf(stderr,
+                  "[Plugin] FAILED to find Metal texture for input %u (GL "
+                  "handle %u)\n",
+                  i, pGL->inputTextures[i]->Handle);
         }
         ctx.resources.push_back(inputState.get());
         inputStates.push_back(std::move(inputState));
