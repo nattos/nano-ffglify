@@ -133,7 +133,23 @@ int main(int argc, const char *argv[]) {
       return 1;
     }
 
-    // 3. Initialize Plugin
+    // 3. Get Plugin Info
+    FFMixed infoResult = plugMain(
+        FF_GET_INFO, (FFMixed){.PointerValue = nullptr}, (FFInstanceID)0);
+    PluginInfoStruct *info = (PluginInfoStruct *)infoResult.PointerValue;
+    std::string pluginName = "Unknown";
+    std::string pluginID = "XXXX";
+    if (info) {
+      char nameBuf[17] = {0};
+      memcpy(nameBuf, info->PluginName, 16);
+      pluginName = nameBuf;
+
+      char idBuf[5] = {0};
+      memcpy(idBuf, info->PluginUniqueID, 4);
+      pluginID = idBuf;
+    }
+
+    // 4. Initialize Plugin
     // FF_INITIALISE_V2 is mandatory for FFGL 2.0+
     FFMixed result = plugMain(
         FF_INITIALISE_V2, (FFMixed){.PointerValue = nullptr}, (FFInstanceID)0);
@@ -144,11 +160,11 @@ int main(int argc, const char *argv[]) {
       return 1;
     }
 
-    // 4. Instantiate Plugin
+    // 5. Instantiate Plugin
     // Defines viewport size for the instance
     const int width = 640;
     const int height = 480;
-    FFGLViewportStruct viewport = {0, 0, width, height};
+    FFGLViewportStruct viewport = {0, 0, (FFUInt32)width, (FFUInt32)height};
     result = plugMain(FF_INSTANTIATE_GL, (FFMixed){.PointerValue = &viewport},
                       (FFInstanceID)0);
 
@@ -161,7 +177,7 @@ int main(int argc, const char *argv[]) {
     }
     FFInstanceID instanceID = (FFInstanceID)result.PointerValue;
 
-    // 5. Setup OpenGL Resources (FBO & Textures)
+    // 6. Setup OpenGL Resources (FBO & Textures)
     GLuint fbo, texColor;
     glGenFramebuffers(1, &fbo);
     glGenTextures(1, &texColor);
@@ -187,7 +203,7 @@ int main(int argc, const char *argv[]) {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    // 6. Process Frame
+    // 7. Process Frame
     // FFGL 2.1 uses ProcessOpenGLStruct
     // We need to provide input textures. For a generator/source, it might
     // ignore inputs, but effects need them. We'll provide a dummy input texture
@@ -227,16 +243,18 @@ int main(int argc, const char *argv[]) {
     plugMain(FF_PROCESS_OPENGL, (FFMixed){.PointerValue = &processStruct},
              instanceID);
 
-    // 7. Readback and Encode
+    // 8. Readback and Encode
     std::vector<unsigned char> pixels(width * height * 4);
     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
     // Basic Base64 Encode
     std::string b64 = base64_encode(pixels.data(), pixels.size());
 
-    // 8. Output JSON
+    // 9. Output JSON
     std::cout << "{"
               << "\"success\": true, "
+              << "\"name\": \"" << pluginName << "\", "
+              << "\"id\": \"" << pluginID << "\", "
               << "\"width\": " << width << ", "
               << "\"height\": " << height << ", "
               << "\"image\": \"" << b64 << "\""

@@ -84,6 +84,8 @@ export function compileCppHost(options: CppCompileOptions): string {
 
 export interface FFGLCompileOptions {
   outputPath: string;
+  name?: string;
+  pluginId?: string;
 }
 
 /**
@@ -113,8 +115,22 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
   const srcMetalDir = path.join(repoRoot, 'src/metal');
 
   // Binary Name
-  const bundleName = path.basename(outputPath, '.bundle');
-  const binaryPath = path.join(macOsDir, bundleName);
+  const bundleName = options.name ? options.name.replace(/\s+/g, '') : path.basename(outputPath, '.bundle');
+  const actualOutputPath = options.name ? path.join(path.dirname(outputPath), `${bundleName}.bundle`) : outputPath;
+
+  // Clean up existing bundle if it exists (at the potentially new path)
+  if (actualOutputPath !== outputPath && fs.existsSync(actualOutputPath)) {
+    fs.rmSync(actualOutputPath, { recursive: true, force: true });
+  }
+
+  // Reload dirs based on actualOutputPath
+  const actualContentsDir = path.join(actualOutputPath, 'Contents');
+  const actualMacOsDir = path.join(actualContentsDir, 'MacOS');
+  if (!fs.existsSync(actualMacOsDir)) {
+    fs.mkdirSync(actualMacOsDir, { recursive: true });
+  }
+
+  const binaryPath = path.join(actualMacOsDir, bundleName);
 
   // Source files
   const sources = [
@@ -151,7 +167,9 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
     '-D TARGET_MACOS=1',
     '-D GL_SILENCE_DEPRECATION',
     '-g',         // Debug info
-  ].join(' ');
+    options.name ? `-DPLUGIN_NAME='"${options.name}"'` : '',
+    options.pluginId ? `-DPLUGIN_CODE='"${options.pluginId}"'` : '',
+  ].filter(f => f !== '').join(' ');
 
   const cmd = `clang++ ${flags} ${includeFlags} ${frameworkFlags} "${sources.join('" "')}" -o "${binaryPath}"`;
 
@@ -193,9 +211,9 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
 </dict>
 </plist>`;
 
-  fs.writeFileSync(path.join(contentsDir, 'Info.plist'), plistContent.trim());
+  fs.writeFileSync(path.join(actualContentsDir, 'Info.plist'), plistContent.trim());
 
-  return outputPath;
+  return actualOutputPath;
 }
 
 /**

@@ -10,7 +10,7 @@ import { MslGenerator } from './msl-generator';
 describe('FFGL Build Pipeline', () => {
   const buildDir = getMetalBuildDir();
   const repoRoot = path.resolve(__dirname, '../..');
-  const pluginPath = path.join(buildDir, 'NanoFFGL.bundle');
+  let pluginPath = path.join(buildDir, 'NanoFFGL.bundle');
   const runnerPath = path.join(buildDir, 'ffgl-runner');
   const generatedDir = path.join(repoRoot, 'src/metal/generated');
 
@@ -60,13 +60,26 @@ describe('FFGL Build Pipeline', () => {
     }
   });
 
-  test('should compile FFGL plugin bundle with generated logic', () => {
+  test('should compile FFGL plugin bundle with generated logic and metadata', () => {
+    const name = NOISE_SHADER.meta.name;
+    // Simple hash for 4-char ID
+    const hash = Array.from(name).reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0);
+    const id = Math.abs(hash).toString(16).slice(-4).toUpperCase().padStart(4, '0');
+
     const result = compileFFGLPlugin({
       outputPath: pluginPath,
+      name,
+      pluginId: id
     });
 
-    expect(result).toBe(pluginPath);
-    expect(fs.existsSync(pluginPath)).toBe(true);
+    const expectedName = name.replace(/\s+/g, '');
+    const expectedPath = path.join(path.dirname(pluginPath), `${expectedName}.bundle`);
+
+    expect(result).toBe(expectedPath);
+    expect(fs.existsSync(result)).toBe(true);
+
+    // Update pluginPath for subsequent tests
+    pluginPath = result;
 
     // Copy the compiled metallib (if it was generated) to the bundle
     const metallibPath = path.join(buildDir, 'shaders.metallib');
@@ -90,6 +103,9 @@ describe('FFGL Build Pipeline', () => {
 
     expect(json.error).toBeUndefined();
     expect(json.success).toBe(true);
+
+    // Verify name from metadata (FFGL header caps at 16 chars)
+    expect(json.name).toBe(NOISE_SHADER.meta.name.slice(0, 16));
     expect(json.width).toBe(640);
     expect(json.height).toBe(480);
     expect(json.image).toBeDefined();

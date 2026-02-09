@@ -161,6 +161,27 @@ export const CppMetalBackend: TestBackend = {
         }
       }
     });
+
+    // 11. Set return value if present (from func_return)
+    if (result.returnValue) {
+      // Convert null → NaN (JSON doesn't support NaN/Infinity natively)
+      const rv = (result.returnValue as (number | null)[]).map(v => v === null ? NaN : v);
+      if (rv.length === 1) {
+        ctx.result = rv[0];
+      } else {
+        ctx.result = rv;
+      }
+    }
+
+    // 12. Populate action log from harness output
+    if (result.log) {
+      for (const entry of result.log) {
+        ctx.logAction(entry.type, entry.target || '', {
+          width: entry.width,
+          height: entry.height,
+        });
+      }
+    }
   },
 
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {

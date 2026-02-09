@@ -18,8 +18,12 @@
 #import "AAPLOpenGLMetalInteropTexture.h"
 #include <FFGLSDK.h>
 
+#ifndef PLUGIN_NAME
 #define PLUGIN_NAME "NanoFFGL"
+#endif
+#ifndef PLUGIN_CODE
 #define PLUGIN_CODE "NANO"
+#endif
 
 // =====================
 // Intrinsic Helpers (same as cpp-generator.ts emits)
