@@ -76,5 +76,47 @@ describe('FFGL Build Pipeline', () => {
     expect(json.height).toBe(480);
     expect(json.image).toBeDefined();
     expect(json.image.length).toBeGreaterThan(0);
+
+    const buffer = Buffer.from(json.image, 'base64');
+    expect(buffer.length).toBe(640 * 480 * 4); // RGBA
+
+    // Check center pixel (320, 240)
+    // The shader writes Magenta (1, 0, 1, 1) to a BGRA texture.
+    // However, the FFGL blit shader reads it.
+    // Metal (BGRA) -> OpenGl (Texture)
+    // If we assume the interop works correctly, we should just check for valid data.
+    // Magenta: R=255, G=0, B=255, A=255
+
+    // Let's just scan for non-zero/non-black pixels first to be safe against coordinate system flukes
+    let nonBlackPixels = 0;
+    for (let i = 0; i < buffer.length; i += 4) {
+      const r = buffer[i];
+      const g = buffer[i + 1];
+      const b = buffer[i + 2];
+      const a = buffer[i + 3];
+
+      // Check for Magenta-ish or at least non-black, non-transparent
+      if (a > 0 && (r > 0 || g > 0 || b > 0)) {
+        nonBlackPixels++;
+      }
+    }
+
+    // We expect the whole screen to be filled
+    expect(nonBlackPixels).toBeGreaterThan(640 * 480 * 0.9);
+
+    // Let's inspect the center pixel specifically for Magenta
+    const centerOffset = (240 * 640 + 320) * 4;
+    const r = buffer[centerOffset];
+    const g = buffer[centerOffset + 1];
+    const b = buffer[centerOffset + 2];
+    const a = buffer[centerOffset + 3];
+
+    // console.log(`Center Pixel: R=${r}, G=${g}, B=${b}, A=${a}`);
+
+    expect(a).toBe(255);
+    // Since it's Magenta, we expect high R and B
+    expect(r).toBeGreaterThan(200);
+    expect(b).toBeGreaterThan(200);
+    expect(g).toBeLessThan(50);
   });
 });
