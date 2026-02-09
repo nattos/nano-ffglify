@@ -127,12 +127,16 @@ export const CppMetalBackend: TestBackend = {
     const result = JSON.parse(output.trim());
 
     // 10. Update EvaluationContext with results
-    result.resources.forEach((res: { type?: string; data: number[] }, i: number) => {
+    result.resources.forEach((res: { type?: string; width?: number; height?: number; data: number[] }, i: number) => {
       const resDef = ir.resources[i];
       const resId = resDef?.id;
       if (resId) {
         const state = ctx.resources.get(resId);
         if (state) {
+          // Update width/height from native output (may have changed via cmd_resize_resource)
+          if (res.width !== undefined) state.width = res.width;
+          if (res.height !== undefined) state.height = res.height;
+
           if (res.type === 'texture' || resDef.type === 'texture2d') {
             // Texture data: flat RGBA floats → restructure into [[r,g,b,a], ...] nested arrays
             const chunks: number[][] = [];

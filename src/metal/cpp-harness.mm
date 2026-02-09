@@ -380,6 +380,19 @@ struct EvalContext {
     return idx < resources.size() ? resources[idx] : nullptr;
   }
 
+  void resizeResource(size_t idx, int newSize, bool clearData) {
+    if (idx < resources.size()) {
+      auto *res = resources[idx];
+      res->width = static_cast<size_t>(newSize);
+      res->height = 1;
+      if (clearData) {
+        res->data.assign(static_cast<size_t>(newSize), 0.0f);
+      } else {
+        res->data.resize(static_cast<size_t>(newSize), 0.0f);
+      }
+    }
+  }
+
   float getInput(const std::string &name) {
     auto it = inputs.find(name);
     if (it != inputs.end())
@@ -668,7 +681,10 @@ int main(int argc, const char *argv[]) {
         std::cout << ",";
       auto *res = ctx.resources[r];
       bool isTex = r < ctx.isTextureResource.size() && ctx.isTextureResource[r];
-      std::cout << "{\"type\":\"" << (isTex ? "texture" : "buffer") << "\",\"data\":[";
+      std::cout << "{\"type\":\"" << (isTex ? "texture" : "buffer")
+                << "\",\"width\":" << res->width
+                << ",\"height\":" << res->height
+                << ",\"data\":[";
       for (size_t i = 0; i < res->data.size(); ++i) {
         if (i > 0)
           std::cout << ",";

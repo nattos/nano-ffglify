@@ -429,6 +429,13 @@ export class CppGenerator {
       const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
       const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges);
       lines.push(`${indent}${varName}[static_cast<size_t>(${idx})] = ${val};`);
+    } else if (node.op === 'cmd_resize_resource') {
+      const resId = node['resource'];
+      const resIdx = this.ir?.resources.findIndex(r => r.id === resId) ?? -1;
+      const resDef = this.ir?.resources.find(r => r.id === resId);
+      const clearOnResize = resDef?.persistence?.clearOnResize ?? false;
+      const sizeExpr = this.resolveArg(node, 'size', func, allFunctions, emitPure, edges);
+      lines.push(`${indent}ctx.resizeResource(${resIdx}, static_cast<int>(${sizeExpr}), ${clearOnResize ? 'true' : 'false'});`);
     } else if (node.op === 'cmd_dispatch') {
       // Emit dispatch to Metal compute shader
       const targetFunc = node['func'];
