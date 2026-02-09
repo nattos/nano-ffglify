@@ -4,7 +4,7 @@
 void func_fn_main_cpu(EvalContext& ctx);
 
 void func_fn_main_cpu(EvalContext& ctx) {
-    auto n_get_tex_size = std::array<float, 2>{256.0f, 256.0f};
+    auto n_get_tex_size = std::array<float, 2>{static_cast<float>(ctx.resources[0]->width), static_cast<float>(ctx.resources[0]->height)};
     {
         std::vector<float> _shader_args;
         _shader_args.push_back(ctx.getInput("scale"));

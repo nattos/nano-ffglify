@@ -925,16 +925,8 @@ export class CppGenerator {
 
       case 'resource_get_size': {
         const resId = node['resource'];
-        const resDef = this.ir?.resources.find(r => r.id === resId);
-        const size = resDef?.size && typeof resDef.size === 'object' && 'value' in resDef.size
-          ? resDef.size.value : 1;
-        if (Array.isArray(size)) {
-          return `std::array<float, 2>{${this.formatFloat(size[0])}, ${this.formatFloat(size[1])}}`;
-        }
-        if (typeof size === 'number') {
-          return `std::array<float, 2>{${this.formatFloat(size)}, 1.0f}`;
-        }
-        return `std::array<float, 2>{1.0f, 1.0f}`;
+        const resIdx = this.ir?.resources.findIndex(r => r.id === resId) ?? -1;
+        return `std::array<float, 2>{static_cast<float>(ctx.resources[${resIdx}]->width), static_cast<float>(ctx.resources[${resIdx}]->height)}`;
       }
 
       default:

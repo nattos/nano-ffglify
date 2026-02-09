@@ -132,4 +132,24 @@ describe('FFGL Build Pipeline', () => {
 
     expect(variance).toBe(true);
   });
+
+  test('should handle dynamic resizing', () => {
+    // 1. Initial 640x480 (already tested above, but let's do a different size)
+    const size1 = { w: 800, h: 600 };
+    const cmd1 = `"${runnerPath}" "${pluginPath}" ${size1.w} ${size1.h}`;
+    const result1 = execSync(cmd1, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+    const json1 = JSON.parse(result1.trim());
+    expect(json1.success).toBe(true);
+    expect(json1.width).toBe(size1.w);
+    expect(json1.height).toBe(size1.h);
+
+    // 2. Resize to 320x240
+    const size2 = { w: 320, h: 240 };
+    const cmd2 = `"${runnerPath}" "${pluginPath}" ${size2.w} ${size2.h}`;
+    const result2 = execSync(cmd2, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+    const json2 = JSON.parse(result2.trim());
+    expect(json2.success).toBe(true);
+    expect(json2.width).toBe(size2.w);
+    expect(json2.height).toBe(size2.h);
+  });
 });

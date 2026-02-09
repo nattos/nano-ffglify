@@ -162,8 +162,13 @@ int main(int argc, const char *argv[]) {
 
     // 5. Instantiate Plugin
     // Defines viewport size for the instance
-    const int width = 640;
-    const int height = 480;
+    int width = 640;
+    int height = 480;
+    if (argc >= 4) {
+      width = std::stoi(argv[2]);
+      height = std::stoi(argv[3]);
+    }
+
     FFGLViewportStruct viewport = {0, 0, (FFUInt32)width, (FFUInt32)height};
     result = plugMain(FF_INSTANTIATE_GL, (FFMixed){.PointerValue = &viewport},
                       (FFInstanceID)0);
@@ -176,6 +181,9 @@ int main(int argc, const char *argv[]) {
       return 1;
     }
     FFInstanceID instanceID = (FFInstanceID)result.PointerValue;
+
+    // Optional: Call Resize just to be explicit, though instantiate does it too
+    plugMain(FF_RESIZE, (FFMixed){.PointerValue = &viewport}, instanceID);
 
     // 6. Setup OpenGL Resources (FBO & Textures)
     GLuint fbo, texColor;

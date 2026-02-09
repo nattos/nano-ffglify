@@ -562,8 +562,8 @@ public:
     NSError *error = nil;
     _library = [_device newDefaultLibraryWithBundle:bundle error:&error];
     if (!_library) {
-      NSURL *libUrl =
-          [bundle URLForResource:@"default" withExtension:@"metallib"];
+      NSURL *libUrl = [bundle URLForResource:@"default"
+                               withExtension:@"metallib"];
       if (libUrl) {
         _library = [_device newLibraryWithURL:libUrl error:&error];
       }
@@ -588,22 +588,28 @@ public:
     return FF_SUCCESS;
   }
 
+  FFResult Resize(const FFGLViewportStruct *vp) override {
+    _currentViewport = *vp;
+    return CFFGLPlugin::Resize(vp);
+  }
+
   FFResult ProcessOpenGL(ProcessOpenGLStruct *pGL) override {
     if (pGL->numInputTextures < 1 || pGL->inputTextures[0] == NULL) {
       return FF_FAIL;
     }
-    const auto *inputTexture = pGL->inputTextures[0];
+    // We use the viewport size for our internal textures and orchestration.
+    unsigned int targetWidth = _currentViewport.width;
+    unsigned int targetHeight = _currentViewport.height;
 
-    if (!_interopTexture ||
-        _interopTexture.width != inputTexture->HardwareWidth ||
-        _interopTexture.height != inputTexture->HardwareHeight) {
+    if (!_interopTexture || _interopTexture.width != targetWidth ||
+        _interopTexture.height != targetHeight) {
       _interopTexture = [[AAPLOpenGLMetalInteropTexture alloc]
           initWithMetalDevice:_device
                 openGLContext:[NSOpenGLContext currentContext]
               createOpenGLFBO:YES
              metalPixelFormat:MTLPixelFormatBGRA8Unorm
-                        width:inputTexture->HardwareWidth
-                       height:inputTexture->HardwareHeight];
+                        width:targetWidth
+                       height:targetHeight];
     }
 
     EvalContext ctx;
@@ -615,8 +621,8 @@ public:
     ctx.inputs["time"] = time;
 
     ResourceState outputState;
-    outputState.width = _interopTexture.width;
-    outputState.height = _interopTexture.height;
+    outputState.width = _currentViewport.width;
+    outputState.height = _currentViewport.height;
     outputState.isExternal = true;
     outputState.externalTexture = _interopTexture.metalTexture;
 
@@ -663,6 +669,7 @@ private:
   id<MTLCommandQueue> _commandQueue;
   id<MTLLibrary> _library;
   AAPLOpenGLMetalInteropTexture *_interopTexture;
+  FFGLViewportStruct _currentViewport = {0, 0, 640, 480};
 
   std::map<unsigned int, float> _params;
 

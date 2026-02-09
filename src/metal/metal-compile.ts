@@ -134,7 +134,7 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
 
   // Source files
   const sources = [
-    path.join(srcMetalDir, 'ffgl-plugin.cpp'),
+    path.join(srcMetalDir, 'ffgl-plugin.mm'),
     path.join(ffglSdkDir, 'FFGLSDK.cpp'),
     path.join(tmpDir, 'AAPLOpenGLMetalInteropTexture.m'),
   ];
