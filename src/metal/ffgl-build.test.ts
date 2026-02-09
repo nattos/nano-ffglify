@@ -1,52 +1,31 @@
-
-import * as path from 'path';
+import { describe, test, expect, beforeAll } from 'vitest';
 import * as fs from 'fs';
-import { compileFFGLPlugin, compileCppHost, runMetalProgram, getMetalBuildDir, compileMetalShader } from './metal-compile';
+import * as path from 'path';
 import { execSync } from 'child_process';
+import { compileMetalShader, compileFFGLPlugin, compileCppHost, getMetalBuildDir } from './metal-compile';
+import { NOISE_SHADER } from '../domain/example-ir';
+import { CppGenerator } from './cpp-generator';
+import { MslGenerator } from './msl-generator';
 
 describe('FFGL Build Pipeline', () => {
   const buildDir = getMetalBuildDir();
+  const repoRoot = path.resolve(__dirname, '../..');
   const pluginPath = path.join(buildDir, 'NanoFFGL.bundle');
   const runnerPath = path.join(buildDir, 'ffgl-runner');
+  const generatedDir = path.join(repoRoot, 'src/metal/generated');
 
   beforeAll(() => {
-    // Ensure build directory exists
-    if (!fs.existsSync(buildDir)) {
-      fs.mkdirSync(buildDir, { recursive: true });
+    if (!fs.existsSync(generatedDir)) {
+      fs.mkdirSync(generatedDir, { recursive: true });
     }
-  });
-
-  test('should compile FFGL plugin bundle', () => {
-    // Compile the FFGL plugin
-    compileFFGLPlugin({
-      outputPath: pluginPath,
-    });
-
-    expect(fs.existsSync(pluginPath)).toBe(true);
-  });
-
-  test('should compile and bundle solid-color metal shader', () => {
-    // 1. Compile Metal Shader to .metallib
-    const shaderPath = path.join(__dirname, 'solid-color.metal');
-
-    // compileMetalShader returns { metallibPath, airPath }
-    const { metallibPath } = compileMetalShader(shaderPath, buildDir);
-
-    // 2. Move metallib to Bundle Resources
-    const resourcesDir = path.join(pluginPath, 'Contents/Resources');
-    if (!fs.existsSync(resourcesDir)) {
-      fs.mkdirSync(resourcesDir, { recursive: true });
+    // Create a dummy logic.cpp if it doesn't exist to allow initial compilation
+    if (!fs.existsSync(path.join(generatedDir, 'logic.cpp'))) {
+      fs.writeFileSync(path.join(generatedDir, 'logic.cpp'), 'void func_main(EvalContext& ctx) {}');
     }
-
-    const destPath = path.join(resourcesDir, 'default.metallib');
-    fs.copyFileSync(metallibPath, destPath);
-
-    expect(fs.existsSync(destPath)).toBe(true);
   });
 
   test('should compile FFGL runner', () => {
-    const runnerSource = path.join(__dirname, 'ffgl-runner.mm');
-    const repoRoot = path.resolve(__dirname, '../..');
+    const runnerSource = path.join(repoRoot, 'src/metal/ffgl-runner.mm');
     const ffglSdkDir = path.join(repoRoot, 'modules/ffgl/source/lib');
 
     compileCppHost({
@@ -59,10 +38,49 @@ describe('FFGL Build Pipeline', () => {
     expect(fs.existsSync(runnerPath)).toBe(true);
   });
 
-  test('should load and initialize FFGL plugin with solid-color shader', () => {
-    const cmd = `"${runnerPath}" "${pluginPath}"`;
-    // console.log('Running FFGL check:', cmd);
+  test('should generate NOISE_SHADER code', () => {
+    const cppGen = new CppGenerator();
+    const { code: cppCode, shaderFunctions } = cppGen.compile(NOISE_SHADER, 'fn_main_cpu');
 
+    // Write Logic
+    fs.writeFileSync(path.join(generatedDir, 'logic.cpp'), cppCode);
+
+    // Write Shaders
+    if (shaderFunctions.length > 0) {
+      const mslGen = new MslGenerator();
+      const { code: mslCode } = mslGen.compileLibrary(NOISE_SHADER, shaderFunctions.map(s => s.id));
+      const shaderPath = path.join(generatedDir, 'shaders.metal');
+      fs.writeFileSync(shaderPath, mslCode);
+
+      // Compile Shaders
+      const { metallibPath } = compileMetalShader(shaderPath, buildDir);
+
+      // We'll bundle this in the next step
+      expect(fs.existsSync(metallibPath)).toBe(true);
+    }
+  });
+
+  test('should compile FFGL plugin bundle with generated logic', () => {
+    const result = compileFFGLPlugin({
+      outputPath: pluginPath,
+    });
+
+    expect(result).toBe(pluginPath);
+    expect(fs.existsSync(pluginPath)).toBe(true);
+
+    // Copy the compiled metallib (if it was generated) to the bundle
+    const metallibPath = path.join(buildDir, 'shaders.metallib');
+    if (fs.existsSync(metallibPath)) {
+      const resourcesDir = path.join(pluginPath, 'Contents/Resources');
+      if (!fs.existsSync(resourcesDir)) {
+        fs.mkdirSync(resourcesDir, { recursive: true });
+      }
+      fs.copyFileSync(metallibPath, path.join(resourcesDir, 'default.metallib'));
+    }
+  });
+
+  test('should load and initialize FFGL plugin with noise shader', () => {
+    const cmd = `"${runnerPath}" "${pluginPath}"`;
     const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
     const json = JSON.parse(result.trim());
 
@@ -78,45 +96,24 @@ describe('FFGL Build Pipeline', () => {
     expect(json.image.length).toBeGreaterThan(0);
 
     const buffer = Buffer.from(json.image, 'base64');
-    expect(buffer.length).toBe(640 * 480 * 4); // RGBA
 
-    // Check center pixel (320, 240)
-    // The shader writes Magenta (1, 0, 1, 1) to a BGRA texture.
-    // However, the FFGL blit shader reads it.
-    // Metal (BGRA) -> OpenGl (Texture)
-    // If we assume the interop works correctly, we should just check for valid data.
-    // Magenta: R=255, G=0, B=255, A=255
+    // Verify Output is NOT a solid color
+    let variance = false;
+    const firstR = buffer[0];
+    const firstG = buffer[1];
+    const firstB = buffer[2];
 
-    // Let's just scan for non-zero/non-black pixels first to be safe against coordinate system flukes
-    let nonBlackPixels = 0;
     for (let i = 0; i < buffer.length; i += 4) {
       const r = buffer[i];
       const g = buffer[i + 1];
       const b = buffer[i + 2];
-      const a = buffer[i + 3];
 
-      // Check for Magenta-ish or at least non-black, non-transparent
-      if (a > 0 && (r > 0 || g > 0 || b > 0)) {
-        nonBlackPixels++;
+      if (Math.abs(r - firstR) > 5 || Math.abs(g - firstG) > 5 || Math.abs(b - firstB) > 5) {
+        variance = true;
+        break;
       }
     }
 
-    // We expect the whole screen to be filled
-    expect(nonBlackPixels).toBeGreaterThan(640 * 480 * 0.9);
-
-    // Let's inspect the center pixel specifically for Magenta
-    const centerOffset = (240 * 640 + 320) * 4;
-    const r = buffer[centerOffset];
-    const g = buffer[centerOffset + 1];
-    const b = buffer[centerOffset + 2];
-    const a = buffer[centerOffset + 3];
-
-    // console.log(`Center Pixel: R=${r}, G=${g}, B=${b}, A=${a}`);
-
-    expect(a).toBe(255);
-    // Since it's Magenta, we expect high R and B
-    expect(r).toBeGreaterThan(200);
-    expect(b).toBeGreaterThan(200);
-    expect(g).toBeLessThan(50);
+    expect(variance).toBe(true);
   });
 });

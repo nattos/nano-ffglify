@@ -128,6 +128,7 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
     `-I"${ffglSdkDir}"`,
     `-I"${tmpDir}"`,
     `-I"${srcMetalDir}"`,
+    `-I"${path.join(srcMetalDir, 'generated')}"`,
   ].join(' ');
 
   // Frameworks
