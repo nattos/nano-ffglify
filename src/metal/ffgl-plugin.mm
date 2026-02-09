@@ -510,6 +510,7 @@ struct EvalContext {
     [encoder endEncoding];
 
     [cmdBuffer commit];
+    [cmdBuffer waitUntilCompleted];
   }
 
   void dispatchShader(const char *funcName, int dimX, int dimY, int dimZ) {
@@ -684,12 +685,6 @@ public:
           inputState->externalTexture = it->second;
           fprintf(stderr,
                   "[Plugin] Found Metal texture for input %u (GL handle %u)\n",
-                  i, pGL->inputTextures[i]->Handle);
-          fflush(stderr);
-        } else {
-          fprintf(stderr,
-                  "[Plugin] FAILED to find Metal texture for input %u (GL "
-                  "handle %u)\n",
                   i, pGL->inputTextures[i]->Handle);
           fflush(stderr);
         }

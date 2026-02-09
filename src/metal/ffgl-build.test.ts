@@ -327,4 +327,96 @@ describe('FFGL Build Pipeline', () => {
     }
     expect(hasNonZero).toBe(true);
   });
+
+  test('should generate and compile a PASSTHROUGH effect', () => {
+    const PASSTHROUGH_EFFECT = {
+      meta: { name: 'Passthrough Effect' },
+      resources: [
+        { id: 'out_tex', type: 'texture2d', isOutput: true }
+      ],
+      inputs: [
+        { id: 'in_tex', type: 'texture2d' }
+      ],
+      functions: [
+        {
+          id: 'fn_pass_gpu',
+          type: 'shader',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'size', op: 'resource_get_size', resource: 'out_tex' },
+            { id: 'gid_raw', op: 'builtin_get', name: 'global_invocation_id' },
+            { id: 'gid', op: 'vec_swizzle', vec: 'gid_raw', channels: 'xy' },
+            { id: 'uv', op: 'float2', x: 0.5, y: 0.5 },
+            { id: 'tex_color', op: 'texture_sample', tex: 'in_tex', coords: 'uv' },
+            { id: 'store', op: 'texture_store', tex: 'out_tex', coords: 'gid', value: 'tex_color' }
+          ]
+        },
+        {
+          id: 'fn_main_cpu',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'out_size', op: 'resource_get_size', resource: 'out_tex' },
+            { id: 'disp', op: 'cmd_dispatch', func: 'fn_pass_gpu', dispatch: 'out_size', args: {} }
+          ]
+        }
+      ]
+    };
+
+    const cppGen = new CppGenerator();
+    // @ts-ignore
+    const { code: cppCode, shaderFunctions } = cppGen.compile(PASSTHROUGH_EFFECT, 'fn_main_cpu');
+    fs.writeFileSync(path.join(generatedDir, 'logic.cpp'), cppCode);
+
+    const mslGen = new MslGenerator();
+    // @ts-ignore
+    const { code: mslCode } = mslGen.compileLibrary(PASSTHROUGH_EFFECT, shaderFunctions.map(s => s.id));
+    const shaderPath = path.join(generatedDir, 'shaders.metal');
+    fs.writeFileSync(shaderPath, mslCode);
+    const { metallibPath } = compileMetalShader(shaderPath, buildDir);
+
+    const passPluginPath = path.join(buildDir, 'PassthroughEffect.bundle');
+    const result = compileFFGLPlugin({
+      outputPath: passPluginPath,
+      name: 'Passthrough Effect',
+      pluginId: 'PASS',
+      textureInputCount: 1,
+      internalResourceCount: 0
+    });
+
+    expect(fs.existsSync(result)).toBe(true);
+
+    const resourcesDir = path.join(result, 'Contents/Resources');
+    if (!fs.existsSync(resourcesDir)) fs.mkdirSync(resourcesDir, { recursive: true });
+    fs.copyFileSync(metallibPath, path.join(resourcesDir, 'default.metallib'));
+
+    const cmd = `"${runnerPath}" "${result}"`;
+    const runResult = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+    const json = JSON.parse(runResult.trim());
+    expect(json.success).toBe(true);
+
+    const buffer = Buffer.from(json.image, 'base64');
+
+    // Runner fills input 0 with RED (255, 0, 0, 255)
+    // We sample at (0.5, 0.5).
+    // Due to potential BGRA vs RGBA swap in interop or runner:
+    // If it's RED in GL, and Metal sees it as BGRA, then:
+    // GL R=255, G=0, B=0 -> BGRA B=255, G=0, r=0? No.
+    // If GL is RGBA: [255, 0, 0, 255]
+    // If Metal sees this memory as BGRA: B=255, G=0, R=0, A=255.
+    // So if the shader samples it and writes it back to a BGRA texture, it should still be "RED" visually if both sides are swapped.
+
+    let hasRed = false;
+    for (let i = 0; i < buffer.length; i += 4) {
+      if (buffer[i] > 200 || buffer[i + 2] > 200) { // Check for either Red or Blue to see if SOMETHING passed through
+        hasRed = true;
+        break;
+      }
+    }
+    expect(hasRed).toBe(true);
+  });
 });

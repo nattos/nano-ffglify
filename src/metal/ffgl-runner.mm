@@ -248,8 +248,8 @@ int main(int argc, const char *argv[]) {
         data[p * 4 + 2] = color[2];
         data[p * 4 + 3] = color[3];
       }
-      glTexImage2D(GL_TEXTURE_RECTANGLE, 0, GL_RGBA8, width, height, 0, GL_RGBA,
-                   GL_UNSIGNED_BYTE, data.data());
+      glTexSubImage2D(GL_TEXTURE_RECTANGLE, 0, 0, 0, width, height, GL_RGBA,
+                      GL_UNSIGNED_BYTE, data.data());
 
       if (registerTex) {
         registerTex(interopInputs[i].openGLTexture,
@@ -272,6 +272,9 @@ int main(int argc, const char *argv[]) {
     // Activate FBO and calls ProcessOpenGL
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, width, height);
+
+    // Ensure GL writes are finished before Metal reads
+    glFlush();
 
     plugMain(FF_PROCESS_OPENGL, (FFMixed){.PointerValue = &processStruct},
              instanceID);
