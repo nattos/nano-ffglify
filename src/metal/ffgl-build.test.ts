@@ -72,7 +72,9 @@ describe('FFGL Build Pipeline', () => {
     const result = compileFFGLPlugin({
       outputPath: pluginPath,
       name,
-      pluginId: id
+      pluginId: id,
+      textureInputCount: NOISE_SHADER.inputs.filter(i => i.type === 'texture2d').length,
+      internalResourceCount: NOISE_SHADER.resources.filter(r => !r.isOutput).length
     });
 
     const expectedName = name.replace(/\s+/g, '');
@@ -217,7 +219,8 @@ describe('FFGL Build Pipeline', () => {
       outputPath: mixerPluginPath,
       name: 'Simple Mixer',
       pluginId: 'MIXR',
-      textureInputCount: 2
+      textureInputCount: 2,
+      internalResourceCount: MIXER_SHADER.resources.filter(r => !r.isOutput).length
     });
 
     expect(fs.existsSync(result)).toBe(true);
@@ -294,7 +297,8 @@ describe('FFGL Build Pipeline', () => {
       outputPath: brightnessPluginPath,
       name: 'Brightness Effect',
       pluginId: 'BRGT',
-      textureInputCount: 1
+      textureInputCount: 1,
+      internalResourceCount: BRIGHTNESS_EFFECT.resources.filter(r => !r.isOutput).length
     });
 
     expect(fs.existsSync(result)).toBe(true);

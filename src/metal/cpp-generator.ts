@@ -145,6 +145,31 @@ export class CppGenerator {
     lines.push('}');
     lines.push('');
 
+    lines.push('void PLUGIN_CLASS::setup_resources(EvalContext& ctx, ResourceState* outputRes, const std::vector<ResourceState*>& inputRes) {');
+    lines.push('    // 1. Outputs first');
+    lines.push('    ctx.resources.push_back(outputRes);');
+    lines.push('');
+    lines.push('    // 2. Texture inputs second');
+    lines.push('    for (auto* res : inputRes) {');
+    lines.push('        ctx.resources.push_back(res);');
+    lines.push('    }');
+    lines.push('');
+    lines.push('    // 3. Other internal resources last');
+    const internalRes = ir.resources.filter(r => !r.isOutput);
+    internalRes.forEach((r, idx) => {
+      lines.push(`    ctx.resources.push_back(&_internalResources[${idx}]);`);
+      if (r['size'] !== undefined) {
+        const sizeExpr = typeof r['size'] === 'number' ? String(r['size']) : '0';
+        if (sizeExpr !== '0') {
+          lines.push(`    if (_internalResources[${idx}].data.empty()) {`);
+          lines.push(`        _internalResources[${idx}].data.resize(${sizeExpr});`);
+          lines.push('    }');
+        }
+      }
+    });
+    lines.push('}');
+    lines.push('');
+
 
 
     // Build shader function info for Metal compilation
@@ -158,6 +183,21 @@ export class CppGenerator {
       resourceIds,
       shaderFunctions,
     };
+  }
+
+  /**
+   * Get all resources in the canonical order:
+   * 1. Output resources (textures/buffers)
+   * 2. Texture inputs (host-provided)
+   * 3. Internal resources (scratch buffers/textures)
+   */
+  private getAllResources(): { id: string, type: string }[] {
+    if (!this.ir) return [];
+    return [
+      ...this.ir.resources.filter(r => r.isOutput),
+      ...this.ir.inputs.filter(i => i.type === 'texture2d'),
+      ...this.ir.resources.filter(r => !r.isOutput)
+    ];
   }
 
   /**
@@ -438,7 +478,8 @@ export class CppGenerator {
       const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
       const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges);
       // Find buffer index and data type in resources
-      const bufferIdx = this.ir?.resources.findIndex(r => r.id === bufferId) ?? -1;
+      const allRes = this.getAllResources();
+      const bufferIdx = allRes.findIndex(r => r.id === bufferId);
       const bufferDef = this.ir?.resources.find(r => r.id === bufferId);
       const dataType = bufferDef?.dataType || 'float';
 
@@ -468,7 +509,8 @@ export class CppGenerator {
       lines.push(`${indent}${varName}[static_cast<size_t>(${idx})] = ${val};`);
     } else if (node.op === 'cmd_resize_resource') {
       const resId = node['resource'];
-      const resIdx = this.ir?.resources.findIndex(r => r.id === resId) ?? -1;
+      const allRes = this.getAllResources();
+      const resIdx = allRes.findIndex(r => r.id === resId);
       const resDef = this.ir?.resources.find(r => r.id === resId);
       const clearOnResize = resDef?.persistence?.clearOnResize ?? false;
       // Compute element stride from dataType (float4=4, float3=3, float2=2, float=1)
@@ -638,7 +680,8 @@ export class CppGenerator {
       case 'buffer_load': {
         const bufferId = node['buffer'];
         const idx = a('index');
-        const bufferIdx = this.ir?.resources.findIndex(r => r.id === bufferId) ?? -1;
+        const allRes = this.getAllResources();
+        const bufferIdx = allRes.findIndex(r => r.id === bufferId);
         return `ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})]`;
       }
 
@@ -950,11 +993,7 @@ export class CppGenerator {
 
       case 'resource_get_size': {
         const resId = node['resource'];
-        const allRes = [
-          ...(this.ir?.resources.filter(r => r.isOutput) || []),
-          ...(this.ir?.inputs.filter(i => i.type === 'texture2d') || []),
-          ...(this.ir?.resources.filter(r => !r.isOutput) || [])
-        ];
+        const allRes = this.getAllResources();
         const resIdx = allRes.findIndex(r => r.id === resId);
         return `std::array<float, 2>{static_cast<float>(ctx.resources[${resIdx}]->width), static_cast<float>(ctx.resources[${resIdx}]->height)}`;
       }

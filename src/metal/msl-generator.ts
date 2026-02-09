@@ -83,13 +83,22 @@ export class MslGenerator {
     // Resource bindings
     const resourceBindings = options.resourceBindings || new Map<string, number>();
     let bindingCounter = 1; // 0 is reserved for globals
+
+    // 1. Outputs first
+    for (const res of ir.resources || []) {
+      if (res.isOutput && !resourceBindings.has(res.id)) {
+        resourceBindings.set(res.id, bindingCounter++);
+      }
+    }
+    // 2. Texture inputs second
     for (const input of ir.inputs || []) {
       if (input.type === 'texture2d' && !resourceBindings.has(input.id)) {
         resourceBindings.set(input.id, bindingCounter++);
       }
     }
+    // 3. Other internal resources last
     for (const res of ir.resources || []) {
-      if (!resourceBindings.has(res.id)) {
+      if (!res.isOutput && !resourceBindings.has(res.id)) {
         resourceBindings.set(res.id, bindingCounter++);
       }
     }
@@ -164,13 +173,21 @@ export class MslGenerator {
     // Default resource bindings if not provided
     if (!options.resourceBindings) {
       let bindingCounter = 1;
+      // 1. Outputs first
+      for (const res of ir.resources || []) {
+        if (res.isOutput && !resourceBindings.has(res.id)) {
+          resourceBindings.set(res.id, bindingCounter++);
+        }
+      }
+      // 2. Texture inputs second
       for (const input of ir.inputs || []) {
         if (input.type === 'texture2d' && !resourceBindings.has(input.id)) {
           resourceBindings.set(input.id, bindingCounter++);
         }
       }
+      // 3. Other internal resources last
       for (const res of ir.resources || []) {
-        if (!resourceBindings.has(res.id)) {
+        if (!res.isOutput && !resourceBindings.has(res.id)) {
           resourceBindings.set(res.id, bindingCounter++);
         }
       }

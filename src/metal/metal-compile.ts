@@ -87,6 +87,7 @@ export interface FFGLCompileOptions {
   name?: string;
   pluginId?: string;
   textureInputCount?: number;
+  internalResourceCount?: number;
 }
 
 /**
@@ -180,6 +181,7 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
     `-DPLUGIN_TYPE=${pluginType}`,
     `-DMIN_INPUTS=${inputCount}`,
     `-DMAX_INPUTS=${inputCount}`,
+    `-DINTERNAL_RESOURCE_COUNT=${options.internalResourceCount ?? 0}`,
   ].filter(f => f !== '').join(' ');
 
   const cmd = `clang++ ${flags} ${includeFlags} ${frameworkFlags} "${sources.join('" "')}" -o "${binaryPath}"`;

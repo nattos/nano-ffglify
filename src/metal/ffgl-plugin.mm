@@ -574,20 +574,28 @@ extern "C" void RegisterMetalTextureForGL(unsigned int glHandle,
   g_GLToMetalTextures[glHandle] = (__bridge id<MTLTexture>)mtlTexturePtr;
   fprintf(stderr, "[Plugin] Registered GL handle %u to Metal texture %p\n",
           glHandle, mtlTexturePtr);
+  fflush(stderr);
 }
 
 class NanoPlugin : public CFFGLPlugin {
 public:
   void init_plugin();
   void map_params(EvalContext &ctx);
+  void setup_resources(EvalContext &ctx, ResourceState *outputRes,
+                       const std::vector<ResourceState *> &inputRes);
 
 public:
   NanoPlugin() : CFFGLPlugin() {
     fprintf(stderr, "[Plugin] NanoPlugin constructor\n");
+    fflush(stderr);
     SetMinInputs(MIN_INPUTS);
     SetMaxInputs(MAX_INPUTS);
 
     init_plugin();
+
+#ifdef INTERNAL_RESOURCE_COUNT
+    _internalResources.resize(INTERNAL_RESOURCE_COUNT);
+#endif
 
     _device = MTLCreateSystemDefaultDevice();
     _commandQueue = [_device newCommandQueue];
@@ -658,10 +666,10 @@ public:
     outputState.height = targetHeight;
     outputState.isExternal = true;
     outputState.externalTexture = _interopTexture.metalTexture;
-    ctx.resources.push_back(&outputState);
 
     fprintf(stderr, "[Plugin] ProcessOpenGL entered, numInputTextures: %u\n",
             pGL->numInputTextures);
+    fflush(stderr);
     std::vector<std::unique_ptr<ResourceState>> inputStates;
     // Map host input textures to ctx.resources (following IR inputs order)
     for (unsigned int i = 0; i < pGL->numInputTextures && i < MAX_INPUTS; ++i) {
@@ -677,16 +685,23 @@ public:
           fprintf(stderr,
                   "[Plugin] Found Metal texture for input %u (GL handle %u)\n",
                   i, pGL->inputTextures[i]->Handle);
+          fflush(stderr);
         } else {
           fprintf(stderr,
                   "[Plugin] FAILED to find Metal texture for input %u (GL "
                   "handle %u)\n",
                   i, pGL->inputTextures[i]->Handle);
+          fflush(stderr);
         }
-        ctx.resources.push_back(inputState.get());
         inputStates.push_back(std::move(inputState));
       }
     }
+
+    std::vector<ResourceState *> inputPtrs;
+    for (auto &s : inputStates)
+      inputPtrs.push_back(s.get());
+
+    setup_resources(ctx, &outputState, inputPtrs);
 
     func_main(ctx);
 
@@ -735,6 +750,8 @@ private:
 
   ffglex::FFGLShader _blitShader;
   ffglex::FFGLScreenQuad _screenQuad;
+
+  std::vector<ResourceState> _internalResources;
 };
 
 // Include generated code
@@ -743,7 +760,6 @@ private:
 #undef PLUGIN_CLASS
 
 static CFFGLPluginInfo PluginInfo(PluginFactory<NanoPlugin>, PLUGIN_CODE,
-
                                   PLUGIN_NAME,
                                   2, // API Major
                                   1, // API Minor
