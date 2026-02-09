@@ -313,7 +313,7 @@ export class MslGenerator {
     lines.push(`${returnType} ${this.sanitizeId(func.id, 'func')}(device float* b_globals${params}) {`);
 
     const edges = reconstructEdges(func);
-    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges);
+    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, false);
 
     lines.push('}');
     lines.push('');
@@ -382,7 +382,7 @@ export class MslGenerator {
     }
 
     const edges = reconstructEdges(func);
-    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges);
+    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, true);
 
     lines.push('}');
   }
@@ -393,7 +393,8 @@ export class MslGenerator {
     allFunctions: FunctionDef[],
     varMap: Map<string, number>,
     resourceBindings: Map<string, number>,
-    edges: Edge[]
+    edges: Edge[],
+    isKernel: boolean = false
   ) {
     // Declare local variables with initial values
     for (const v of func.localVars || []) {
@@ -473,7 +474,26 @@ export class MslGenerator {
         return;
       } else if (curr.op === 'func_return') {
         const val = this.resolveArg(curr, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
-        lines.push(`${indent}return ${val};`);
+        if (isKernel) {
+          // Kernel functions are void — write return value to globals buffer for readback
+          const retVarId = curr['val'];
+          if (typeof retVarId === 'string' && varMap.has(retVarId)) {
+            const offset = varMap.get(retVarId)!;
+            const localVar = func.localVars?.find(v => v.id === retVarId);
+            const typeSize = localVar ? this.getTypeSize(localVar.type || 'float') : 1;
+            if (typeSize === 1) {
+              lines.push(`${indent}b_globals[${offset}] = ${val};`);
+            } else {
+              // Vector/matrix: write each component
+              for (let i = 0; i < typeSize; i++) {
+                lines.push(`${indent}b_globals[${offset + i}] = ${val}[${i}];`);
+              }
+            }
+          }
+          lines.push(`${indent}return;`);
+        } else {
+          lines.push(`${indent}return ${val};`);
+        }
         return;
       } else {
         // Emit this node

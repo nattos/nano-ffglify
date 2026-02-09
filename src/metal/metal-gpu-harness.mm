@@ -261,6 +261,12 @@ int main(int argc, const char *argv[]) {
     [commandBuffer waitUntilCompleted];
 
     // 11. Read back results and output JSON
+    auto emitFloat = [](float val) {
+      if (std::isnan(val)) std::cout << "null";
+      else if (std::isinf(val)) std::cout << (val > 0 ? "1e38" : "-1e38");
+      else std::cout << val;
+    };
+
     std::cout << "{\"resources\": [";
     for (size_t i = 0; i < resourceBuffers.size(); i++) {
       if (i > 0)
@@ -270,18 +276,25 @@ int main(int argc, const char *argv[]) {
       for (int j = 0; j < bufferDefs[i].size; j++) {
         if (j > 0)
           std::cout << ", ";
-        float val = ptr[j];
-        if (std::isnan(val)) {
-          std::cout << "null"; // JSON-compatible for NaN
-        } else if (std::isinf(val)) {
-          std::cout << (val > 0 ? "1e38" : "-1e38"); // Large finite value
-        } else {
-          std::cout << val;
-        }
+        emitFloat(ptr[j]);
       }
       std::cout << "]}";
     }
-    std::cout << "]}" << std::endl;
+    std::cout << "]";
+
+    // Output globals buffer data for local var readback
+    if (globalsSize > 0) {
+      float *gptr = (float *)[globalsBuffer contents];
+      int floatCount = globalsSize / sizeof(float);
+      std::cout << ", \"globals\": [";
+      for (int j = 0; j < floatCount; j++) {
+        if (j > 0) std::cout << ", ";
+        emitFloat(gptr[j]);
+      }
+      std::cout << "]";
+    }
+
+    std::cout << "}" << std::endl;
 
     return 0;
   }

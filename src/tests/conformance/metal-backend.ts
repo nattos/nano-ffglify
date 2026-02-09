@@ -174,6 +174,43 @@ export const MetalBackend: TestBackend = {
         }
       }
     }
+
+    // 7. Read back globals buffer to reconstruct local vars and return value
+    const globalsData: (number | null)[] = jsonResult.globals || [];
+    const varMap = result.metadata.varMap as Map<string, number>;
+    if (varMap && globalsData.length > 0) {
+      const entryFunc = ir.functions.find(f => f.id === entryPoint);
+      if (entryFunc) {
+        // Check if there's a func_return node to determine the return variable
+        const returnNode = entryFunc.nodes.find(n => n.op === 'func_return');
+        const returnVarId = returnNode ? (returnNode as any).val : undefined;
+
+        for (const v of entryFunc.localVars || []) {
+          const offset = varMap.get(v.id);
+          if (offset === undefined) continue;
+          const typeSize = v.type === 'float4' ? 4 : v.type === 'float3' ? 3 : v.type === 'float2' ? 2
+            : v.type === 'float4x4' ? 16 : v.type === 'float3x3' ? 9 : 1;
+          if (typeSize === 1) {
+            const val = globalsData[offset];
+            const numVal = val === null ? NaN : val;
+            ctx.currentFrame.vars.set(v.id, numVal);
+            if (v.id === returnVarId) {
+              ctx.result = numVal;
+            }
+          } else {
+            const arr: number[] = [];
+            for (let i = 0; i < typeSize; i++) {
+              const val = globalsData[offset + i];
+              arr.push(val === null ? NaN : val);
+            }
+            ctx.currentFrame.vars.set(v.id, arr);
+            if (v.id === returnVarId) {
+              ctx.result = arr;
+            }
+          }
+        }
+      }
+    }
   },
 
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
