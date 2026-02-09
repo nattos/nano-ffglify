@@ -948,7 +948,7 @@ export class MslGenerator {
   }
 
   // Helper to format local var declaration with array handling
-  private formatLocalVarDecl(varId: string, type: string, init?: number): string {
+  private formatLocalVarDecl(varId: string, type: string, init?: number | number[]): string {
     if (type.startsWith('__array_')) {
       // Parse __array_elemType_len - strip prefix, then split
       const stripped = type.substring('__array_'.length); // e.g., "int_3"
@@ -957,7 +957,13 @@ export class MslGenerator {
       const len = stripped.substring(lastUnderscore + 1);
       return `${elemType} ${this.sanitizeId(varId)}[${len}]`;
     }
-    const initStr = init !== undefined ? ` = ${this.formatFloat(init)}` : '';
+    let initStr = '';
+    if (Array.isArray(init)) {
+      // Vector initial value: float4(0, 0, 0, 0)
+      initStr = ` = ${type}(${init.map(v => this.formatFloat(v)).join(', ')})`;
+    } else if (init !== undefined) {
+      initStr = ` = ${this.formatFloat(init)}`;
+    }
     return `${type} ${this.sanitizeId(varId)}${initStr}`;
   }
 

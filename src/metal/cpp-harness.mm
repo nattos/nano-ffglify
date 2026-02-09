@@ -195,7 +195,7 @@ inline std::array<float, 3> mat_mul(const std::array<float, 9> &m,
   std::array<float, 3> r = {};
   for (size_t i = 0; i < 3; ++i)
     for (size_t j = 0; j < 3; ++j)
-      r[i] += m[i * 3 + j] * v[j];
+      r[i] += m[j * 3 + i] * v[j];  // column-major: M[row,col] = m[col*3+row]
   return r;
 }
 // mat4x4 * vec4
@@ -204,7 +204,7 @@ inline std::array<float, 4> mat_mul(const std::array<float, 16> &m,
   std::array<float, 4> r = {};
   for (size_t i = 0; i < 4; ++i)
     for (size_t j = 0; j < 4; ++j)
-      r[i] += m[i * 4 + j] * v[j];
+      r[i] += m[j * 4 + i] * v[j];  // column-major: M[row,col] = m[col*4+row]
   return r;
 }
 // vec4 * mat4x4 (pre-multiplication)
@@ -215,6 +215,90 @@ inline std::array<float, 4> mat_mul(const std::array<float, 4> &v,
     for (size_t j = 0; j < 4; ++j)
       r[i] += v[j] * m[j * 4 + i];
   return r;
+}
+
+// Vector mix: a + (b - a) * t (scalar t)
+template <typename T, size_t N>
+inline std::array<T, N> vec_mix_impl(const std::array<T, N> &a,
+                                     const std::array<T, N> &b, T t) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] + (b[i] - a[i]) * t;
+  return r;
+}
+// Vector mix: a + (b - a) * t (vector t, element-wise)
+template <typename T, size_t N>
+inline std::array<T, N> vec_mix_impl(const std::array<T, N> &a,
+                                     const std::array<T, N> &b,
+                                     const std::array<T, N> &t) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = a[i] + (b[i] - a[i]) * t[i];
+  return r;
+}
+
+// Matrix transpose
+inline std::array<float, 9> mat_transpose(const std::array<float, 9> &m) {
+  return {m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]};
+}
+inline std::array<float, 16> mat_transpose(const std::array<float, 16> &m) {
+  return {m[0], m[4], m[8], m[12], m[1], m[5], m[9], m[13],
+          m[2], m[6], m[10], m[14], m[3], m[7], m[11], m[15]};
+}
+
+// Quaternion operations (xyzw layout)
+inline std::array<float, 4> quat_mul(const std::array<float, 4> &a,
+                                     const std::array<float, 4> &b) {
+  float x1 = a[0], y1 = a[1], z1 = a[2], w1 = a[3];
+  float x2 = b[0], y2 = b[1], z2 = b[2], w2 = b[3];
+  return {w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+          w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+          w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+          w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2};
+}
+
+inline std::array<float, 3> quat_rotate(const std::array<float, 4> &q,
+                                        const std::array<float, 3> &v) {
+  float qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+  float vx = v[0], vy = v[1], vz = v[2];
+  float tx = 2.0f * (qy * vz - qz * vy);
+  float ty = 2.0f * (qz * vx - qx * vz);
+  float tz = 2.0f * (qx * vy - qy * vx);
+  return {vx + qw * tx + (qy * tz - qz * ty),
+          vy + qw * ty + (qz * tx - qx * tz),
+          vz + qw * tz + (qx * ty - qy * tx)};
+}
+
+inline std::array<float, 4> quat_slerp(const std::array<float, 4> &a,
+                                       const std::array<float, 4> &b_in,
+                                       float t) {
+  float ax = a[0], ay = a[1], az = a[2], aw = a[3];
+  float bx = b_in[0], by = b_in[1], bz = b_in[2], bw = b_in[3];
+  float cosHalfTheta = ax * bx + ay * by + az * bz + aw * bw;
+  if (std::abs(cosHalfTheta) >= 1.0f) return a;
+  if (cosHalfTheta < 0.0f) { bx = -bx; by = -by; bz = -bz; bw = -bw; cosHalfTheta = -cosHalfTheta; }
+  float sinHalfTheta = std::sqrt(1.0f - cosHalfTheta * cosHalfTheta);
+  if (std::abs(sinHalfTheta) < 0.001f) {
+    return {ax * 0.5f + bx * 0.5f, ay * 0.5f + by * 0.5f,
+            az * 0.5f + bz * 0.5f, aw * 0.5f + bw * 0.5f};
+  }
+  float halfTheta = std::acos(cosHalfTheta);
+  float ratioA = std::sin((1.0f - t) * halfTheta) / sinHalfTheta;
+  float ratioB = std::sin(t * halfTheta) / sinHalfTheta;
+  return {ax * ratioA + bx * ratioB, ay * ratioA + by * ratioB,
+          az * ratioA + bz * ratioB, aw * ratioA + bw * ratioB};
+}
+
+inline std::array<float, 16> quat_to_float4x4(const std::array<float, 4> &q) {
+  float x = q[0], y = q[1], z = q[2], w = q[3];
+  float x2 = x + x, y2 = y + y, z2 = z + z;
+  float xx = x * x2, xy = x * y2, xz = x * z2;
+  float yy = y * y2, yz = y * z2, zz = z * z2;
+  float wx = w * x2, wy = w * y2, wz = w * z2;
+  return {1-(yy+zz), xy+wz, xz-wy, 0,
+          xy-wz, 1-(xx+zz), yz+wx, 0,
+          xz+wy, yz-wx, 1-(xx+yy), 0,
+          0, 0, 0, 1};
 }
 
 // Arithmetic operator overloads for std::array (broadcasting)
@@ -328,6 +412,15 @@ inline std::array<T, N> clamp_val(const std::array<T, N> &v, T lo, T hi) {
     r[i] = std::max(lo, std::min(hi, v[i]));
   return r;
 }
+template <typename T, size_t N>
+inline std::array<T, N> clamp_val(const std::array<T, N> &v,
+                                  const std::array<T, N> &lo,
+                                  const std::array<T, N> &hi) {
+  std::array<T, N> r;
+  for (size_t i = 0; i < N; ++i)
+    r[i] = std::max(lo[i], std::min(hi[i], v[i]));
+  return r;
+}
 
 // Resource state structure
 struct ResourceState {
@@ -380,16 +473,57 @@ struct EvalContext {
     return idx < resources.size() ? resources[idx] : nullptr;
   }
 
-  void resizeResource(size_t idx, int newSize, bool clearData) {
+  // Action log (resize, dispatch, etc.)
+  struct LogAction {
+    std::string type;
+    std::string target;
+    int width = 0;
+    int height = 0;
+  };
+  std::vector<LogAction> actionLog;
+
+  // Return value storage (for func_return)
+  std::vector<float> returnValue;
+
+  void setReturnValue(float val) {
+    returnValue = {val};
+  }
+
+  template <size_t N>
+  void setReturnValue(const std::array<float, N> &val) {
+    returnValue.assign(val.begin(), val.end());
+  }
+
+  void resizeResource(size_t idx, int newSize, int stride, bool clearData) {
     if (idx < resources.size()) {
       auto *res = resources[idx];
       res->width = static_cast<size_t>(newSize);
       res->height = 1;
+      size_t totalFloats = static_cast<size_t>(newSize) * static_cast<size_t>(stride);
       if (clearData) {
-        res->data.assign(static_cast<size_t>(newSize), 0.0f);
+        res->data.assign(totalFloats, 0.0f);
       } else {
-        res->data.resize(static_cast<size_t>(newSize), 0.0f);
+        res->data.resize(totalFloats, 0.0f);
       }
+      actionLog.push_back({"resize", "", newSize, 1});
+    }
+  }
+
+  void resizeResource2D(size_t idx, int w, int h, bool clearData) {
+    if (idx < resources.size()) {
+      auto *res = resources[idx];
+      res->width = static_cast<size_t>(w);
+      res->height = static_cast<size_t>(h);
+      size_t total = static_cast<size_t>(w) * static_cast<size_t>(h);
+      // For textures, RGBA = 4 floats per pixel
+      bool isTex = idx < isTextureResource.size() && isTextureResource[idx];
+      if (isTex) total *= 4;
+      if (clearData) {
+        res->data.assign(total, 0.0f);
+      } else {
+        res->data.resize(total, 0.0f);
+      }
+      actionLog.push_back({"resize", "", w, h});
     }
   }
 
@@ -674,6 +808,13 @@ int main(int argc, const char *argv[]) {
     // Call generated entry point
     func_main(ctx);
 
+    // Helper to output JSON-safe float (NaN → null, ±Inf → ±1e999)
+    auto emitFloat = [](float v) {
+      if (std::isnan(v)) std::cout << "null";
+      else if (std::isinf(v)) std::cout << (v > 0 ? "1e999" : "-1e999");
+      else std::cout << std::setprecision(10) << v;
+    };
+
     // Output resources as JSON
     std::cout << "{\"resources\":[";
     for (size_t r = 0; r < ctx.resources.size(); ++r) {
@@ -688,11 +829,37 @@ int main(int argc, const char *argv[]) {
       for (size_t i = 0; i < res->data.size(); ++i) {
         if (i > 0)
           std::cout << ",";
-        std::cout << std::setprecision(10) << res->data[i];
+        emitFloat(res->data[i]);
       }
       std::cout << "]}";
     }
-    std::cout << "]}" << std::endl;
+    std::cout << "]";
+
+    // Output return value if set
+    if (!ctx.returnValue.empty()) {
+      std::cout << ",\"returnValue\":[";
+      for (size_t i = 0; i < ctx.returnValue.size(); ++i) {
+        if (i > 0) std::cout << ",";
+        emitFloat(ctx.returnValue[i]);
+      }
+      std::cout << "]";
+    }
+
+    // Output action log
+    if (!ctx.actionLog.empty()) {
+      std::cout << ",\"log\":[";
+      for (size_t i = 0; i < ctx.actionLog.size(); ++i) {
+        if (i > 0) std::cout << ",";
+        auto &a = ctx.actionLog[i];
+        std::cout << "{\"type\":\"" << a.type << "\"";
+        if (!a.target.empty()) std::cout << ",\"target\":\"" << a.target << "\"";
+        std::cout << ",\"width\":" << a.width << ",\"height\":" << a.height;
+        std::cout << "}";
+      }
+      std::cout << "]";
+    }
+
+    std::cout << "}" << std::endl;
 
     return 0;
   }

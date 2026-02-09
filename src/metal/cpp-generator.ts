@@ -206,9 +206,17 @@ export class CppGenerator {
     // Declare local variables
     for (const v of f.localVars) {
       const cppType = this.irTypeToCpp(v.type || 'float');
-      const init = v.initialValue !== undefined
-        ? (typeof v.initialValue === 'number' ? this.formatFloat(v.initialValue) : String(v.initialValue))
-        : '{}';
+      let init: string;
+      if (Array.isArray(v.initialValue)) {
+        // Vector/array initial value: {0.0f, 0.0f, 0.0f, 0.0f}
+        init = `{${(v.initialValue as number[]).map(x => this.formatFloat(x)).join(', ')}}`;
+      } else if (typeof v.initialValue === 'number') {
+        init = this.formatFloat(v.initialValue);
+      } else if (v.initialValue !== undefined) {
+        init = String(v.initialValue);
+      } else {
+        init = '{}';
+      }
       lines.push(`    ${cppType} ${this.sanitizeId(v.id, 'var')} = ${init};`);
     }
 
@@ -258,8 +266,8 @@ export class CppGenerator {
       'array_construct', 'array_extract', 'array_length',
       'resource_get_size',
       'math_pi', 'math_e',
-      'mat_identity', 'mat_mul',
-      'quat', 'quat_identity',
+      'mat_identity', 'mat_mul', 'mat_inverse', 'mat_transpose',
+      'quat', 'quat_identity', 'quat_mul', 'quat_rotate', 'quat_slerp', 'quat_to_float4x4',
       'color_mix', 'texture_sample',
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
@@ -319,10 +327,16 @@ export class CppGenerator {
         this.emitLoop(indent, curr, func, lines, visited, allFunctions, emitPure, edges);
         return;
       } else if (curr.op === 'func_return') {
-        // Get return value if any
+        // Store return value in context for readback
         const retVal = this.resolveArg(curr, 'val', func, allFunctions, emitPure, edges);
+        const hasReturn = func.outputs && func.outputs.length > 0;
         if (retVal && retVal !== '0.0f') {
-          lines.push(`${indent}return ${retVal};`);
+          lines.push(`${indent}ctx.setReturnValue(${retVal});`);
+          if (hasReturn) {
+            lines.push(`${indent}return ${retVal};`);
+          } else {
+            lines.push(`${indent}return;`);
+          }
         } else {
           lines.push(`${indent}return;`);
         }
@@ -434,8 +448,19 @@ export class CppGenerator {
       const resIdx = this.ir?.resources.findIndex(r => r.id === resId) ?? -1;
       const resDef = this.ir?.resources.find(r => r.id === resId);
       const clearOnResize = resDef?.persistence?.clearOnResize ?? false;
-      const sizeExpr = this.resolveArg(node, 'size', func, allFunctions, emitPure, edges);
-      lines.push(`${indent}ctx.resizeResource(${resIdx}, static_cast<int>(${sizeExpr}), ${clearOnResize ? 'true' : 'false'});`);
+      // Compute element stride from dataType (float4=4, float3=3, float2=2, float=1)
+      const dataType = resDef?.dataType;
+      const stride = dataType === 'float4' ? 4 : dataType === 'float3' ? 3 : dataType === 'float2' ? 2 : 1;
+      const sizeVal = node['size'];
+      if (Array.isArray(sizeVal) && sizeVal.length === 2) {
+        // 2D size [width, height] for textures
+        const wExpr = typeof sizeVal[0] === 'number' ? String(sizeVal[0]) : this.resolveArg(node, 'size', func, allFunctions, emitPure, edges) + '[0]';
+        const hExpr = typeof sizeVal[1] === 'number' ? String(sizeVal[1]) : this.resolveArg(node, 'size', func, allFunctions, emitPure, edges) + '[1]';
+        lines.push(`${indent}ctx.resizeResource2D(${resIdx}, ${wExpr}, ${hExpr}, ${clearOnResize ? 'true' : 'false'});`);
+      } else {
+        const sizeExpr = this.resolveArg(node, 'size', func, allFunctions, emitPure, edges);
+        lines.push(`${indent}ctx.resizeResource(${resIdx}, static_cast<int>(${sizeExpr}), ${stride}, ${clearOnResize ? 'true' : 'false'});`);
+      }
     } else if (node.op === 'cmd_dispatch') {
       // Emit dispatch to Metal compute shader
       const targetFunc = node['func'];
@@ -528,6 +553,8 @@ export class CppGenerator {
       if (typeof val === 'string') {
         if (func.localVars.some(v => v.id === val)) return this.sanitizeId(val, 'var');
         if (func.inputs.some(i => i.id === val)) return this.sanitizeId(val, 'input');
+        // Check IR global inputs (input inheritance)
+        if (this.ir?.inputs?.some(i => i.id === val)) return `ctx.getInput("${val}")`;
         const targetNode = func.nodes.find(n => n.id === val);
         if (targetNode && targetNode.id !== node.id) {
           return this.compileExpression(targetNode, func, allFunctions, false, emitPure, edges);
@@ -597,7 +624,7 @@ export class CppGenerator {
       // Math ops - inlined for simpler code
       case 'math_neg': return `(-(${val()}))`;
       case 'math_abs': return `abs(${val()})`;
-      case 'math_sign': { const v = val(); return `((${v}) > 0.0f ? 1.0f : ((${v}) < 0.0f ? -1.0f : 0.0f))`; }
+      case 'math_sign': return `applyUnary(${val()}, [](float x) -> float { return x > 0.0f ? 1.0f : (x < 0.0f ? -1.0f : 0.0f); })`;
       case 'math_sin': return `sin(${val()})`;
       case 'math_cos': return `cos(${val()})`;
       case 'math_tan': return `tan(${val()})`;
@@ -639,14 +666,14 @@ export class CppGenerator {
       case 'math_select': return `((${a('cond')}) != 0.0f ? (${a('true')}) : (${a('false')}))`;
 
       // Comparisons
-      case 'math_gt': return `((${a()}) > (${b()}) ? 1.0f : 0.0f)`;
-      case 'math_lt': return `((${a()}) < (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_gt': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x > y ? 1.0f : 0.0f; })`;
+      case 'math_lt': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x < y ? 1.0f : 0.0f; })`;
       case 'math_ge':
-      case 'math_gte': return `((${a()}) >= (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_gte': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x >= y ? 1.0f : 0.0f; })`;
       case 'math_le':
-      case 'math_lte': return `((${a()}) <= (${b()}) ? 1.0f : 0.0f)`;
-      case 'math_eq': return `((${a()}) == (${b()}) ? 1.0f : 0.0f)`;
-      case 'math_neq': return `((${a()}) != (${b()}) ? 1.0f : 0.0f)`;
+      case 'math_lte': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x <= y ? 1.0f : 0.0f; })`;
+      case 'math_eq': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x == y ? 1.0f : 0.0f; })`;
+      case 'math_neq': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x != y ? 1.0f : 0.0f; })`;
 
       // Logic
       case 'math_and': return `((${a()}) != 0.0f && (${b()}) != 0.0f ? 1.0f : 0.0f)`;
@@ -655,9 +682,9 @@ export class CppGenerator {
       case 'math_not': return `((${val()}) == 0.0f ? 1.0f : 0.0f)`;
 
       // Numeric analysis
-      case 'math_is_nan': return `(std::isnan(${val()}) ? 1.0f : 0.0f)`;
-      case 'math_is_inf': return `(std::isinf(${val()}) ? 1.0f : 0.0f)`;
-      case 'math_is_finite': return `(std::isfinite(${val()}) ? 1.0f : 0.0f)`;
+      case 'math_is_nan': return `applyUnary(${val()}, [](float x) -> float { return std::isnan(x) ? 1.0f : 0.0f; })`;
+      case 'math_is_inf': return `applyUnary(${val()}, [](float x) -> float { return std::isinf(x) ? 1.0f : 0.0f; })`;
+      case 'math_is_finite': return `applyUnary(${val()}, [](float x) -> float { return std::isfinite(x) ? 1.0f : 0.0f; })`;
       case 'math_mantissa': {
         const v = val(); return `([](float x) { int e; return std::frexp(x, &e); }(${v}))`;
       }
@@ -676,7 +703,7 @@ export class CppGenerator {
         return `(${val()} != 0.0f)`;
       }
       case 'static_cast_float': return `static_cast<float>(${val()})`;
-      case 'static_cast_int': return `static_cast<int>(${val()})`;
+      case 'static_cast_int': return `static_cast<int>(static_cast<int32_t>(static_cast<int64_t>(${val()})))`;
       case 'static_cast_bool': return `((${val()}) != 0.0f ? 1.0f : 0.0f)`;
 
       case 'float2': return `std::array<float, 2>{${a('x')}, ${a('y')}}`;
@@ -684,20 +711,28 @@ export class CppGenerator {
       case 'float4': return `std::array<float, 4>{${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}}`;
 
       case 'float3x3': {
-        const vals = node['vals'] || [];
-        const items = (vals as number[]).map((v: number) => this.formatFloat(v));
+        const vals = node['vals'];
+        if (typeof vals === 'string') {
+          // Node reference - resolve to expression (already an std::array<float, 9>)
+          return this.resolveArg(node, 'vals', func, allFunctions, emitPure, edges);
+        }
+        const items = ((vals || []) as number[]).map((v: number) => this.formatFloat(v));
         return `std::array<float, 9>{${items.join(', ')}}`;
       }
       case 'float4x4': {
-        const vals = node['vals'] || [];
-        const items = (vals as number[]).map((v: number) => this.formatFloat(v));
+        const vals = node['vals'];
+        if (typeof vals === 'string') {
+          // Node reference - resolve to expression (already an std::array<float, 16>)
+          return this.resolveArg(node, 'vals', func, allFunctions, emitPure, edges);
+        }
+        const items = ((vals || []) as number[]).map((v: number) => this.formatFloat(v));
         return `std::array<float, 16>{${items.join(', ')}}`;
       }
 
       case 'vec_dot': return `vec_dot(${a()}, ${b()})`;
       case 'vec_length': return `vec_length(${a()})`;
       case 'vec_normalize': return `vec_normalize(${a()})`;
-      case 'vec_mix': return `([](auto a_, auto b_, auto t_) { auto result = a_; for (size_t i = 0; i < a_.size(); ++i) result[i] = a_[i] + (b_[i] - a_[i]) * t_; return result; }(${a()}, ${b()}, ${a('t')}))`;
+      case 'vec_mix': return `vec_mix_impl(${a()}, ${b()}, ${a('t')})`;
       case 'vec_cross': {
         const va = a(); const vb = b();
         return `([](auto a_, auto b_) -> std::array<float, 3> { return {a_[1]*b_[2]-a_[2]*b_[1], a_[2]*b_[0]-a_[0]*b_[2], a_[0]*b_[1]-a_[1]*b_[0]}; }(${va}, ${vb}))`;
@@ -747,12 +782,18 @@ export class CppGenerator {
         const ma = a(); const mb = b();
         return `mat_mul(${ma}, ${mb})`;
       }
+      case 'mat_inverse': return `${val()}`; // Placeholder: returns input unchanged (matches reference impl)
+      case 'mat_transpose': return `mat_transpose(${val()})`;
 
       // Quaternions
       case 'quat': {
         return `std::array<float, 4>{${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}}`;
       }
       case 'quat_identity': return `std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}`;
+      case 'quat_mul': return `quat_mul(${a()}, ${b()})`;
+      case 'quat_rotate': return `quat_rotate(${a('q')}, ${a('v')})`;
+      case 'quat_slerp': return `quat_slerp(${a()}, ${b()}, ${a('t')})`;
+      case 'quat_to_float4x4': return `quat_to_float4x4(${a('q')})`;
 
       // Texture sampling (CPU fallback - returns zero)
       case 'texture_sample': return `std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}`;
