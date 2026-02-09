@@ -82,6 +82,116 @@ export function compileCppHost(options: CppCompileOptions): string {
   return outputPath;
 }
 
+export interface FFGLCompileOptions {
+  outputPath: string;
+}
+
+/**
+ * Compile the FFGL plugin bundle
+ * @param options Compilation options
+ * @returns Path to the compiled bundle
+ */
+export function compileFFGLPlugin(options: FFGLCompileOptions): string {
+  const { outputPath } = options;
+  // outputPath is .../NanoFFGL.bundle
+
+  // Clean up existing bundle if it exists
+  if (fs.existsSync(outputPath)) {
+    fs.rmSync(outputPath, { recursive: true, force: true });
+  }
+
+  // Create Bundle Structure
+  const contentsDir = path.join(outputPath, 'Contents');
+  const macOsDir = path.join(contentsDir, 'MacOS');
+
+  fs.mkdirSync(macOsDir, { recursive: true });
+
+  // Paths
+  const repoRoot = path.resolve(__dirname, '../..');
+  const ffglSdkDir = path.join(repoRoot, 'modules/ffgl/source/lib');
+  const tmpDir = path.join(repoRoot, 'tmp');
+  const srcMetalDir = path.join(repoRoot, 'src/metal');
+
+  // Binary Name
+  const bundleName = path.basename(outputPath, '.bundle');
+  const binaryPath = path.join(macOsDir, bundleName);
+
+  // Source files
+  const sources = [
+    path.join(srcMetalDir, 'ffgl-plugin.cpp'),
+    path.join(ffglSdkDir, 'FFGLSDK.cpp'),
+    path.join(tmpDir, 'AAPLOpenGLMetalInteropTexture.m'),
+  ];
+
+  // Includes
+  const includeFlags = [
+    `-I"${ffglSdkDir}"`,
+    `-I"${tmpDir}"`,
+    `-I"${srcMetalDir}"`,
+  ].join(' ');
+
+  // Frameworks
+  const frameworks = [
+    'Cocoa',
+    'OpenGL',
+    'Metal',
+    'MetalKit',
+    'IOSurface',
+    'CoreVideo',
+  ];
+  const frameworkFlags = frameworks.map(f => `-framework ${f}`).join(' ');
+
+  // Compiler flags
+  const flags = [
+    '-std=c++17',
+    '-x objective-c++',
+    '-bundle',
+    '-fobjc-arc', // Required for AAPLOpenGLMetalInteropTexture.m
+    '-D TARGET_MACOS=1',
+    '-D GL_SILENCE_DEPRECATION',
+    '-g',         // Debug info
+  ].join(' ');
+
+  const cmd = `clang++ ${flags} ${includeFlags} ${frameworkFlags} "${sources.join('" "')}" -o "${binaryPath}"`;
+
+  // console.log('Compiling FFGL plugin:', cmd);
+  execSync(cmd, {
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  // Code Sign (Required for ARM64)
+  try {
+    execSync(`codesign -s - "${binaryPath}"`, { stdio: 'ignore' });
+  } catch (e) {
+    console.warn('Failed to codesign bundle:', e);
+  }
+
+  // Write Info.plist
+  const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>${bundleName}</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.nano.${bundleName}</string>
+	<key>CFBundleName</key>
+	<string>${bundleName}</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+</dict>
+</plist>`;
+
+  fs.writeFileSync(path.join(contentsDir, 'Info.plist'), plistContent.trim());
+
+  return outputPath;
+}
+
 /**
  * Run the Metal host program and parse its JSON output
  * @param executablePath Path to the compiled host executable
