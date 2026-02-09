@@ -401,22 +401,29 @@ describe('FFGL Build Pipeline', () => {
 
     const buffer = Buffer.from(json.image, 'base64');
 
-    // Runner fills input 0 with RED (255, 0, 0, 255)
-    // We sample at (0.5, 0.5).
-    // Due to potential BGRA vs RGBA swap in interop or runner:
-    // If it's RED in GL, and Metal sees it as BGRA, then:
-    // GL R=255, G=0, B=0 -> BGRA B=255, G=0, r=0? No.
-    // If GL is RGBA: [255, 0, 0, 255]
-    // If Metal sees this memory as BGRA: B=255, G=0, R=0, A=255.
-    // So if the shader samples it and writes it back to a BGRA texture, it should still be "RED" visually if both sides are swapped.
+    // Runner fills input 0 with Horizontal Red Gradient (0 -> 255)
+    // We expect the output to also be a gradient.
+    // If the "single pixel scale up" bug exists, the output will be a solid color (variance ~0).
+    // We check for variance in the Red channel (or Blue if swapped).
 
-    let hasRed = false;
-    for (let i = 0; i < buffer.length; i += 4) {
-      if (buffer[i] > 200 || buffer[i + 2] > 200) { // Check for either Red or Blue to see if SOMETHING passed through
-        hasRed = true;
-        break;
-      }
+    let minVal = 255;
+    let maxVal = 0;
+
+    // Sample a row in the middle
+    const row = Math.floor(json.height / 2);
+    for (let x = 0; x < json.width; x++) {
+      const i = (row * json.width + x) * 4;
+      // Check both R and B indices to be safe against BGRA/RGBA swaps
+      const val = Math.max(buffer[i], buffer[i + 2]);
+      if (val < minVal) minVal = val;
+      if (val > maxVal) maxVal = val;
     }
-    expect(hasRed).toBe(true);
+
+    const variance = maxVal - minVal;
+    console.log(`Gradient Variance: ${variance} (Min: ${minVal}, Max: ${maxVal})`);
+
+    // If it's a gradient, variance should be high close to 255.
+    // If it's a solid color (bug), variance will be low < 10.
+    expect(variance).toBeGreaterThan(200);
   });
 });

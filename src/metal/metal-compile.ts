@@ -137,13 +137,21 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
   // Source files
   const sources = [
     path.join(srcMetalDir, 'ffgl-plugin.mm'),
-    path.join(ffglSdkDir, 'FFGLSDK.cpp'),
+    path.join(ffglSdkDir, 'ffgl/FFGL.cpp'),
+    path.join(ffglSdkDir, 'ffgl/FFGLLog.cpp'),
+    path.join(ffglSdkDir, 'ffgl/FFGLThumbnailInfo.cpp'),
+    path.join(ffglSdkDir, 'ffgl/FFGLPluginInfo.cpp'),
+    path.join(ffglSdkDir, 'ffgl/FFGLPluginInfoData.cpp'),
+    path.join(ffglSdkDir, 'ffgl/FFGLPluginManager.cpp'),
+    path.join(ffglSdkDir, 'ffgl/FFGLPluginSDK.cpp'),
     path.join(tmpDir, 'AAPLOpenGLMetalInteropTexture.m'),
   ];
 
   // Includes
   const includeFlags = [
     `-I"${ffglSdkDir}"`,
+    `-I"${path.join(ffglSdkDir, 'ffgl')}"`,
+    `-I"${path.join(ffglSdkDir, 'ffglex')}"`,
     `-I"${tmpDir}"`,
     `-I"${srcMetalDir}"`,
     `-I"${path.join(srcMetalDir, 'generated')}"`,
@@ -174,7 +182,9 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
     '-bundle',
     '-fobjc-arc', // Required for AAPLOpenGLMetalInteropTexture.m
     '-D TARGET_MACOS=1',
+    '-D FFGL_MACOS',
     '-D GL_SILENCE_DEPRECATION',
+    '-Wl,-exported_symbol,_plugMain',
     '-g',         // Debug info
     options.name ? `-DPLUGIN_NAME='"${options.name}"'` : '',
     options.pluginId ? `-DPLUGIN_CODE='"${options.pluginId}"'` : '',
@@ -186,16 +196,16 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
 
   const cmd = `clang++ ${flags} ${includeFlags} ${frameworkFlags} "${sources.join('" "')}" -o "${binaryPath}"`;
 
-  // console.log('Compiling FFGL plugin:', cmd);
+  console.log('Compiling FFGL plugin:', cmd);
   try {
     const output = execSync(cmd, {
       encoding: 'utf-8',
       stdio: 'pipe',
     });
   } catch (e: any) {
-    console.error('Compilation failed');
-    if (e.stdout) console.error(e.stdout);
-    if (e.stderr) console.error(e.stderr);
+    console.error('FFGL COMPILATION ERROR DETAILS:');
+    if (e.stdout) console.error('STDOUT:\n' + e.stdout.toString());
+    if (e.stderr) console.error('STDERR:\n' + e.stderr.toString());
     throw e;
   }
 

@@ -8,6 +8,7 @@
 #include <ffgl/FFGL.h>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 // Define function pointers for FFGL entry points
@@ -239,14 +240,24 @@ int main(int argc, const char *argv[]) {
 
       glBindTexture(GL_TEXTURE_RECTANGLE, interopInputs[i].openGLTexture);
       // Fill with different colors for testing (e.g. Red for 0, Green for 1)
-      unsigned char color[4] = {(unsigned char)(i == 0 ? 255 : 0),
-                                (unsigned char)(i == 1 ? 255 : 0), 0, 255};
       std::vector<unsigned char> data(width * height * 4);
-      for (int p = 0; p < width * height; ++p) {
-        data[p * 4 + 0] = color[0];
-        data[p * 4 + 1] = color[1];
-        data[p * 4 + 2] = color[2];
-        data[p * 4 + 3] = color[3];
+      for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+          int idx = (y * width + x) * 4;
+          if (i == 0) {
+            // Input 0: Horizontal Red Gradient
+            data[idx + 0] = (unsigned char)((float)x / width * 255.0f);
+            data[idx + 1] = 0;
+            data[idx + 2] = 0;
+            data[idx + 3] = 255;
+          } else {
+            // Input 1: Solid Green
+            data[idx + 0] = 0;
+            data[idx + 1] = 255;
+            data[idx + 2] = 0;
+            data[idx + 3] = 255;
+          }
+        }
       }
       glTexSubImage2D(GL_TEXTURE_RECTANGLE, 0, 0, 0, width, height, GL_RGBA,
                       GL_UNSIGNED_BYTE, data.data());
@@ -275,6 +286,12 @@ int main(int argc, const char *argv[]) {
 
     // Ensure GL writes are finished before Metal reads
     glFlush();
+
+    const char *ver = (const char *)glGetString(GL_VERSION);
+    if (ver)
+      std::cerr << "Runner GL Version: " << ver << std::endl;
+    else
+      std::cerr << "Runner GL Version: NULL" << std::endl;
 
     plugMain(FF_PROCESS_OPENGL, (FFMixed){.PointerValue = &processStruct},
              instanceID);
