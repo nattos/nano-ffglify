@@ -10,6 +10,10 @@
 #include <unordered_map>
 #include <vector>
 
+extern "C" {
+void RegisterMetalTextureForGL(unsigned int glHandle, void *mtlTexturePtr);
+}
+
 #import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -23,6 +27,15 @@
 #endif
 #ifndef PLUGIN_CODE
 #define PLUGIN_CODE "NANO"
+#endif
+#ifndef PLUGIN_TYPE
+#define PLUGIN_TYPE FF_EFFECT
+#endif
+#ifndef MIN_INPUTS
+#define MIN_INPUTS 1
+#endif
+#ifndef MAX_INPUTS
+#define MAX_INPUTS 1
 #endif
 
 // =====================
@@ -545,11 +558,18 @@ inline FFGLTexCoords GetMaxGLTexCoordsRect(int width, int height) {
   return texCoords;
 }
 
+static std::unordered_map<unsigned int, id<MTLTexture>> g_GLToMetalTextures;
+
+extern "C" void RegisterMetalTextureForGL(unsigned int glHandle,
+                                          void *mtlTexturePtr) {
+  g_GLToMetalTextures[glHandle] = (__bridge id<MTLTexture>)mtlTexturePtr;
+}
+
 class NanoPlugin : public CFFGLPlugin {
 public:
   NanoPlugin() : CFFGLPlugin() {
-    SetMinInputs(1);
-    SetMaxInputs(1);
+    SetMinInputs(MIN_INPUTS);
+    SetMaxInputs(MAX_INPUTS);
 
     SetParamInfo(0, "Scale", FF_TYPE_STANDARD, 0.5f);
     SetParamInfo(1, "Time", FF_TYPE_STANDARD, 0.0f);
@@ -594,9 +614,6 @@ public:
   }
 
   FFResult ProcessOpenGL(ProcessOpenGLStruct *pGL) override {
-    if (pGL->numInputTextures < 1 || pGL->inputTextures[0] == NULL) {
-      return FF_FAIL;
-    }
     // We use the viewport size for our internal textures and orchestration.
     unsigned int targetWidth = _currentViewport.width;
     unsigned int targetHeight = _currentViewport.height;
@@ -620,13 +637,33 @@ public:
     ctx.inputs["scale"] = scale;
     ctx.inputs["time"] = time;
 
+    // Resource mapping:
+    // Index 0: Output texture
+    // Index 1, 2, ...: Input textures
+
     ResourceState outputState;
-    outputState.width = _currentViewport.width;
-    outputState.height = _currentViewport.height;
+    outputState.width = targetWidth;
+    outputState.height = targetHeight;
     outputState.isExternal = true;
     outputState.externalTexture = _interopTexture.metalTexture;
-
     ctx.resources.push_back(&outputState);
+
+    std::vector<std::unique_ptr<ResourceState>> inputStates;
+    for (unsigned int i = 0; i < pGL->numInputTextures && i < MAX_INPUTS; ++i) {
+      if (pGL->inputTextures[i] != nullptr) {
+        auto inputState = std::make_unique<ResourceState>();
+        inputState->width = pGL->inputTextures[i]->HardwareWidth;
+        inputState->height = pGL->inputTextures[i]->HardwareHeight;
+        inputState->isExternal = true;
+
+        auto it = g_GLToMetalTextures.find(pGL->inputTextures[i]->Handle);
+        if (it != g_GLToMetalTextures.end()) {
+          inputState->externalTexture = it->second;
+        }
+        ctx.resources.push_back(inputState.get());
+        inputStates.push_back(std::move(inputState));
+      }
+    }
 
     func_main(ctx);
 
@@ -683,5 +720,5 @@ static CFFGLPluginInfo PluginInfo(PluginFactory<NanoPlugin>, PLUGIN_CODE,
                                   1, // API Minor
                                   1, // Plugin Major
                                   0, // Plugin Minor
-                                  FF_EFFECT, "Nano FFGL Plugin",
+                                  PLUGIN_TYPE, "Nano FFGL Plugin",
                                   "Nano FFGL by Google DeepMind");

@@ -49,7 +49,7 @@ export function compileMetalShader(shaderPath: string, outputDir: string): Metal
 }
 
 export interface CppCompileOptions {
-  sourcePath: string;
+  sourcePaths: string[];
   outputPath: string;
   frameworks?: string[];
   extraFlags?: string[];
@@ -61,7 +61,7 @@ export interface CppCompileOptions {
  * @returns Path to the compiled executable
  */
 export function compileCppHost(options: CppCompileOptions): string {
-  const { sourcePath, outputPath, frameworks = ['Metal', 'Foundation'], extraFlags = [] } = options;
+  const { sourcePaths, outputPath, frameworks = ['Metal', 'Foundation'], extraFlags = [] } = options;
 
   // Ensure output directory exists
   const outputDir = path.dirname(outputPath);
@@ -73,7 +73,7 @@ export function compileCppHost(options: CppCompileOptions): string {
   const frameworkFlags = frameworks.map(f => `-framework ${f}`).join(' ');
 
   // Compile with clang++
-  const cmd = `clang++ -std=c++17 -O2 -D GL_SILENCE_DEPRECATION ${frameworkFlags} ${extraFlags.join(' ')} "${sourcePath}" -o "${outputPath}"`;
+  const cmd = `clang++ -std=c++17 -O2 -D GL_SILENCE_DEPRECATION -D TARGET_MACOS=1 -x objective-c++ ${frameworkFlags} ${extraFlags.join(' ')} "${sourcePaths.join('" "')}" -o "${outputPath}"`;
   execSync(cmd, {
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -86,6 +86,7 @@ export interface FFGLCompileOptions {
   outputPath: string;
   name?: string;
   pluginId?: string;
+  textureInputCount?: number;
 }
 
 /**
@@ -158,6 +159,13 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
   ];
   const frameworkFlags = frameworks.map(f => `-framework ${f}`).join(' ');
 
+  // Plugin Type and Input Constraints
+  const inputCount = options.textureInputCount ?? 0;
+  let pluginType = 1; // Default to Effect if unknown
+  if (inputCount === 0) pluginType = 0; // Source
+  if (inputCount === 1) pluginType = 1; // Effect
+  if (inputCount >= 2) pluginType = 2; // Mixer
+
   // Compiler flags
   const flags = [
     '-std=c++17',
@@ -169,6 +177,9 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
     '-g',         // Debug info
     options.name ? `-DPLUGIN_NAME='"${options.name}"'` : '',
     options.pluginId ? `-DPLUGIN_CODE='"${options.pluginId}"'` : '',
+    `-DPLUGIN_TYPE=${pluginType}`,
+    `-DMIN_INPUTS=${inputCount}`,
+    `-DMAX_INPUTS=${inputCount}`,
   ].filter(f => f !== '').join(' ');
 
   const cmd = `clang++ ${flags} ${includeFlags} ${frameworkFlags} "${sources.join('" "')}" -o "${binaryPath}"`;

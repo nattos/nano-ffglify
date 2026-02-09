@@ -29,10 +29,13 @@ describe('FFGL Build Pipeline', () => {
     const ffglSdkDir = path.join(repoRoot, 'modules/ffgl/source/lib');
 
     compileCppHost({
-      sourcePath: runnerSource,
+      sourcePaths: [
+        runnerSource,
+        path.join(repoRoot, 'tmp/AAPLOpenGLMetalInteropTexture.m')
+      ],
       outputPath: runnerPath,
-      extraFlags: [`-I"${ffglSdkDir}"`, '-fobjc-arc'],
-      frameworks: ['Foundation', 'Cocoa', 'OpenGL']
+      extraFlags: [`-I"${ffglSdkDir}"`, `-I"${path.join(repoRoot, 'tmp')}"`, '-fobjc-arc'],
+      frameworks: ['Foundation', 'Cocoa', 'OpenGL', 'Metal', 'IOSurface', 'CoreVideo']
     });
 
     expect(fs.existsSync(runnerPath)).toBe(true);
@@ -151,5 +154,85 @@ describe('FFGL Build Pipeline', () => {
     expect(json2.success).toBe(true);
     expect(json2.width).toBe(size2.w);
     expect(json2.height).toBe(size2.h);
+  });
+
+  test('should generate and compile a MIXER plugin (2 inputs)', () => {
+    const MIXER_SHADER = {
+      meta: { name: 'Simple Mixer' },
+      resources: [
+        { id: 'out_tex', type: 'texture2d', isOutput: true },
+        { id: 'in_tex1', type: 'texture2d' },
+        { id: 'in_tex2', type: 'texture2d' }
+      ],
+      inputs: [
+        { id: 'mix', type: 'f32', default: 0.5 }
+      ],
+      functions: [
+        {
+          id: 'fn_mixer_gpu',
+          type: 'shader',
+          inputs: [{ id: 'mix_val', type: 'f32' }],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'size', op: 'resource_get_size', resource: 'out_tex' },
+            { id: 'gid_raw', op: 'builtin_get', name: 'global_invocation_id' },
+            { id: 'gid', op: 'vec_swizzle', vec: 'gid_raw', channels: 'xy' },
+            { id: 'uv', op: 'float2', x: 0.5, y: 0.5 },
+            { id: 'c1', op: 'texture_sample', tex: 'in_tex1', coords: 'uv' },
+            { id: 'c2', op: 'texture_sample', tex: 'in_tex2', coords: 'uv' },
+            { id: 'final_color', op: 'math_mix', a: 'c1', b: 'c2', t: 'mix_val' },
+            { id: 'store', op: 'texture_store', tex: 'out_tex', coords: 'gid', value: 'final_color' }
+          ]
+        },
+        {
+          id: 'fn_main_cpu',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [],
+          nodes: [
+            { id: 'out_size', op: 'resource_get_size', resource: 'out_tex' },
+            { id: 'disp', op: 'cmd_dispatch', func: 'fn_mixer_gpu', dispatch: 'out_size', args: { 'mix_val': 'mix' } }
+          ]
+        }
+      ]
+    };
+
+    const cppGen = new CppGenerator();
+    // @ts-ignore
+    const { code: cppCode, shaderFunctions } = cppGen.compile(MIXER_SHADER, 'fn_main_cpu');
+    fs.writeFileSync(path.join(generatedDir, 'logic.cpp'), cppCode);
+
+    const mslGen = new MslGenerator();
+    // @ts-ignore
+    const { code: mslCode } = mslGen.compileLibrary(MIXER_SHADER, shaderFunctions.map(s => s.id));
+    const shaderPath = path.join(generatedDir, 'shaders.metal');
+    fs.writeFileSync(shaderPath, mslCode);
+    const { metallibPath } = compileMetalShader(shaderPath, buildDir);
+
+    const mixerPluginPath = path.join(buildDir, 'SimpleMixer.bundle');
+    const result = compileFFGLPlugin({
+      outputPath: mixerPluginPath,
+      name: 'Simple Mixer',
+      pluginId: 'MIXR',
+      textureInputCount: 2
+    });
+
+    expect(fs.existsSync(result)).toBe(true);
+
+    const resourcesDir = path.join(result, 'Contents/Resources');
+    if (!fs.existsSync(resourcesDir)) fs.mkdirSync(resourcesDir, { recursive: true });
+    fs.copyFileSync(metallibPath, path.join(resourcesDir, 'default.metallib'));
+
+    // Run the mixer
+    const cmd = `"${runnerPath}" "${result}"`;
+    const runResult = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+    const json = JSON.parse(runResult.trim());
+    expect(json.success).toBe(true);
+    expect(json.id).toBe('MIXR');
+    // FFGL Mixer type is 2
+    // We can't easily check the plugin type from the runner's JSON output yet
+    // unless we update the runner to report it.
   });
 });

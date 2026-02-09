@@ -1,7 +1,9 @@
 
+#import "AAPLOpenGLMetalInteropTexture.h"
 #import <AppKit/AppKit.h>
 #import <Cocoa/Cocoa.h>
 #import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
 #import <dlfcn.h>
 #include <ffgl/FFGL.h>
 #include <iostream>
@@ -126,6 +128,10 @@ int main(int argc, const char *argv[]) {
     }
 
     FFGLPluginMainPtr plugMain = (FFGLPluginMainPtr)dlsym(handle, "plugMain");
+    typedef void (*RegisterTexPtr)(unsigned int, void *);
+    RegisterTexPtr registerTex =
+        (RegisterTexPtr)dlsym(handle, "RegisterMetalTextureForGL");
+
     if (!plugMain) {
       std::cerr << "{\"error\": \"Failed to find plugMain symbol\"}"
                 << std::endl;
@@ -213,34 +219,51 @@ int main(int argc, const char *argv[]) {
 
     // 7. Process Frame
     // FFGL 2.1 uses ProcessOpenGLStruct
-    // We need to provide input textures. For a generator/source, it might
-    // ignore inputs, but effects need them. We'll provide a dummy input texture
-    // if needed, but purely for this solid color test, we expect it to
-    // overwrite output.
+    // We provide up to 2 input textures.
+    const int numInputs = 2;
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    AAPLOpenGLMetalInteropTexture *interopInputs[numInputs];
+    FFGLTextureStruct inputTextureStr[numInputs];
+    FFGLTextureStruct *inputTextures[numInputs];
 
-    // Create a dummy input texture (just black)
-    GLuint texInput;
-    glGenTextures(1, &texInput);
-    glBindTexture(GL_TEXTURE_RECTANGLE,
-                  texInput); // FFGL often expects Texture Rectangle or 2D
-                             // depending on host
-    // Actually FFGL 1.5+ usually uses GL_TEXTURE_2D but some old hosts use
-    // RECT. Check plugin expectations. Our plugin uses `sampler2DRect` in
-    // shader, so we MUST use GL_TEXTURE_RECTANGLE.
-    glTexImage2D(GL_TEXTURE_RECTANGLE, 0, GL_RGBA8, width, height, 0, GL_RGBA,
-                 GL_UNSIGNED_BYTE, NULL);
+    for (int i = 0; i < numInputs; ++i) {
+      interopInputs[i] = [[AAPLOpenGLMetalInteropTexture alloc]
+          initWithMetalDevice:device
+                openGLContext:context
+              createOpenGLFBO:NO
+             metalPixelFormat:MTLPixelFormatBGRA8Unorm
+                        width:width
+                       height:height];
 
-    FFGLTextureStruct inputTextureStr;
-    inputTextureStr.Width = width;
-    inputTextureStr.Height = height;
-    inputTextureStr.HardwareWidth = width;
-    inputTextureStr.HardwareHeight = height;
-    inputTextureStr.Handle = texInput;
+      glBindTexture(GL_TEXTURE_RECTANGLE, interopInputs[i].openGLTexture);
+      // Fill with different colors for testing (e.g. Red for 0, Green for 1)
+      unsigned char color[4] = {(unsigned char)(i == 0 ? 255 : 0),
+                                (unsigned char)(i == 1 ? 255 : 0), 0, 255};
+      std::vector<unsigned char> data(width * height * 4);
+      for (int p = 0; p < width * height; ++p) {
+        data[p * 4 + 0] = color[0];
+        data[p * 4 + 1] = color[1];
+        data[p * 4 + 2] = color[2];
+        data[p * 4 + 3] = color[3];
+      }
+      glTexImage2D(GL_TEXTURE_RECTANGLE, 0, GL_RGBA8, width, height, 0, GL_RGBA,
+                   GL_UNSIGNED_BYTE, data.data());
 
-    FFGLTextureStruct *inputTextures[] = {&inputTextureStr};
+      if (registerTex) {
+        registerTex(interopInputs[i].openGLTexture,
+                    (__bridge void *)interopInputs[i].metalTexture);
+      }
+
+      inputTextureStr[i].Width = width;
+      inputTextureStr[i].Height = height;
+      inputTextureStr[i].HardwareWidth = width;
+      inputTextureStr[i].HardwareHeight = height;
+      inputTextureStr[i].Handle = interopInputs[i].openGLTexture;
+      inputTextures[i] = &inputTextureStr[i];
+    }
 
     ProcessOpenGLStruct processStruct;
-    processStruct.numInputTextures = 1;
+    processStruct.numInputTextures = numInputs;
     processStruct.inputTextures = inputTextures;
     processStruct.HostFBO = fbo;
 
@@ -270,7 +293,11 @@ int main(int argc, const char *argv[]) {
 
     // 9. Cleanup
     glDeleteTextures(1, &texColor);
-    glDeleteTextures(1, &texInput);
+    // AAPLOpenGLMetalInteropTexture handles its own GL texture cleanup?
+    // Actually it doesn't always, let's check.
+    // It's safer to let it dealloc.
+    for (int i = 0; i < numInputs; ++i)
+      interopInputs[i] = nil;
     glDeleteFramebuffers(1, &fbo);
 
     plugMain(FF_DEINSTANTIATE_GL, (FFMixed){.PointerValue = nullptr},
