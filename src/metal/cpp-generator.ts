@@ -148,16 +148,28 @@ export class CppGenerator {
     lines.push('void PLUGIN_CLASS::setup_resources(EvalContext& ctx, ResourceState* outputRes, const std::vector<ResourceState*>& inputRes) {');
     lines.push('    // 1. Outputs first');
     lines.push('    ctx.resources.push_back(outputRes);');
+    lines.push('    ctx.isTextureResource.push_back(true);');
+    lines.push('    ctx.texWidths.push_back(outputRes->width);');
+    lines.push('    ctx.texHeights.push_back(outputRes->height);');
     lines.push('');
     lines.push('    // 2. Texture inputs second');
     lines.push('    for (auto* res : inputRes) {');
     lines.push('        ctx.resources.push_back(res);');
+    lines.push('        ctx.isTextureResource.push_back(true);');
+    lines.push('        ctx.texWidths.push_back(res->width);');
+    lines.push('        ctx.texHeights.push_back(res->height);');
     lines.push('    }');
     lines.push('');
+
     lines.push('    // 3. Other internal resources last');
     const internalRes = ir.resources.filter(r => !r.isOutput);
     internalRes.forEach((r, idx) => {
       lines.push(`    ctx.resources.push_back(&_internalResources[${idx}]);`);
+      const isTex = r.type === 'texture2d' || r.type === 'image2d';
+      lines.push(`    ctx.isTextureResource.push_back(${isTex});`);
+      lines.push(`    ctx.texWidths.push_back(_internalResources[${idx}].width);`);
+      lines.push(`    ctx.texHeights.push_back(_internalResources[${idx}].height);`);
+
       if (r['size'] !== undefined) {
         const sizeExpr = typeof r['size'] === 'number' ? String(r['size']) : '0';
         if (sizeExpr !== '0') {

@@ -708,38 +708,44 @@ struct EvalContext {
     for (size_t i = 0; i < resources.size(); ++i) {
       auto *res = resources[i];
       if (i < isTextureResource.size() && isTextureResource[i]) {
-        // Create a Metal texture for texture resources
-        MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
-        desc.textureType = MTLTextureType2D;
-        desc.pixelFormat = MTLPixelFormatRGBA8Unorm;
-        desc.width = texWidths[i];
-        desc.height = texHeights[i];
-        desc.usage = MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead;
-        desc.storageMode = MTLStorageModeShared;
-        id<MTLTexture> texture = [device newTextureWithDescriptor:desc];
-        metalTextures[i] = texture;
+        if (res->isExternal && res->externalTexture) {
+          // Use existing external Metal texture
+          metalTextures[i] = res->externalTexture;
+        } else {
+          // Create a Metal texture for texture resources
+          MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
+          desc.textureType = MTLTextureType2D;
+          desc.pixelFormat = MTLPixelFormatRGBA8Unorm;
+          desc.width = texWidths[i];
+          desc.height = texHeights[i];
+          desc.usage = MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead;
+          desc.storageMode = MTLStorageModeShared;
+          id<MTLTexture> texture = [device newTextureWithDescriptor:desc];
+          metalTextures[i] = texture;
 
-        // Upload pre-populated texture data if available (float RGBA → RGBA8
-        // bytes)
-        if (!res->data.empty()) {
-          int w = texWidths[i];
-          int h = texHeights[i];
-          size_t pixelCount = w * h;
-          if (res->data.size() >= pixelCount * 4) {
-            std::vector<uint8_t> bytes(pixelCount * 4);
-            for (size_t j = 0; j < pixelCount * 4; ++j) {
-              float v = std::max(0.0f, std::min(1.0f, res->data[j]));
-              bytes[j] = static_cast<uint8_t>(v * 255.0f + 0.5f);
+          // Upload pre-populated texture data if available (float RGBA -> RGBA8
+          // bytes)
+          if (!res->data.empty()) {
+            int w = texWidths[i];
+            int h = texHeights[i];
+            size_t pixelCount = w * h;
+            if (res->data.size() >= pixelCount * 4) {
+              std::vector<uint8_t> bytes(pixelCount * 4);
+              for (size_t j = 0; j < pixelCount * 4; ++j) {
+                float v = std::max(0.0f, std::min(1.0f, res->data[j]));
+                bytes[j] = static_cast<uint8_t>(v * 255.0f + 0.5f);
+              }
+              MTLRegion region = MTLRegionMake2D(0, 0, w, h);
+              [texture replaceRegion:region
+                         mipmapLevel:0
+                           withBytes:bytes.data()
+                         bytesPerRow:w * 4];
             }
-            MTLRegion region = MTLRegionMake2D(0, 0, w, h);
-            [texture replaceRegion:region
-                       mipmapLevel:0
-                         withBytes:bytes.data()
-                       bytesPerRow:w * 4];
           }
         }
 
-        // Create sampler for this texture
+        // Create sampler for this texture (needed for both internal and
+        // external)
         MTLSamplerDescriptor *samplerDesc = [[MTLSamplerDescriptor alloc] init];
         samplerDesc.minFilter = MTLSamplerMinMagFilterNearest;
         samplerDesc.magFilter = MTLSamplerMinMagFilterNearest;
