@@ -75,6 +75,15 @@ Arrays are also available, and may either be fixed or dynamic size. Dynamic size
 
 Struct types are also available, to define custom types, also critical for defining vertex attributes like "position".
 
+Type Coercion & Math:
+
+- **Implicit Coercion**: You can mix \`int\` and \`float\` in math operations. The system handles the conversion (usually to \`float\`).
+- **Vector Broadcasting**: You can operate between a vector and a scalar (e.g., \`vec3 * float\`). The scalar is applied to all components.
+- **Strictness**:
+  - Booleans are NOT implicitly converted to numbers for math ops. Use \`select\` or explicit casts.
+  - Vector dimensions must match (no \`vec2 + vec3\`).
+  - Resource operations (like \`buffer_store\`) are strict about types (no storing \`int\` into a \`float\` buffer without a cast).
+
 Execution Semantics:
 
 1. **Nodes Categories**:
