@@ -947,6 +947,54 @@ export class MslGenerator {
     }
   }
 
+  private resolveCoercedArgs(
+    node: Node,
+    keys: string[],
+    mode: 'float' | 'unify',
+    func: FunctionDef,
+    allFunctions: FunctionDef[],
+    varMap: Map<string, number>,
+    resourceBindings: Map<string, number>,
+    emitPure: (id: string) => void,
+    edges: Edge[],
+    inferredTypes?: InferredTypes
+  ): string[] {
+    const rawArgs = keys.map(k => this.resolveArg(node, k, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes));
+
+    if (!inferredTypes) return rawArgs;
+
+    const argTypes = keys.map(k => {
+      const argId = node[k];
+      return typeof argId === 'string' ? inferredTypes.get(argId) || 'float' : 'float';
+    });
+
+    if (process.env.MSL_DEBUG) {
+      console.log(`[MSL] resolveCoercedArgs op=${node.op} keys=${keys} types=${argTypes} mode=${mode}`);
+    }
+
+    if (mode === 'float') {
+      return rawArgs.map((arg, i) => {
+        const type = argTypes[i];
+        if (type === 'int' || type === 'uint' || type === 'boolean') {
+          return `float(${arg})`;
+        }
+        return arg;
+      });
+    } else if (mode === 'unify') {
+      const hasFloat = argTypes.some(t => t.includes('float'));
+      if (hasFloat) {
+        return rawArgs.map((arg, i) => {
+          const type = argTypes[i];
+          if (type === 'int' || type === 'uint' || type === 'boolean') {
+            return `float(${arg})`;
+          }
+          return arg;
+        });
+      }
+    }
+    return rawArgs;
+  }
+
   private compileExpression(
     node: Node,
     func: FunctionDef,
@@ -959,6 +1007,17 @@ export class MslGenerator {
   ): string {
     const a = (key = 'a') => this.resolveArg(node, key, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     const b = () => this.resolveArg(node, 'b', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+
+    // Helper for simple binary/unary ops using coercion
+    const binaryOp = (op: string, mode: 'float' | 'unify') => {
+      const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], mode, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      return `${argA} ${op} ${argB}`;
+    };
+
+    const unaryOp = (op: string, mode: 'float' | 'unify', key = 'val') => {
+      const [arg] = this.resolveCoercedArgs(node, [key], mode, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      return `${op}(${arg})`;
+    };
 
     switch (node.op) {
       case 'literal':
@@ -981,7 +1040,7 @@ export class MslGenerator {
 
       case 'buffer_load': {
         const bufferId = node['buffer'];
-        const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         return `${this.sanitizeId(bufferId, 'buffer')}[int(${idx})]`;
       }
 
@@ -997,8 +1056,7 @@ export class MslGenerator {
           return `float4(${a('x')}, ${a('y')}, ${a('z')}, ${a('w')})`;
         }
         // axis-angle form
-        const axis = this.resolveArg(node, 'axis', func, allFunctions, varMap, resourceBindings, emitPure, edges);
-        const angle = this.resolveArg(node, 'angle', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        const [axis, angle] = this.resolveCoercedArgs(node, ['axis', 'angle'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         return `float4(${axis} * sin(${angle} * 0.5f), cos(${angle} * 0.5f))`;
       }
       case 'quat_identity': return 'float4(0.0f, 0.0f, 0.0f, 1.0f)';
@@ -1030,7 +1088,7 @@ export class MslGenerator {
           const formatted = vals.map((v: number) => this.formatFloat(v));
           return `float4x4(${formatted.join(', ')})`;
         } else if (typeof vals === 'string') {
-          // Check if source is array_construct — inline the fill value
+          // Check if source is array_construct
           const srcNode = func.nodes.find(n => n.id === vals);
           if (srcNode && srcNode.op === 'array_construct') {
             const fill = srcNode['fill'] !== undefined ? srcNode['fill'] as number : 0;
@@ -1049,68 +1107,60 @@ export class MslGenerator {
       case 'math_pi': return '3.14159265358979323846f';
       case 'math_e': return '2.71828182845904523536f';
 
-      // Math ops - Metal uses same names as GLSL/WGSL
-      case 'math_add': return `(${a()} + ${b()})`;
+      // Math Ops
+      case 'math_add': return binaryOp('+', 'unify');
       case 'math_mad': return `fma(${a()}, ${b()}, ${a('c')})`;
-      case 'math_sub': return `(${a()} - ${b()})`;
-      case 'math_mul': return `(${a()} * ${b()})`;
-      case 'math_div': return `(${a()} / ${b()})`;
+      case 'math_sub': return binaryOp('-', 'unify');
+      case 'math_mul': return binaryOp('*', 'unify');
+      case 'math_div': return binaryOp('/', 'unify');
       case 'math_neg': return `(-${a('val')})`;
-      case 'math_abs': return `abs(${a('val')})`;
-      case 'math_sin': return `sin(${a('val')})`;
-      case 'math_cos': return `cos(${a('val')})`;
-      case 'math_tan': return `tan(${a('val')})`;
-      case 'math_asin': return `asin(${a('val')})`;
-      case 'math_acos': return `acos(${a('val')})`;
-      case 'math_atan': return `atan(${a('val')})`;
-      case 'math_atan2': return `atan2(${a()}, ${b()})`;
-      case 'math_sinh': return `sinh(${a('val')})`;
-      case 'math_cosh': return `cosh(${a('val')})`;
-      case 'math_tanh': return `tanh(${a('val')})`;
-      case 'math_floor': return `floor(${a('val')})`;
-      case 'math_ceil': return `ceil(${a('val')})`;
-      case 'math_round': return `round(${a('val')})`;
-      case 'math_sqrt': return `sqrt(${a('val')})`;
-      case 'math_pow': return `pow(${a()}, ${b()})`;
-      case 'math_exp': return `exp(${a('val')})`;
+      case 'math_abs': return unaryOp('abs', 'unify');
+      case 'math_sin': return unaryOp('sin', 'float');
+      case 'math_cos': return unaryOp('cos', 'float');
+      case 'math_tan': return unaryOp('tan', 'float');
+      case 'math_asin': return unaryOp('asin', 'float');
+      case 'math_acos': return unaryOp('acos', 'float');
+      case 'math_atan': return unaryOp('atan', 'float');
+      case 'math_atan2': return `atan2(${this.resolveCoercedArgs(node, ['y', 'x'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes).join(', ')})`;
+      case 'math_sinh': return unaryOp('sinh', 'float');
+      case 'math_cosh': return unaryOp('cosh', 'float');
+      case 'math_tanh': return unaryOp('tanh', 'float');
+      case 'math_floor': return unaryOp('floor', 'float');
+      case 'math_ceil': return unaryOp('ceil', 'float');
+      case 'math_round': return unaryOp('round', 'float');
+      case 'math_sqrt': return unaryOp('sqrt', 'float');
+      case 'math_pow': return `pow(${this.resolveCoercedArgs(node, ['a', 'b'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes).join(', ')})`;
+      case 'math_exp': return unaryOp('exp', 'float');
       case 'math_exp2': return `exp2(${a('val')})`;
-      case 'math_log': return `log(${a('val')})`;
+      case 'math_log': return unaryOp('log', 'float');
       case 'math_log2': return `log2(${a('val')})`;
-      case 'math_min': return `min(${a()}, ${b()})`;
-      case 'math_max': return `max(${a()}, ${b()})`;
+      case 'math_min': return `min(${this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes).join(', ')})`;
+      case 'math_max': return `max(${this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes).join(', ')})`;
       case 'math_clamp': {
-        const val = a('val');
-        const minVal = a('min');
-        const maxVal = a('max');
-
-        if (inferredTypes) {
-          // Helper to determine type of source and cast if needed
-          const castIfNeeded = (expr: string, argKey: string) => {
-            let id = node[argKey];
-            // Resolve to edge source if present
-            const edge = edges.find(e => e.to === node.id && (e.portIn === argKey) && e.type === 'data');
-            if (edge) id = edge.from;
-
-            const type = typeof id === 'string' ? inferredTypes.get(id) : undefined;
-
-            if (type === 'int' || type === 'i32' || type === 'uint' || type === 'u32' || type === 'bool' || type === 'boolean') {
-              return `float(${expr})`;
-            }
-            return expr;
-          };
-
-          return `clamp(${castIfNeeded(val, 'val')}, ${castIfNeeded(minVal, 'min')}, ${castIfNeeded(maxVal, 'max')})`;
-        }
-
+        const [val, minVal, maxVal] = this.resolveCoercedArgs(node, ['val', 'min', 'max'], 'unify', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         return `clamp(${val}, ${minVal}, ${maxVal})`;
       }
-      case 'math_mod': return `fmod(${a()}, ${b()})`;
-      case 'math_fract': return `fract(${a('val')})`;
-      case 'math_sign': return `sign(${a('val')})`;
-      case 'math_step': return `step(${a('edge')}, ${a('val')})`;
-      case 'math_smoothstep': return `smoothstep(${a('edge0')}, ${a('edge1')}, ${a('val')})`;
-      case 'math_mix': return `mix(${a()}, ${b()}, ${a('t')})`;
-      case 'math_lerp': return `mix(${a()}, ${b()}, ${a('t')})`;
+      case 'math_mod': {
+        const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+        // Check inferred type of A
+        const typeA = typeof node['a'] === 'string' ? inferredTypes?.get(node['a']) : 'float';
+        if (typeA && (typeA === 'int' || typeA === 'uint')) {
+          return `(${argA} % ${argB})`;
+        }
+        return `fmod(${argA}, ${argB})`;
+      }
+      case 'math_fract': return `fract(${this.resolveCoercedArgs(node, ['val'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes)[0]})`;
+      case 'math_sign': return unaryOp('sign', 'unify');
+      case 'math_step': {
+        const [edge, x] = this.resolveCoercedArgs(node, ['edge', 'x'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+        return `step(${edge}, ${x})`;
+      }
+      case 'math_smoothstep': {
+        const [edge0, edge1, x] = this.resolveCoercedArgs(node, ['edge0', 'edge1', 'x'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+        return `smoothstep(${edge0}, ${edge1}, ${x})`;
+      }
+      case 'math_mix': return `mix(${this.resolveCoercedArgs(node, ['a', 'b', 't'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes).join(', ')})`;
+      case 'math_lerp': return `mix(${this.resolveCoercedArgs(node, ['a', 'b', 't'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes).join(', ')})`;
       case 'math_trunc': return `trunc(${a('val')})`;
       case 'math_is_nan': return `msl_is_nan(${a('val')})`;
       case 'math_is_inf': return `msl_is_inf(${a('val')})`;
@@ -1395,6 +1445,14 @@ export class MslGenerator {
           emitPure(source.id);
           return this.nodeResId(source.id);
         }
+
+        // If the node has a result and is not a "pure" expr we want to inline (like literals usually), use the variable
+        // However, we must ensure it's been emitted. Typically nodes are sorted.
+        // For now, let's prefer variables for ops that are definitely emitted as variables.
+        if (this.hasResult(source.op) && source.op !== 'literal') {
+          return this.nodeResId(source.id);
+        }
+
         return this.compileExpression(source, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       }
     }

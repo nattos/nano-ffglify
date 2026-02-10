@@ -262,6 +262,17 @@ const resolveNodeType = (
       return inputTypes['val'];
     }
 
+    if (node.op === 'literal') {
+      const val = node['val'];
+      if (typeof val === 'number') {
+        cache.set(nodeId, 'float');
+        return 'float';
+      } else if (typeof val === 'boolean') {
+        cache.set(nodeId, 'boolean');
+        return 'boolean';
+      }
+    }
+
     if (node.op === 'mat_identity') {
       const size = node['size'];
       const vType = (size === 3) ? 'float3x3' : 'float4x4';
