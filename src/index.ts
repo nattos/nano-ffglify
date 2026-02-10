@@ -29,6 +29,8 @@ import { AUTO_PLAY_SCRIPT_LINES } from './constants';
 import { DEMO_SCRIPT } from './domain/mock-responses';
 import { runScriptDebug } from './debug/script-runner';
 import { LLMLogEntry } from './domain/types';
+import { ZipFileSystem } from './metal/virtual-fs';
+import { packageFFGLPlugin } from './metal/ffgl-packager';
 
 @customElement('nano-app')
 export class App extends MobxLitElement {
@@ -328,6 +330,33 @@ export class App extends MobxLitElement {
     await chatHandler.handleUserMessage(text);
   }
 
+  async handleDownloadZip() {
+    try {
+      const vfs = new ZipFileSystem();
+      await packageFFGLPlugin(vfs, { ir: appState.database.ir });
+
+      const zipData = await vfs.generateZip();
+
+      const blob = new Blob([zipData as any], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      const fileName = (appState.database.ir.meta.name || 'NanoFFGL').replace(/\s+/g, '_') + '_Build.zip';
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+
+      // Cleanup
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+    } catch (e) {
+      console.error('Failed to package plugin:', e);
+    }
+  }
+
   formatLogValue(value: string) {
     try {
       const parsed = JSON.parse(value);
@@ -368,6 +397,7 @@ export class App extends MobxLitElement {
             <ui-button icon="la-pause" square @click=${() => appController.pause()} .variant=${appController.runtime.transportState === 'paused' ? 'primary' : 'outline'} title="Pause"></ui-button>
             <ui-button icon="la-stop" square @click=${() => appController.stop()} .variant=${appController.runtime.transportState === 'stopped' ? 'primary' : 'outline'} title="Stop"></ui-button>
             <ui-button icon="la-step-forward" square @click=${() => appController.runtime.step()} title="Step"></ui-button>
+            <ui-button icon="la-download" square @click=${() => this.handleDownloadZip()} title="Download Build ZIP"></ui-button>
           </div>
           <div class="divider" style="width: 1px; background: #333; margin: 0 0.5rem;"></div>
           <ui-button

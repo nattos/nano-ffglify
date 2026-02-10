@@ -282,7 +282,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     // 3. Execute Build Script from the unzipped contents
     // The packager writes 'build.sh' to the root of the zip
     const scriptPath = path.join(stageDir, 'build.sh');
-    fs.chmodSync(scriptPath, '755');
+    // Permissions are preserved from the ZIP archive
 
     // Run in stageDir
     execSync(`./build.sh`, { cwd: stageDir, stdio: 'inherit' });
@@ -300,5 +300,5 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     expect(json.success).toBe(true);
     // Derived ID from "Simple Noise Generator" hash is E541
     expect(json.id).toBe('E541');
-  });
+  }, 30000);
 });

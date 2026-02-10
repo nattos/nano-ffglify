@@ -50,11 +50,9 @@ export class ZipFileSystem implements IVirtualFileSystem {
     for (const [path, mode] of this.permissions.entries()) {
       const file = this.zip.file(path);
       if (file) {
-        // Zip uses 16-bit external attributes where the upper 16 bits are for Unix permissions
-        // We also need to set the platform to Unix (3)
         // 0100000 is for regular file (S_IFREG)
-        const unixMode = (mode | 0x8000) << 16;
-        file.options.unixPermissions = mode;
+        // JSZip's generateAsync with platform: 'UNIX' will use this
+        (file as any).unixPermissions = mode;
       }
     }
 
