@@ -9,17 +9,8 @@ describe('FFGL Packager', () => {
     const vfs = new ZipFileSystem();
 
     // Async import assets as requested
-    const { FFGL_ASSETS } = await import('./ffgl-assets');
-
     await packageFFGLPlugin(vfs, {
-      ir: NOISE_SHADER,
-      assets: FFGL_ASSETS,
-      options: {
-        name: 'Packaged Noise',
-        pluginId: 'PNOI',
-        textureInputCount: 0,
-        internalResourceCount: 0
-      }
+      ir: NOISE_SHADER
     });
 
     const zipData = await vfs.generateZip();
@@ -35,11 +26,11 @@ describe('FFGL Packager', () => {
     expect(zip.file('ffgl-sdk/ffgl/FFGL.h')).toBeDefined();
 
     const script = await zip.file('build.sh')?.async('string');
-    expect(script).toContain('PackagedNoise.bundle');
-    expect(script).toContain('PNOI');
+    expect(script).toContain('SimpleNoiseGenerator.bundle');
+    expect(script).toContain('E541');
     // Ah, NOISE_SHADER.meta.id is likely different.
     // Let's just check for some generic strings
     expect(script).toContain('clang++');
-    expect(script).toContain('-DPLUGIN_NAME=\'"Packaged Noise"\'');
+    expect(script).toContain('-DPLUGIN_NAME=\'"Simple Noise Generator"\'');
   });
 });

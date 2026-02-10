@@ -1,20 +1,27 @@
 import { IVirtualFileSystem } from './virtual-fs';
-import { FFGLCompileOptions, generateMetalCompileCmds, generateFFGLPluginCmds, generateBuildScript } from './metal-compile';
+import { generateMetalCompileCmds, generateFFGLPluginCmds, generateBuildScript } from './metal-compile';
 import { CppGenerator } from './cpp-generator';
 import { MslGenerator } from './msl-generator';
-import { IRGraph } from '../domain/types';
+import { IRDocument } from '../domain/types';
 
 export interface PackagingOptions {
-  options: FFGLCompileOptions;
-  ir: IRGraph;
-  assets: Record<string, string>;
+  ir: IRDocument;
 }
 
 /**
  * Packages a complete FFGL plugin build environment into a virtual filesystem.
  */
 export async function packageFFGLPlugin(vfs: IVirtualFileSystem, options: PackagingOptions) {
-  const { ir, assets, options: compileOptions } = options;
+  const { ir } = options;
+  const { FFGL_ASSETS } = await import('./ffgl-assets');
+  const assets = FFGL_ASSETS;
+
+  const name = ir.meta.name || 'NanoFFGL';
+  const hash = (Array.from(name) as string[]).reduce((h: number, c: string) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0);
+  const pluginId = Math.abs(hash).toString(16).slice(-4).toUpperCase().padStart(4, '0');
+
+  const textureInputCount = (ir.inputs || []).filter((i: any) => i.type === 'texture2d').length;
+  const internalResourceCount = (ir.resources || []).filter((r: any) => !r.isOutput).length;
 
   // 1. Write Assets (SDK + Project Files)
   // We mirror the structure expected by the build scripts
@@ -48,9 +55,13 @@ export async function packageFFGLPlugin(vfs: IVirtualFileSystem, options: Packag
   steps.push(...metalCmds);
 
   // FFGL Compile Steps
-  const bundlePath = `${relBuild}/${(compileOptions.name || 'NanoFFGL').replace(/\s+/g, '')}.bundle`;
+  const bundleName = name.replace(/\s+/g, '');
+  const bundlePath = `${relBuild}/${bundleName}.bundle`;
   const ffglCmds = generateFFGLPluginCmds({
-    ...compileOptions,
+    name,
+    pluginId,
+    textureInputCount,
+    internalResourceCount,
     outputPath: bundlePath,
     paths: {
       ffglSdkDir: relSdk,
