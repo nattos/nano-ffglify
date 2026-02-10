@@ -239,6 +239,7 @@ const resolveNodeType = (
       if (argType !== 'any' && providedType !== 'any' && argType !== providedType) {
         if ((argType === 'float' && providedType === 'int') ||
           (argType === 'int' && providedType === 'float')) continue;
+
         match = false;
         break;
       }
@@ -300,6 +301,13 @@ const resolveNodeType = (
       else if (type === 'int' || type === 'i32') scalarType = 'i32';
       else if (type === 'uint' || type === 'u32') scalarType = 'u32';
       else if (type === 'bool' || type === 'boolean') scalarType = 'bool';
+
+      // Special case: Float arrays of length 2/3/4 are vectors in our signatures
+      if (scalarType === 'f32') {
+        if (len === 2) { cache.set(nodeId, 'float2'); return 'float2'; }
+        if (len === 3) { cache.set(nodeId, 'float3'); return 'float3'; }
+        if (len === 4) { cache.set(nodeId, 'float4'); return 'float4'; }
+      }
 
       const arrayType = `array<${scalarType}, ${len}>`;
       cache.set(nodeId, arrayType);
