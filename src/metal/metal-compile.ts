@@ -18,6 +18,22 @@ export interface MetalRunResult {
 }
 
 /**
+ * Generate bash commands to compile a Metal shader file to a metallib
+ */
+export function generateMetalCompileCmds(shaderPath: string, outputDir: string): string[] {
+  const shaderName = path.basename(shaderPath, '.metal');
+  const airPath = path.join(outputDir, `${shaderName}.air`);
+  const metallibPath = path.join(outputDir, `${shaderName}.metallib`);
+
+  return [
+    `# Compile Metal Shader: ${shaderName}`,
+    `mkdir -p "${outputDir}"`,
+    `xcrun -sdk macosx metal -c "${shaderPath}" -o "${airPath}"`,
+    `xcrun -sdk macosx metallib "${airPath}" -o "${metallibPath}"`
+  ];
+}
+
+/**
  * Compile a Metal shader file to a metallib
  * @param shaderPath Path to the .metal source file
  * @param outputDir Directory to place compiled artifacts
@@ -28,22 +44,12 @@ export function compileMetalShader(shaderPath: string, outputDir: string): Metal
   const airPath = path.join(outputDir, `${shaderName}.air`);
   const metallibPath = path.join(outputDir, `${shaderName}.metallib`);
 
-  // Ensure output directory exists
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
+  const cmds = generateMetalCompileCmds(shaderPath, outputDir);
+  // Execute commands synchronously
+  for (const cmd of cmds) {
+    if (cmd.startsWith('#') || cmd.trim() === '') continue;
+    execSync(cmd, { stdio: ['pipe', 'pipe', 'pipe'] });
   }
-
-  // Step 1: Compile .metal -> .air
-  execSync(`xcrun -sdk macosx metal -c "${shaderPath}" -o "${airPath}"`, {
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-
-  // Step 2: Link .air -> .metallib
-  execSync(`xcrun -sdk macosx metallib "${airPath}" -o "${metallibPath}"`, {
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
 
   return { metallibPath, airPath };
 }
@@ -56,34 +62,39 @@ export interface CppCompileOptions {
 }
 
 /**
+ * Generate bash command to compile an Objective-C++ source file
+ */
+export function generateCppCompileCmd(options: CppCompileOptions): string {
+  const { sourcePaths, outputPath, frameworks = ['Metal', 'Foundation'], extraFlags = [] } = options;
+  const outputDir = path.dirname(outputPath);
+
+  const frameworkFlags = frameworks.map(f => `-framework ${f}`).join(' ');
+  const cmd = `clang++ -std=c++17 -O2 -D GL_SILENCE_DEPRECATION -D TARGET_MACOS=1 -x objective-c++ ${frameworkFlags} ${extraFlags.join(' ')} "${sourcePaths.join('" "')}" -o "${outputPath}"`;
+
+  return [
+    `# Compile C++ Host: ${path.basename(outputPath)}`,
+    `mkdir -p "${outputDir}"`,
+    cmd
+  ].join('\n');
+}
+
+/**
  * Compile an Objective-C++ source file
  * @param options Compilation options
  * @returns Path to the compiled executable
  */
 export function compileCppHost(options: CppCompileOptions): string {
-  const { sourcePaths, outputPath, frameworks = ['Metal', 'Foundation'], extraFlags = [] } = options;
-
-  // Ensure output directory exists
-  const outputDir = path.dirname(outputPath);
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
+  const cmdBlock = generateCppCompileCmd(options);
+  const lines = cmdBlock.split('\n');
+  for (const line of lines) {
+    if (line.startsWith('#') || line.trim() === '') continue;
+    execSync(line, { stdio: ['pipe', 'pipe', 'pipe'] });
   }
-
-  // Build framework flags
-  const frameworkFlags = frameworks.map(f => `-framework ${f}`).join(' ');
-
-  // Compile with clang++
-  const cmd = `clang++ -std=c++17 -O2 -D GL_SILENCE_DEPRECATION -D TARGET_MACOS=1 -x objective-c++ ${frameworkFlags} ${extraFlags.join(' ')} "${sourcePaths.join('" "')}" -o "${outputPath}"`;
-  execSync(cmd, {
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-
-  return outputPath;
+  return options.outputPath;
 }
 
 export interface FFGLCompileOptions {
-  outputPath: string;
+  outputPath: string; // .../NanoFFGL.bundle
   name?: string;
   pluginId?: string;
   textureInputCount?: number;
@@ -91,48 +102,35 @@ export interface FFGLCompileOptions {
 }
 
 /**
- * Compile the FFGL plugin bundle
- * @param options Compilation options
- * @returns Path to the compiled bundle
+ * Generate bash commands to compile the FFGL plugin bundle
  */
-export function compileFFGLPlugin(options: FFGLCompileOptions): string {
+export function generateFFGLPluginCmds(options: FFGLCompileOptions): string[] {
   const { outputPath } = options;
-  // outputPath is .../NanoFFGL.bundle
-
-  // Clean up existing bundle if it exists
-  if (fs.existsSync(outputPath)) {
-    fs.rmSync(outputPath, { recursive: true, force: true });
-  }
-
-  // Create Bundle Structure
-  const contentsDir = path.join(outputPath, 'Contents');
-  const macOsDir = path.join(contentsDir, 'MacOS');
-
-  fs.mkdirSync(macOsDir, { recursive: true });
-
-  // Paths
   const repoRoot = path.resolve(__dirname, '../..');
   const ffglSdkDir = path.join(repoRoot, 'modules/ffgl/source/lib');
   const tmpDir = path.join(repoRoot, 'tmp');
   const srcMetalDir = path.join(repoRoot, 'src/metal');
 
-  // Binary Name
   const bundleName = options.name ? options.name.replace(/\s+/g, '') : path.basename(outputPath, '.bundle');
-  const actualOutputPath = options.name ? path.join(path.dirname(outputPath), `${bundleName}.bundle`) : outputPath;
+  const parentDir = path.dirname(outputPath);
 
-  // Clean up existing bundle if it exists (at the potentially new path)
-  if (actualOutputPath !== outputPath && fs.existsSync(actualOutputPath)) {
-    fs.rmSync(actualOutputPath, { recursive: true, force: true });
-  }
+  // Create relative paths for the script if possible, but keep absolute for reliability for now
+  // We want the script to be runnable from anywhere or a specific root?
+  // For now, let's keep absolute paths as they are safe.
 
-  // Reload dirs based on actualOutputPath
-  const actualContentsDir = path.join(actualOutputPath, 'Contents');
-  const actualMacOsDir = path.join(actualContentsDir, 'MacOS');
-  if (!fs.existsSync(actualMacOsDir)) {
-    fs.mkdirSync(actualMacOsDir, { recursive: true });
-  }
+  const actualBundlePath = path.join(parentDir, `${bundleName}.bundle`);
+  const contentsDir = path.join(actualBundlePath, 'Contents');
+  const macOsDir = path.join(contentsDir, 'MacOS');
+  const resourcesDir = path.join(contentsDir, 'Resources');
+  const binaryPath = path.join(macOsDir, bundleName);
+  const infoPlistPath = path.join(contentsDir, 'Info.plist');
 
-  const binaryPath = path.join(actualMacOsDir, bundleName);
+  const cmds: string[] = [];
+
+  cmds.push(`# Build FFGL Plugin: ${bundleName}`);
+  cmds.push(`rm -rf "${actualBundlePath}"`);
+  cmds.push(`mkdir -p "${macOsDir}"`);
+  cmds.push(`mkdir -p "${resourcesDir}"`);
 
   // Source files
   const sources = [
@@ -159,33 +157,27 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
 
   // Frameworks
   const frameworks = [
-    'Cocoa',
-    'OpenGL',
-    'Metal',
-    'MetalKit',
-    'IOSurface',
-    'CoreVideo',
+    'Cocoa', 'OpenGL', 'Metal', 'MetalKit', 'IOSurface', 'CoreVideo',
   ];
   const frameworkFlags = frameworks.map(f => `-framework ${f}`).join(' ');
 
-  // Plugin Type and Input Constraints
+  // Plugin properties
   const inputCount = options.textureInputCount ?? 0;
-  let pluginType = 0; // Default to Effect (0 in this SDK)
-  if (inputCount === 0) pluginType = 1; // Source (1 in this SDK)
-  if (inputCount === 1) pluginType = 0; // Effect (0 in this SDK)
+  let pluginType = 0; // Effect
+  if (inputCount === 0) pluginType = 1; // Source
+  if (inputCount === 1) pluginType = 0; // Effect
   if (inputCount >= 2) pluginType = 2; // Mixer
 
-  // Compiler flags
   const flags = [
     '-std=c++17',
     '-x objective-c++',
     '-bundle',
-    '-fobjc-arc', // Required for AAPLOpenGLMetalInteropTexture.m
+    '-fobjc-arc',
     '-D TARGET_MACOS=1',
     '-D FFGL_MACOS',
     '-D GL_SILENCE_DEPRECATION',
     '-Wl,-exported_symbol,_plugMain',
-    '-g',         // Debug info
+    '-g',
     options.name ? `-DPLUGIN_NAME='"${options.name}"'` : '',
     options.pluginId ? `-DPLUGIN_CODE='"${options.pluginId}"'` : '',
     `-DPLUGIN_TYPE=${pluginType}`,
@@ -194,14 +186,51 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
     `-DINTERNAL_RESOURCE_COUNT=${options.internalResourceCount ?? 0}`,
   ].filter(f => f !== '').join(' ');
 
-  const cmd = `clang++ ${flags} ${includeFlags} ${frameworkFlags} "${sources.join('" "')}" -o "${binaryPath}"`;
+  // Compile
+  cmds.push(`clang++ ${flags} ${includeFlags} ${frameworkFlags} "${sources.join('" "')}" -o "${binaryPath}"`);
 
-  console.log('Compiling FFGL plugin:', cmd);
+  // Codesign
+  cmds.push(`codesign -s - "${binaryPath}"`);
+
+  // Info.plist
+  const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>CFBundleExecutable</key>
+\t<string>${bundleName}</string>
+\t<key>CFBundleIdentifier</key>
+\t<string>com.nano.${bundleName}</string>
+\t<key>CFBundleName</key>
+\t<string>${bundleName}</string>
+\t<key>CFBundlePackageType</key>
+\t<string>BNDL</string>
+\t<key>CFBundleShortVersionString</key>
+\t<string>1.0</string>
+\t<key>CFBundleVersion</key>
+\t<string>1</string>
+</dict>
+</plist>`;
+
+  cmds.push(`cat <<EOF > "${infoPlistPath}"
+${plistContent}
+EOF`);
+
+  return cmds;
+}
+
+/**
+ * Compile the FFGL plugin bundle
+ * @param options Compilation options
+ * @returns Path to the compiled bundle
+ */
+export function compileFFGLPlugin(options: FFGLCompileOptions): string {
+  const cmds = generateFFGLPluginCmds(options);
+  const fullScript = cmds.join('\n');
+
+  // Execute via bash
   try {
-    const output = execSync(cmd, {
-      encoding: 'utf-8',
-      stdio: 'pipe',
-    });
+    execSync(fullScript, { shell: '/bin/bash', cwd: process.cwd() });
   } catch (e: any) {
     console.error('FFGL COMPILATION ERROR DETAILS:');
     if (e.stdout) console.error('STDOUT:\n' + e.stdout.toString());
@@ -209,36 +238,9 @@ export function compileFFGLPlugin(options: FFGLCompileOptions): string {
     throw e;
   }
 
-  // Code Sign (Required for ARM64)
-  try {
-    execSync(`codesign -s - "${binaryPath}"`, { stdio: 'ignore' });
-  } catch (e) {
-    console.warn('Failed to codesign bundle:', e);
-  }
-
-  // Write Info.plist
-  const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleExecutable</key>
-	<string>${bundleName}</string>
-	<key>CFBundleIdentifier</key>
-	<string>com.nano.${bundleName}</string>
-	<key>CFBundleName</key>
-	<string>${bundleName}</string>
-	<key>CFBundlePackageType</key>
-	<string>BNDL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-</dict>
-</plist>`;
-
-  fs.writeFileSync(path.join(actualContentsDir, 'Info.plist'), plistContent.trim());
-
-  return actualOutputPath;
+  const bundleName = options.name ? options.name.replace(/\s+/g, '') : path.basename(options.outputPath, '.bundle');
+  const parentDir = path.dirname(options.outputPath);
+  return path.join(parentDir, `${bundleName}.bundle`);
 }
 
 /**
@@ -269,4 +271,16 @@ export function getMetalBuildDir(): string {
     fs.mkdirSync(dir, { recursive: true });
   }
   return dir;
+}
+
+/**
+ * Generate a complete build script from a list of steps
+ */
+export function generateBuildScript(steps: string[]): string {
+  return [
+    '#!/bin/bash',
+    'set -e',
+    '',
+    ...steps
+  ].join('\n');
 }
