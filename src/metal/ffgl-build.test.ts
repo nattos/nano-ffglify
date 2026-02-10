@@ -256,32 +256,41 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     expect(json.id).toBe('SMIX');
   });
 
-  test('should compile ISOLATED plugin with relative paths and staged deps', () => {
+  test('should compile ISOLATED plugin with relative paths and staged deps', async () => {
     // This test simulates the "export to folder" case where we copy everything to a temp dir and build from there.
 
     const stageDir = path.join(buildDir, 'stage_mix');
     if (fs.existsSync(stageDir)) fs.rmSync(stageDir, { recursive: true, force: true });
     fs.mkdirSync(stageDir, { recursive: true });
 
-    // 1. Stage Dependencies
-    const ffglSdkSrc = path.join(repoRoot, 'modules/ffgl/source/lib');
-    const stageSdk = path.join(stageDir, 'ffgl-sdk');
-    fs.cpSync(ffglSdkSrc, stageSdk, { recursive: true });
 
-    const pluginSrc = path.join(repoRoot, 'src/metal/ffgl-plugin.mm');
-    const stageSrc = path.join(stageDir, 'src');
-    fs.mkdirSync(stageSrc, { recursive: true });
-    fs.copyFileSync(pluginSrc, path.join(stageSrc, 'ffgl-plugin.mm'));
+    // 1. Stage Dependencies using FFGL_ASSETS
+    const { FFGL_ASSETS } = await import('./ffgl-assets');
 
-    const interopSrc = path.join(repoRoot, 'src/metal/InteropTexture.m');
-    fs.copyFileSync(interopSrc, path.join(stageSrc, 'interop.m'));
-    // Interop header usually next to it or in tmp, checking include...
-    const interopHeader = path.join(repoRoot, 'src/metal/InteropTexture.h');
-    if (fs.existsSync(interopHeader)) fs.copyFileSync(interopHeader, path.join(stageSrc, 'InteropTexture.h'));
+    const relSdk = './ffgl-sdk';
+    const relSrc = './src';
+    const relGen = './generated';
+    const relBuild = './build';
 
-    // Copy intrinsics.incl.h
-    const intrinsicsSrc = path.join(repoRoot, 'src/metal/intrinsics.incl.h');
-    fs.copyFileSync(intrinsicsSrc, path.join(stageSrc, 'intrinsics.incl.h'));
+    // Helper to write assets to stage dir
+    const writeAsset = (assetName: string, content: string) => {
+      // Determine target path based on asset name
+      let targetPath = '';
+      if (assetName.startsWith('ffgl/')) {
+        targetPath = path.join(stageDir, 'ffgl-sdk', assetName);
+      } else {
+        targetPath = path.join(stageDir, 'src', assetName);
+      }
+
+      const dir = path.dirname(targetPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(targetPath, content);
+    };
+
+    // Write all assets
+    Object.entries(FFGL_ASSETS).forEach(([name, content]) => {
+      writeAsset(name, content);
+    });
 
     // Generated files
     // Use NOISE_SHADER logic again for simplicity or pass previous generated logic
@@ -295,12 +304,6 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
 
     // 2. Generate Build Script using RELATIVE PATHS
     const steps: string[] = [];
-
-    // Paths relative to `stageDir` (where the script will live)
-    const relSdk = './ffgl-sdk';
-    const relSrc = './src';
-    const relGen = './generated';
-    const relBuild = './build';
 
     // Metal Compile
     // Note: metal compile currently takes absolute paths or paths relative to CWD.
@@ -320,7 +323,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
       paths: {
         ffglSdkDir: relSdk,
         pluginSource: `${relSrc}/ffgl-plugin.mm`,
-        interopSource: `${relSrc}/interop.m`,
+        interopSource: `${relSrc}/InteropTexture.m`,
         additionalIncludes: [relSrc, relGen, '.']
       }
     });
