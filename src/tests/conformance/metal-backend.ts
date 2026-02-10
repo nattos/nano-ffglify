@@ -80,8 +80,20 @@ export const MetalBackend: TestBackend = {
     const harness = getMetalHarness();
 
     // 1. Generate MSL
+    // If entry function is a CPU function with cmd_dispatch, compile the shader instead
+    let mslEntryPoint = entryPoint;
+    const entryFunc = ir.functions.find(f => f.id === entryPoint);
+    if (entryFunc?.type === 'cpu') {
+      const dispatchNode = entryFunc.nodes.find(n => n.op === 'cmd_dispatch');
+      if (dispatchNode) {
+        const shaderFuncId = dispatchNode['func'] as string;
+        if (shaderFuncId && ir.functions.some(f => f.id === shaderFuncId)) {
+          mslEntryPoint = shaderFuncId;
+        }
+      }
+    }
     const generator = new MslGenerator();
-    const result = generator.compile(ir, entryPoint);
+    const result = generator.compile(ir, mslEntryPoint);
     const mslCode = result.code;
 
     // 2. Write .metal source file

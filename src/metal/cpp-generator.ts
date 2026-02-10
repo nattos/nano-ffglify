@@ -143,7 +143,6 @@ export class CppGenerator {
       lines.push(`    ctx.inputs["${p.id}"] = GetFloatParameter(${idx});`);
     });
     lines.push('}');
-    lines.push('#endif');
     lines.push('');
 
     lines.push('void PLUGIN_CLASS::setup_resources(EvalContext& ctx, ResourceState* outputRes, const std::vector<ResourceState*>& inputRes) {');
@@ -169,6 +168,7 @@ export class CppGenerator {
       }
     });
     lines.push('}');
+    lines.push('#endif');
     lines.push('');
 
 

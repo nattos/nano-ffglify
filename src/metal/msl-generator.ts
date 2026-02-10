@@ -350,6 +350,13 @@ export class MslGenerator {
     lines.push('inline float3 msl_is_finite(float3 v) { return select(float3(0.0f), float3(1.0f), !isnan(v) && !isinf(v)); }');
     lines.push('inline float4 msl_is_finite(float4 v) { return select(float4(0.0f), float4(1.0f), !isnan(v) && !isinf(v)); }');
     lines.push('');
+    // Safe int cast (handles overflow with two's complement wrapping)
+    lines.push('inline int safe_cast_int(float v) {');
+    lines.push('  if (v >= 2147483648.0f) return int(v - 4294967296.0f);');
+    lines.push('  if (v < -2147483648.0f) return int(v + 4294967296.0f);');
+    lines.push('  return int(v);');
+    lines.push('}');
+    lines.push('');
     // Flush subnormal helper
     lines.push('inline float flush_subnormal(float v) { return (v != 0.0f && abs(v) < 1.175494e-38f) ? 0.0f : v; }');
     lines.push('');
@@ -418,12 +425,12 @@ export class MslGenerator {
     lines.push('    float4(0, 0, 0, 1));');
     lines.push('}');
     lines.push('');
-    // Color mix (premultiplied alpha blend)
-    lines.push('inline float4 color_mix_impl(float4 a, float4 b) {');
-    lines.push('  float totalAlpha = a.w + b.w;');
-    lines.push('  if (totalAlpha < 1e-6f) return float4(0.0f);');
-    lines.push('  float3 blended = (a.xyz * a.w + b.xyz * b.w) / totalAlpha;');
-    lines.push('  return float4(blended, totalAlpha * 0.5f);');
+    // Color mix (alpha-over compositing: dst=a, src=b)
+    lines.push('inline float4 color_mix_impl(float4 dst, float4 src) {');
+    lines.push('  float outA = src.w + dst.w * (1.0f - src.w);');
+    lines.push('  if (outA < 1e-6f) return float4(0.0f);');
+    lines.push('  float3 rgb = (src.xyz * src.w + dst.xyz * dst.w * (1.0f - src.w)) / outA;');
+    lines.push('  return float4(rgb, outA);');
     lines.push('}');
     lines.push('');
   }
@@ -522,6 +529,8 @@ export class MslGenerator {
         if (offset === undefined) continue;
         const varName = this.sanitizeId(v.id, 'var');
         const varType = v.type || 'float';
+        // Skip array types — they can't be written to a flat float buffer directly
+        if (varType.startsWith('array<') || varType.includes('[')) continue;
         const typeSize = this.getTypeSize(varType);
         if (typeSize === 1) {
           lines.push(`    b_globals[${offset}] = ${varName};`);
@@ -863,6 +872,61 @@ export class MslGenerator {
       case 'float3': return `float3(${a('x')}, ${a('y')}, ${a('z')})`;
       case 'float4': return `float4(${a('x')}, ${a('y')}, ${a('z')}, ${a('w')})`;
 
+      // Quaternion constructors
+      case 'quat': {
+        const x = node['x'];
+        if (x !== undefined) {
+          return `float4(${a('x')}, ${a('y')}, ${a('z')}, ${a('w')})`;
+        }
+        // axis-angle form
+        const axis = this.resolveArg(node, 'axis', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        const angle = this.resolveArg(node, 'angle', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        return `float4(${axis} * sin(${angle} * 0.5f), cos(${angle} * 0.5f))`;
+      }
+      case 'quat_identity': return 'float4(0.0f, 0.0f, 0.0f, 1.0f)';
+
+      // Matrix constructors
+      case 'float3x3': {
+        const vals = node['vals'];
+        if (Array.isArray(vals)) {
+          const formatted = vals.map((v: number) => this.formatFloat(v));
+          return `float3x3(${formatted.join(', ')})`;
+        } else if (typeof vals === 'string') {
+          // Check if source is array_construct — inline the fill value
+          const srcNode = func.nodes.find(n => n.id === vals);
+          if (srcNode && srcNode.op === 'array_construct') {
+            const fill = srcNode['fill'] !== undefined ? srcNode['fill'] as number : 0;
+            return `float3x3(${new Array(9).fill(this.formatFloat(fill)).join(', ')})`;
+          }
+          emitPure(vals);
+          const varExpr = this.nodeResId(vals);
+          const args = [];
+          for (let i = 0; i < 9; i++) args.push(`float(${varExpr}[${i}])`);
+          return `float3x3(${args.join(', ')})`;
+        }
+        return 'float3x3(1,0,0, 0,1,0, 0,0,1)';
+      }
+      case 'float4x4': {
+        const vals = node['vals'];
+        if (Array.isArray(vals)) {
+          const formatted = vals.map((v: number) => this.formatFloat(v));
+          return `float4x4(${formatted.join(', ')})`;
+        } else if (typeof vals === 'string') {
+          // Check if source is array_construct — inline the fill value
+          const srcNode = func.nodes.find(n => n.id === vals);
+          if (srcNode && srcNode.op === 'array_construct') {
+            const fill = srcNode['fill'] !== undefined ? srcNode['fill'] as number : 0;
+            return `float4x4(${new Array(16).fill(this.formatFloat(fill)).join(', ')})`;
+          }
+          emitPure(vals);
+          const varExpr = this.nodeResId(vals);
+          const args = [];
+          for (let i = 0; i < 16; i++) args.push(`float(${varExpr}[${i}])`);
+          return `float4x4(${args.join(', ')})`;
+        }
+        return 'float4x4(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1)';
+      }
+
       // Constants
       case 'math_pi': return '3.14159265358979323846f';
       case 'math_e': return '2.71828182845904523536f';
@@ -872,7 +936,7 @@ export class MslGenerator {
       case 'math_mad': return `fma(${a()}, ${b()}, ${a('c')})`;
       case 'math_sub': return `(${a()} - ${b()})`;
       case 'math_mul': return `(${a()} * ${b()})`;
-      case 'math_div': return `safe_div(${a()}, ${b()})`;
+      case 'math_div': return `(${a()} / ${b()})`;
       case 'math_neg': return `(-${a('val')})`;
       case 'math_abs': return `abs(${a('val')})`;
       case 'math_sin': return `sin(${a('val')})`;
@@ -986,6 +1050,19 @@ export class MslGenerator {
       case 'vec_get_element': {
         const vec = this.resolveArg(node, 'vec', func, allFunctions, varMap, resourceBindings, emitPure, edges);
         const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        // Detect matrix source — need col/row indexing instead of flat
+        const targetId = node['vec'] as string;
+        if (targetId) {
+          const targetNode = func.nodes.find(n => n.id === targetId);
+          const targetVar = func.localVars?.find(v => v.id === targetId);
+          const op = targetNode?.op;
+          const varType = targetVar?.type;
+          if (op === 'float3x3' || op === 'float4x4' || op === 'mat_identity' || op === 'mat_inverse' || op === 'mat_transpose' || op === 'quat_to_float4x4' ||
+            varType === 'float3x3' || varType === 'float4x4') {
+            const size = (op === 'float3x3' || varType === 'float3x3' || (op === 'mat_identity' && targetNode?.['size'] === 3)) ? 3 : 4;
+            return `${vec}[int(${idx}) / ${size}][int(${idx}) % ${size}]`;
+          }
+        }
         return `${vec}[int(${idx})]`;
       }
 
@@ -1011,7 +1088,7 @@ export class MslGenerator {
         }
         return `float(${valExpr})`;
       }
-      case 'static_cast_int': return `int(${a('val')})`;
+      case 'static_cast_int': return `safe_cast_int(${a('val')})`;
       case 'static_cast_bool': return `(${a('val')} != 0.0f ? 1.0f : 0.0f)`;
 
       // Struct operations
@@ -1198,6 +1275,8 @@ export class MslGenerator {
       'literal', 'float', 'int', 'bool',
       'var_get', 'buffer_load', 'builtin_get',
       'float2', 'float3', 'float4',
+      'float3x3', 'float4x4',
+      'quat', 'quat_identity',
       'vec_dot', 'vec_length', 'vec_normalize', 'vec_swizzle', 'vec_get_element',
       'static_cast_float', 'static_cast_int', 'static_cast_bool',
       'struct_construct', 'struct_extract',

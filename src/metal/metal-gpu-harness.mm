@@ -5,6 +5,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <vector>
@@ -128,6 +129,7 @@ int main(int argc, const char *argv[]) {
 
     // 3. Compile to library
     MTLCompileOptions *compileOptions = [[MTLCompileOptions alloc] init];
+    compileOptions.fastMathEnabled = NO; // Ensure IEEE 754 compliance (NaN, Inf)
     id<MTLLibrary> library = [device newLibraryWithSource:source
                                                   options:compileOptions
                                                     error:&error];
@@ -181,7 +183,10 @@ int main(int argc, const char *argv[]) {
       // Create texture descriptor
       MTLTextureDescriptor *texDesc = [[MTLTextureDescriptor alloc] init];
       texDesc.textureType = MTLTextureType2D;
-      texDesc.pixelFormat = MTLPixelFormatR32Float; // R32F format
+      // Auto-detect format: if data has 4 floats per pixel, use RGBA32F; otherwise R32F
+      size_t pixelCount = def.width * def.height;
+      bool isRGBA = (def.data.size() >= pixelCount * 4);
+      texDesc.pixelFormat = isRGBA ? MTLPixelFormatRGBA32Float : MTLPixelFormatR32Float;
       texDesc.width = def.width;
       texDesc.height = def.height;
       texDesc.usage = MTLTextureUsageShaderRead;
@@ -191,10 +196,11 @@ int main(int argc, const char *argv[]) {
 
       // Upload texture data
       MTLRegion region = MTLRegionMake2D(0, 0, def.width, def.height);
+      int bytesPerPixel = isRGBA ? (4 * sizeof(float)) : sizeof(float);
       [texture replaceRegion:region
                  mipmapLevel:0
                    withBytes:def.data.data()
-                 bytesPerRow:def.width * sizeof(float)];
+                 bytesPerRow:def.width * bytesPerPixel];
 
       resourceTextures.push_back(texture);
 
@@ -263,8 +269,8 @@ int main(int argc, const char *argv[]) {
     // 11. Read back results and output JSON
     auto emitFloat = [](float val) {
       if (std::isnan(val)) std::cout << "null";
-      else if (std::isinf(val)) std::cout << (val > 0 ? "1e38" : "-1e38");
-      else std::cout << val;
+      else if (std::isinf(val)) std::cout << (val > 0 ? "1e999" : "-1e999");
+      else std::cout << std::setprecision(10) << val;
     };
 
     std::cout << "{\"resources\": [";
