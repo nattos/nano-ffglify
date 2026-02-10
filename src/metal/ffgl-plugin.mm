@@ -13,11 +13,7 @@
 #include <unordered_map>
 #include <vector>
 void WriteLog(const std::string &msg) {
-  std::ofstream logFile("/tmp/ffgl_debug.log", std::ios::app);
-  if (logFile.is_open()) {
-    logFile << msg << std::endl;
-    logFile.close();
-  }
+  // Silent in production
 }
 
 extern "C" {
@@ -87,6 +83,24 @@ void InitGLFuncs() {
       glDeleteVertexArraysFunc = (DeleteVertexArraysPtr)dlsym(
           RTLD_DEFAULT, "glDeleteVertexArraysAPPLE");
   }
+
+  // Dynamic load attribute functions too, just in case linking is broken
+  if (!glEnableVertexAttribArrayFunc) {
+    glEnableVertexAttribArrayFunc = (EnableVertexAttribArrayPtr)dlsym(
+        RTLD_DEFAULT, "glEnableVertexAttribArray");
+    if (!glEnableVertexAttribArrayFunc)
+      glEnableVertexAttribArrayFunc = (EnableVertexAttribArrayPtr)dlsym(
+          RTLD_DEFAULT, "glEnableVertexAttribArrayARB");
+  }
+  if (!glVertexAttribPointerFunc) {
+    glVertexAttribPointerFunc =
+        (VertexAttribPointerPtr)dlsym(RTLD_DEFAULT, "glVertexAttribPointer");
+    if (!glVertexAttribPointerFunc)
+      glVertexAttribPointerFunc = (VertexAttribPointerPtr)dlsym(
+          RTLD_DEFAULT, "glVertexAttribPointerARB");
+  }
+
+  WriteLog("InitGLFuncs loaded symbols");
 }
 
 struct ScopedShader {
@@ -192,14 +206,30 @@ public:
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * 4, 0);
+    if (glEnableVertexAttribArrayFunc)
+      glEnableVertexAttribArrayFunc(0);
+    else
+      glEnableVertexAttribArray(0);
+
+    if (glVertexAttribPointerFunc)
+      glVertexAttribPointerFunc(0, 2, GL_FLOAT, GL_FALSE, 4 * 4, 0);
+    else
+      glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * 4, 0);
+
     GLenum err = glGetError();
     if (err != GL_NO_ERROR)
       WriteLog("Error setting Pos attrib: " + std::to_string(err));
 
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * 4, (void *)8);
+    if (glEnableVertexAttribArrayFunc)
+      glEnableVertexAttribArrayFunc(1);
+    else
+      glEnableVertexAttribArray(1);
+
+    if (glVertexAttribPointerFunc)
+      glVertexAttribPointerFunc(1, 2, GL_FLOAT, GL_FALSE, 4 * 4, (void *)8);
+    else
+      glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * 4, (void *)8);
+
     err = glGetError();
     if (err != GL_NO_ERROR)
       WriteLog("Error setting UV attrib: " + std::to_string(err));
@@ -857,13 +887,6 @@ public:
                                      _blitFromTex2DFragmentShaderCode);
     _screenQuad.Initialise();
 
-    char buf[256];
-    snprintf(buf, sizeof(buf), "[Plugin] InitGL: %dx%d, Shaders: %s, %s",
-             vp->width, vp->height, ok1 ? "OK" : "FAIL", ok2 ? "OK" : "FAIL");
-    std::ofstream fs("/tmp/ffgl_test.txt", std::ios::app);
-    if (fs.is_open())
-      fs << buf << std::endl;
-
     return CFFGLPlugin::InitGL(vp);
   }
 
@@ -1009,24 +1032,8 @@ public:
           }
           activeShader.SetVec2("MaxUV", maxCoords.s, maxCoords.t);
 
-          {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "  Input%d Target: %x, MaxUV: %f, %f", i,
-                     target, maxCoords.s, maxCoords.t);
-            std::ofstream fs("/tmp/ffgl_test.txt", std::ios::app);
-            if (fs.is_open())
-              fs << buf << std::endl;
-          }
-
           glDisable(GL_BLEND);
           _screenQuad.Draw();
-
-          GLenum err = glGetError();
-          if (err != GL_NO_ERROR) {
-            std::ofstream fs("/tmp/ffgl_test.txt", std::ios::app);
-            if (fs.is_open())
-              fs << "  GL Error: " << err << std::endl;
-          }
         }
       }
     }

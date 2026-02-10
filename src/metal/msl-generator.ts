@@ -729,7 +729,27 @@ export class MslGenerator {
       }
 
       // Type casting
-      case 'static_cast_float': return `float(${a('val')})`;
+      case 'static_cast_float': {
+        const valId = node['val'];
+        const valExpr = a('val');
+        if (typeof valId === 'string') {
+          const valNode = func.nodes.find(n => n.id === valId);
+          if (valNode) {
+            const op = valNode.op;
+            const channels = (valNode['channels'] as string) || (valNode['swizzle'] as string);
+            if (op === 'float2' || (op === 'vec_swizzle' && channels?.length === 2)) {
+              return `float2(${valExpr})`;
+            }
+            if (op === 'float3' || (op === 'vec_swizzle' && channels?.length === 3)) {
+              return `float3(${valExpr})`;
+            }
+            if (op === 'float4' || (op === 'vec_swizzle' && channels?.length === 4)) {
+              return `float4(${valExpr})`;
+            }
+          }
+        }
+        return `float(${valExpr})`;
+      }
       case 'static_cast_int': return `int(${a('val')})`;
       case 'static_cast_bool': return `(${a('val')} != 0.0f ? 1.0f : 0.0f)`;
 

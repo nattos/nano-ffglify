@@ -181,7 +181,8 @@ describe('FFGL Build Pipeline', () => {
             { id: 'size', op: 'resource_get_size', resource: 'out_tex' },
             { id: 'gid_raw', op: 'builtin_get', name: 'global_invocation_id' },
             { id: 'gid', op: 'vec_swizzle', vec: 'gid_raw', channels: 'xy' },
-            { id: 'uv', op: 'float2', x: 0.5, y: 0.5 },
+            { id: 'gid_f', op: 'static_cast_float', val: 'gid' },
+            { id: 'uv', op: 'math_div', a: 'gid_f', b: 'size' },
             { id: 'c1', op: 'texture_sample', tex: 'in_tex1', coords: 'uv' },
             { id: 'c2', op: 'texture_sample', tex: 'in_tex2', coords: 'uv' },
             { id: 'final_color', op: 'math_mix', a: 'c1', b: 'c2', t: 'mix_val' },
@@ -348,7 +349,8 @@ describe('FFGL Build Pipeline', () => {
             { id: 'size', op: 'resource_get_size', resource: 'out_tex' },
             { id: 'gid_raw', op: 'builtin_get', name: 'global_invocation_id' },
             { id: 'gid', op: 'vec_swizzle', vec: 'gid_raw', channels: 'xy' },
-            { id: 'uv', op: 'float2', x: 0.5, y: 0.5 },
+            { id: 'gid_f', op: 'static_cast_float', val: 'gid' },
+            { id: 'uv', op: 'math_div', a: 'gid_f', b: 'size' },
             { id: 'tex_color', op: 'texture_sample', tex: 'in_tex', coords: 'uv' },
             { id: 'store', op: 'texture_store', tex: 'out_tex', coords: 'gid', value: 'tex_color' }
           ]
