@@ -5,6 +5,7 @@
 
 import { IRDocument, FunctionDef, Node, Edge, StructDef } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
+import { inferFunctionTypes, InferredTypes } from '../ir/validator';
 
 export interface MslOptions {
   globalBufferBinding?: number;
@@ -46,6 +47,12 @@ export class MslGenerator {
     if (!entryFunc) throw new Error(`Entry point '${entryPointId}' not found`);
 
     const allFunctions = this.collectFunctions(entryFunc, ir.functions);
+
+    // Infer types for all functions
+    const inferredTypes = new Map<string, InferredTypes>();
+    for (const func of allFunctions) {
+      inferredTypes.set(func.id, inferFunctionTypes(func, ir));
+    }
 
     // Analyze variables for globals buffer allocation
     const varMap = options.varMap || new Map<string, number>();
@@ -114,12 +121,12 @@ export class MslGenerator {
     // Emit non-entry functions
     for (const func of allFunctions) {
       if (func.id !== entryPointId) {
-        this.emitFunction(func, false, lines, allFunctions, varMap, resourceBindings);
+        this.emitFunction(func, false, lines, allFunctions, varMap, resourceBindings, inferredTypes);
       }
     }
 
     // Emit entry point as kernel
-    this.emitKernel(entryFunc, lines, allFunctions, varMap, resourceBindings, options);
+    this.emitKernel(entryFunc, lines, allFunctions, varMap, resourceBindings, options, inferredTypes);
 
     return {
       code: lines.join('\n'),
@@ -185,6 +192,12 @@ export class MslGenerator {
 
       const allFunctions = this.collectFunctions(entryFunc, ir.functions);
 
+      // Infer types for all functions
+      const inferredTypes = new Map<string, InferredTypes>();
+      for (const func of allFunctions) {
+        inferredTypes.set(func.id, inferFunctionTypes(func, ir));
+      }
+
       // Allocate varMap for inputs and local vars (same as compile())
       // Use shader's own inputs if present, otherwise use IR globals
       const funcInputs = (entryFunc.type === 'shader' ? entryFunc.inputs : ir.inputs) || [];
@@ -222,7 +235,7 @@ export class MslGenerator {
       // Emit non-entry functions
       for (const func of allFunctions) {
         if (func.id !== entryId && !emittedFunctions.has(func.id)) {
-          this.emitFunction(func, false, lines, allFunctions, varMap, resourceBindings);
+          this.emitFunction(func, false, lines, allFunctions, varMap, resourceBindings, inferredTypes);
           emittedFunctions.add(func.id);
         }
       }
@@ -230,10 +243,10 @@ export class MslGenerator {
       // Emit entry point as kernel or stage function
       const stage = options.stages?.get(entryId) || 'compute';
       if (stage === 'vertex' || stage === 'fragment') {
-        this.emitStageFunction(entryFunc, stage, lines, allFunctions, resourceBindings, options);
+        this.emitStageFunction(entryFunc, stage, lines, allFunctions, resourceBindings, options, inferredTypes);
       } else {
         const kernelOptions = { ...options, kernelName: entryId };
-        this.emitKernel(entryFunc, lines, allFunctions, varMap, resourceBindings, kernelOptions);
+        this.emitKernel(entryFunc, lines, allFunctions, varMap, resourceBindings, kernelOptions, inferredTypes);
       }
       lines.push('');
     }
@@ -449,7 +462,8 @@ export class MslGenerator {
     lines: string[],
     allFunctions: FunctionDef[],
     varMap: Map<string, number>,
-    resourceBindings: Map<string, number>
+    resourceBindings: Map<string, number>,
+    inferredTypes?: Map<string, InferredTypes>
   ) {
     const returnType = func.outputs && func.outputs.length > 0 ? 'float' : 'void';
     const params = this.buildFuncParams(func);
@@ -457,7 +471,7 @@ export class MslGenerator {
     lines.push(`${returnType} ${this.sanitizeId(func.id, 'func')}(device float* b_globals${params}) {`);
 
     const edges = reconstructEdges(func);
-    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, false);
+    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, false, inferredTypes?.get(func.id));
 
     lines.push('}');
     lines.push('');
@@ -469,7 +483,8 @@ export class MslGenerator {
     lines: string[],
     allFunctions: FunctionDef[],
     resourceBindings: Map<string, number>,
-    options: MslOptions
+    options: MslOptions,
+    inferredTypes?: Map<string, InferredTypes>
   ) {
     const isVertex = stage === 'vertex';
     const entryName = options.kernelName || func.id;
@@ -537,7 +552,7 @@ export class MslGenerator {
     const edges = reconstructEdges(func);
 
     // Use isKernel=false so func_return emits 'return val;'
-    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, false);
+    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, false, inferredTypes?.get(func.id));
 
     lines.push('}');
   }
@@ -548,7 +563,8 @@ export class MslGenerator {
     allFunctions: FunctionDef[],
     varMap: Map<string, number>,
     resourceBindings: Map<string, number>,
-    options: MslOptions = {}
+    options: MslOptions,
+    inferredTypes?: Map<string, InferredTypes>
   ) {
     lines.push('// Kernel entry point');
 
@@ -604,8 +620,9 @@ export class MslGenerator {
       this.emitInputUnpacking(func, lines);
     }
 
+    // Remove duplicate edges decl if present
     const edges = reconstructEdges(func);
-    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, true);
+    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, true, inferredTypes?.get(func.id));
 
     // Kernel epilogue: write all local vars to b_globals for readback
     // (func_return paths do their own writeback and return early)
@@ -651,7 +668,8 @@ export class MslGenerator {
     varMap: Map<string, number>,
     resourceBindings: Map<string, number>,
     edges: Edge[],
-    isKernel: boolean = false
+    isKernel: boolean = false,
+    inferredTypes?: InferredTypes
   ) {
     // Declare local variables with initial values
     for (const v of func.localVars || []) {
@@ -672,7 +690,7 @@ export class MslGenerator {
             emitPure(edge.from);
           }
         }
-        const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         if (node.op === 'array_construct') {
           let len = node['length'] as number || 1;
           if (Array.isArray(node['values'])) {
@@ -693,7 +711,7 @@ export class MslGenerator {
     );
 
     for (const entry of entryNodes) {
-      this.emitChain(entry, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel);
+      this.emitChain(entry, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, undefined, undefined, inferredTypes);
     }
   }
 
@@ -708,7 +726,8 @@ export class MslGenerator {
     edges: Edge[],
     isKernel: boolean = false,
     visited: Set<string> = new Set(),
-    indent: string = '    '
+    indent: string = '    ',
+    inferredTypes?: InferredTypes
   ) {
     let curr: Node | undefined = node;
 
@@ -733,13 +752,13 @@ export class MslGenerator {
 
       // Handle control flow
       if (curr.op === 'flow_branch') {
-        this.emitBranch(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited));
+        this.emitBranch(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), inferredTypes);
         return;
       } else if (curr.op === 'flow_loop') {
-        this.emitLoop(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited));
+        this.emitLoop(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), inferredTypes);
         return;
       } else if (curr.op === 'func_return') {
-        const val = this.resolveArg(curr, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        const val = this.resolveArg(curr, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         if (isKernel) {
           // Kernel functions are void — write return value to globals buffer for readback
           const retVarId = curr['val'];
@@ -777,7 +796,7 @@ export class MslGenerator {
         return;
       } else {
         // Emit this node
-        this.emitNode(curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, indent, isKernel);
+        this.emitNode(curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, indent, isKernel, inferredTypes);
       }
 
       // Follow execution edges
@@ -797,17 +816,18 @@ export class MslGenerator {
     emitPure: (id: string) => void,
     edges: Edge[],
     isKernel: boolean,
-    visited: Set<string>
+    visited: Set<string>,
+    inferredTypes?: InferredTypes
   ) {
-    const cond = this.resolveArg(node, 'cond', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+    const cond = this.resolveArg(node, 'cond', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     lines.push(`${indent}if (${cond}) {`);
     const trueEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_true' && e.type === 'execution');
     const trueNode = trueEdge ? func.nodes.find(n => n.id === trueEdge.to) : undefined;
-    if (trueNode) this.emitChain(trueNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ');
+    if (trueNode) this.emitChain(trueNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ', inferredTypes);
     lines.push(`${indent}} else {`);
     const falseEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_false' && e.type === 'execution');
     const falseNode = falseEdge ? func.nodes.find(n => n.id === falseEdge.to) : undefined;
-    if (falseNode) this.emitChain(falseNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ');
+    if (falseNode) this.emitChain(falseNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ', inferredTypes);
     lines.push(`${indent}}`);
   }
 
@@ -822,21 +842,22 @@ export class MslGenerator {
     emitPure: (id: string) => void,
     edges: Edge[],
     isKernel: boolean,
-    visited: Set<string>
+    visited: Set<string>,
+    inferredTypes?: InferredTypes
   ) {
-    const start = this.resolveArg(node, 'start', func, allFunctions, varMap, resourceBindings, emitPure, edges);
-    const end = this.resolveArg(node, 'end', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+    const start = this.resolveArg(node, 'start', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+    const end = this.resolveArg(node, 'end', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     const loopVar = `loop_${this.sanitizeId(node.id, 'var')}`;
     lines.push(`${indent}for (int ${loopVar} = int(${start}); ${loopVar} < int(${end}); ${loopVar}++) {`);
 
     const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
     const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;
-    if (bodyNode) this.emitChain(bodyNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ');
+    if (bodyNode) this.emitChain(bodyNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ', inferredTypes);
     lines.push(`${indent}}`);
 
     const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
     const nextNode = compEdge ? func.nodes.find(n => n.id === compEdge.to) : undefined;
-    if (nextNode) this.emitChain(nextNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, visited, indent);
+    if (nextNode) this.emitChain(nextNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, visited, indent, inferredTypes);
   }
 
   private emitNode(
@@ -849,7 +870,8 @@ export class MslGenerator {
     emitPure: (id: string) => void,
     edges: Edge[],
     indent: string = '    ',
-    isKernel: boolean = false
+    isKernel: boolean = false,
+    inferredTypes?: InferredTypes
   ) {
     if (node.op === 'var_set') {
       const valNodeRef = node['val'];
@@ -865,29 +887,29 @@ export class MslGenerator {
         // Emit loop-based initialization
         lines.push(`${indent}for (int _i = 0; _i < ${length}; _i++) ${varExpr}[_i] = ${fillVal};`);
       } else {
-        const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         lines.push(`${indent}${varExpr} = ${val};`);
       }
     } else if (node.op === 'array_set') {
       const arrayNodeRef = node['array'];
-      const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges);
-      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       // Get the array expression - could be a var_get reference
-      const arrExpr = this.resolveArg(node, 'array', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const arrExpr = this.resolveArg(node, 'array', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       lines.push(`${indent}${arrExpr}[int(${idx})] = ${val};`);
     } else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'];
-      const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges);
-      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       const bufName = this.sanitizeId(bufferId, 'buffer');
       lines.push(`${indent}${bufName}[int(${idx})] = ${val};`);
     } else if (node.op === 'texture_store') {
       const texId = node['tex'] as string;
-      const coords = this.resolveArg(node, 'coords', func, allFunctions, varMap, resourceBindings, emitPure, edges);
-      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const coords = this.resolveArg(node, 'coords', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       lines.push(`${indent}${this.sanitizeId(texId)}_tex.write(${val}, uint2(${coords}));`);
     } else if (node.op === 'func_return') {
-      const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       if (isKernel) {
         const retVarId = node['val'];
         if (typeof retVarId === 'string' && varMap.has(retVarId)) {
@@ -920,7 +942,7 @@ export class MslGenerator {
         lines.push(`${indent}return ${val};`);
       }
     } else if (this.hasResult(node.op)) {
-      const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges);
+      const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       lines.push(`    auto ${this.nodeResId(node.id)} = ${expr};`);
     }
   }
@@ -932,10 +954,11 @@ export class MslGenerator {
     varMap: Map<string, number>,
     resourceBindings: Map<string, number>,
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    inferredTypes?: InferredTypes
   ): string {
-    const a = (key = 'a') => this.resolveArg(node, key, func, allFunctions, varMap, resourceBindings, emitPure, edges);
-    const b = () => this.resolveArg(node, 'b', func, allFunctions, varMap, resourceBindings, emitPure, edges);
+    const a = (key = 'a') => this.resolveArg(node, key, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+    const b = () => this.resolveArg(node, 'b', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
 
     switch (node.op) {
       case 'literal':
@@ -1055,7 +1078,32 @@ export class MslGenerator {
       case 'math_log2': return `log2(${a('val')})`;
       case 'math_min': return `min(${a()}, ${b()})`;
       case 'math_max': return `max(${a()}, ${b()})`;
-      case 'math_clamp': return `clamp(${a('val')}, ${a('min')}, ${a('max')})`;
+      case 'math_clamp': {
+        const val = a('val');
+        const minVal = a('min');
+        const maxVal = a('max');
+
+        if (inferredTypes) {
+          // Helper to determine type of source and cast if needed
+          const castIfNeeded = (expr: string, argKey: string) => {
+            let id = node[argKey];
+            // Resolve to edge source if present
+            const edge = edges.find(e => e.to === node.id && (e.portIn === argKey) && e.type === 'data');
+            if (edge) id = edge.from;
+
+            const type = typeof id === 'string' ? inferredTypes.get(id) : undefined;
+
+            if (type === 'int' || type === 'i32' || type === 'uint' || type === 'u32' || type === 'bool' || type === 'boolean') {
+              return `float(${expr})`;
+            }
+            return expr;
+          };
+
+          return `clamp(${castIfNeeded(val, 'val')}, ${castIfNeeded(minVal, 'min')}, ${castIfNeeded(maxVal, 'max')})`;
+        }
+
+        return `clamp(${val}, ${minVal}, ${maxVal})`;
+      }
       case 'math_mod': return `fmod(${a()}, ${b()})`;
       case 'math_fract': return `fract(${a('val')})`;
       case 'math_sign': return `sign(${a('val')})`;
@@ -1333,7 +1381,8 @@ export class MslGenerator {
     varMap: Map<string, number>,
     resourceBindings: Map<string, number>,
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    inferredTypes?: InferredTypes
   ): string {
     // Check for edge connection
     const edge = edges.find(e => e.to === node.id && (e.portIn === key || (key === 'val' && e.portIn === 'value')) && e.type === 'data');
@@ -1346,7 +1395,7 @@ export class MslGenerator {
           emitPure(source.id);
           return this.nodeResId(source.id);
         }
-        return this.compileExpression(source, func, allFunctions, varMap, resourceBindings, emitPure, edges);
+        return this.compileExpression(source, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       }
     }
 
