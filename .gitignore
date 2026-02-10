@@ -21,3 +21,4 @@ dist
 assets/test.png
 
 /modules/
+generated/
