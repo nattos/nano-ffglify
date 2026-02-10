@@ -519,6 +519,17 @@ struct EvalContext {
   std::vector<int> texWrapModes;
   std::vector<id<MTLSamplerState>> metalSamplers;
 
+  // Deferred synchronization support
+  id<MTLCommandBuffer> pendingCmdBuffer = nil;
+
+  void waitForPendingCommands() {
+    if (pendingCmdBuffer) {
+      [pendingCmdBuffer waitUntilCompleted];
+      pendingCmdBuffer = nil;
+    }
+    syncFromMetal();
+  }
+
   ResourceState *getResource(size_t idx) {
     return idx < resources.size() ? resources[idx] : nullptr;
   }
@@ -923,10 +934,7 @@ struct EvalContext {
     [encoder endEncoding];
 
     [cmdBuffer commit];
-    [cmdBuffer waitUntilCompleted];
-
-    // Sync back to CPU
-    syncFromMetal();
+    pendingCmdBuffer = cmdBuffer;
   }
 
   // Draw call (render pipeline)
@@ -1012,8 +1020,6 @@ struct EvalContext {
     [encoder endEncoding];
 
     [cmdBuffer commit];
-    [cmdBuffer waitUntilCompleted];
-
-    syncFromMetal();
+    pendingCmdBuffer = cmdBuffer;
   }
 };

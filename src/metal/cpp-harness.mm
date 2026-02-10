@@ -181,6 +181,9 @@ int main(int argc, const char *argv[]) {
     // Call generated entry point
     func_main(ctx);
 
+    // Ensure GPU work is done and results synced back
+    ctx.waitForPendingCommands();
+
     // Helper to output JSON-safe float (NaN → null, ±Inf → ±1e999)
     auto emitFloat = [](float v) {
       if (std::isnan(v))
