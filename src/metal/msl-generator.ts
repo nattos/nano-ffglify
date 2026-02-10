@@ -1121,7 +1121,7 @@ export class MslGenerator {
       case 'math_asin': return unaryOp('asin', 'float');
       case 'math_acos': return unaryOp('acos', 'float');
       case 'math_atan': return unaryOp('atan', 'float');
-      case 'math_atan2': return `atan2(${this.resolveCoercedArgs(node, ['y', 'x'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes).join(', ')})`;
+      case 'math_atan2': return `atan2(${this.resolveCoercedArgs(node, ['a', 'b'], 'float', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes).join(', ')})`;
       case 'math_sinh': return unaryOp('sinh', 'float');
       case 'math_cosh': return unaryOp('cosh', 'float');
       case 'math_tanh': return unaryOp('tanh', 'float');
