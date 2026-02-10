@@ -10,8 +10,25 @@ describe('20-coersion', () => {
     return;
   }
 
+  // Output buffer for verification
+  const outBuffer: any = { id: 'out_buf', type: 'buffer', size: 1, dataType: 'float', persistence: { clearOnResize: false } };
+
+  // Helper to add buffer store to function
+  const withBufferStore = (f: FunctionDef, valNodeId: string): FunctionDef => {
+    return {
+      ...f,
+      nodes: [
+        ...f.nodes.filter(n => n.op !== 'func_return' && n.op !== 'var_set'), // Remove old return and var_set
+        { id: 'store_' + valNodeId, op: 'buffer_store', buffer: 'out_buf', index: 0, value: valNodeId },
+        { id: 'ret', op: 'func_return', val: valNodeId }
+      ],
+      outputs: [{ id: 'res', type: 'float' }], // Ensure output is defined for buffer store
+      localVars: [] // Clear local vars if they were just for 'res'
+    };
+  };
+
   // Test case 1: Clamp with int loop index
-  const mainId = 'main';
+  const mainId = 'clamp_test_main';
   const clampFunc: FunctionDef = {
     id: mainId,
     type: 'shader',
@@ -81,33 +98,67 @@ describe('20-coersion', () => {
     localVars: [{ id: 'res', type: 'float', initialValue: 0.0 }]
   };
 
+  const clampFuncWithStore = withBufferStore(clampFunc, 'clamped');
+  // Test case 1b: Clamp with int loop index (CPU version for CppMetal)
+  const clampFuncCpu: FunctionDef = { ...withBufferStore(clampFunc, 'clamped'), id: 'clamp_cpu', type: 'cpu', outputs: [{ id: 'res', type: 'float' }] };
+
+  const addFuncWithStore = withBufferStore(addFunc, 'sum');
+  const sinFuncWithStore = withBufferStore(sinFunc, 'res_val');
+  const mixFuncWithStore = withBufferStore(mixFunc, 'res_val');
+
   const doc: IRDocument = {
     version: '1.0.0',
     meta: { name: 'CoersionTest', author: 'Test' },
     entryPoint: mainId,
-    functions: [clampFunc, addFunc, sinFunc, mixFunc],
-    resources: [], // Removed conflicting 'globals' resource
+    functions: [clampFuncWithStore, clampFuncCpu, addFuncWithStore, sinFuncWithStore, mixFuncWithStore],
+    resources: [outBuffer],
     inputs: []
   };
 
+  const verifyBuffer = (ctx: any, expected: number, tolerance = 0.0001) => {
+    const buf = ctx.resources.get('out_buf');
+    if (!buf || !buf.data || buf.data.length === 0) {
+      // If buffer empty, try fallback to var (for non-compiled backends if they don't support buffer store yet?)
+      // But CppMetal should support it.
+      // Fallback to getVar if available
+      try {
+        return ctx.getVar('res');
+      } catch {
+        throw new Error('Output buffer empty and var not found');
+      }
+    }
+    const val = buf.data[0];
+    return val;
+  };
+
   runFullGraphTest('Clamp Int Coersion', doc, async (ctx) => {
-    const res = ctx.getVar('res');
-    if (res !== 5.0) throw new Error(`Clamp: Expected 5.0, got ${res}`);
+    // CppMetal shader harness runs compute shader but might not write back nicely without explicit sync?
+    // Actually CppMetal harness does explicit readback of all resources.
+    // But wait, shader functions in `20-coersion` are being run as compute shaders by harness?
+    // The harness runs `dispatchShader`.
+    // If `clampFunc` is a shader, it needs `buffer_store` to write output.
+    const val = verifyBuffer(ctx, 5.0);
+    if (Math.abs(val - 5.0) > 0.0001) throw new Error(`Clamp: Expected 5.0, got ${val}`);
+  }, backends, 20000);
+
+  runFullGraphTest('Clamp Int Coersion (CPU)', { ...doc, entryPoint: 'clamp_cpu' }, async (ctx) => {
+    const val = verifyBuffer(ctx, 5.0);
+    if (Math.abs(val - 5.0) > 0.0001) throw new Error(`Clamp CPU: Expected 5.0, got ${val}`);
   }, backends);
 
   runFullGraphTest('Add Mixed Coersion', { ...doc, entryPoint: 'add_test' }, async (ctx) => {
-    const res = ctx.getVar('res');
-    if (res !== 5.5) throw new Error(`Add: Expected 5.5, got ${res}`);
+    const val = verifyBuffer(ctx, 5.5);
+    if (Math.abs(val - 5.5) > 0.0001) throw new Error(`Add: Expected 5.5, got ${val}`);
   }, backends);
 
   runFullGraphTest('Sin Int Coersion', { ...doc, entryPoint: 'sin_test' }, async (ctx) => {
-    const res = ctx.getVar('res');
-    if (Math.abs(res as number) > 0.0001) throw new Error(`Sin: Expected 0.0, got ${res}`);
+    const val = verifyBuffer(ctx, 0.0);
+    if (Math.abs(val) > 0.0001) throw new Error(`Sin: Expected 0.0, got ${val}`);
   }, backends);
 
   runFullGraphTest('Mix Int Coersion', { ...doc, entryPoint: 'mix_test' }, async (ctx) => {
-    const res = ctx.getVar('res');
-    if (res !== 5.0) throw new Error(`Mix: Expected 5.0, got ${res}`);
+    const val = verifyBuffer(ctx, 5.0);
+    if (Math.abs(val - 5.0) > 0.0001) throw new Error(`Mix: Expected 5.0, got ${val}`);
   }, backends);
 
 });

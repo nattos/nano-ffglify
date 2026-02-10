@@ -206,7 +206,8 @@ export const runFullGraphTest = (
   name: string,
   ir: IRDocument,
   verify: (ctx: EvaluationContext) => void | Promise<void>,
-  backends: TestBackend[] = availableBackends
+  backends: TestBackend[] = availableBackends,
+  timeout?: number
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
@@ -216,7 +217,7 @@ export const runFullGraphTest = (
       } finally {
         ctx.destroy();
       }
-    });
+    }, timeout);
   });
 };
 

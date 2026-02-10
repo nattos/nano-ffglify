@@ -5,6 +5,7 @@
 
 import { IRDocument, FunctionDef, Node, Edge } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
+import { inferFunctionTypes, InferredTypes } from '../ir/validator';
 
 export interface ShaderFunctionInfo {
   id: string;
@@ -38,6 +39,9 @@ export class CppGenerator {
     const requiredFuncs = new Set<string>();
     const callStack: string[] = [];
     const shaderFuncs = new Map<string, { func: FunctionDef, stage: 'compute' | 'vertex' | 'fragment' }>();
+    if (entryFunc.type === 'shader') {
+      shaderFuncs.set(entryPointId, { func: entryFunc, stage: 'compute' });
+    }
 
     const collectFunctions = (funcId: string) => {
       // Check for recursion
@@ -92,6 +96,14 @@ export class CppGenerator {
 
     collectFunctions(entryPointId);
 
+    // Infer types for all functions
+    const inferredTypes = new Map<string, InferredTypes>();
+    for (const func of allFunctions) {
+      if (requiredFuncs.has(func.id) || func.id === entryPointId) {
+        inferredTypes.set(func.id, inferFunctionTypes(func, ir));
+      }
+    }
+
     const lines: string[] = [];
     lines.push('// Generated C++ code from IR');
     lines.push('// Entry point: ' + entryFunc.id);
@@ -128,13 +140,28 @@ export class CppGenerator {
     const funcList = Array.from(requiredFuncs).reverse();
     for (const funcId of funcList) {
       const func = allFunctions.find((f: FunctionDef) => f.id === funcId)!;
-      this.emitFunction(func, lines, allFunctions);
+      this.emitFunction(func, lines, allFunctions, inferredTypes);
       lines.push('');
     }
 
     // Emit func_main wrapper if entry point has a different name
     const entryFuncName = this.sanitizeId(entryPointId, 'func');
-    if (entryFuncName !== 'func_main') {
+
+    if (entryFunc.type === 'shader') {
+      lines.push('// Entry point wrapper for shader harness');
+      lines.push('void func_main(EvalContext& ctx) {');
+      lines.push('    std::vector<float> _shader_args;');
+      for (const input of (this.ir!.inputs || [])) {
+        const irType = input.type || 'float';
+        const argExpr = `ctx.getInput("${input.id}")`;
+        this.emitArgFlattening('    ', argExpr, irType, lines);
+      }
+      // Dispatch with default 1,1,1 for test harness
+      lines.push(`    ctx.dispatchShader("${entryPointId}", 1, 1, 1, _shader_args);`);
+      lines.push('}');
+      lines.push('');
+    } else if (entryFuncName !== 'func_main') {
+      const entryFunc = allFunctions.find(f => f.id === entryPointId)!;
       lines.push('// Entry point wrapper for harness');
       lines.push(`void func_main(EvalContext& ctx) { ${entryFuncName}(ctx); }`);
       lines.push('');
@@ -291,7 +318,12 @@ export class CppGenerator {
     return `n_${id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
   }
 
-  private emitFunction(f: FunctionDef, lines: string[], allFunctions: FunctionDef[]) {
+  private emitFunction(
+    f: FunctionDef,
+    lines: string[],
+    allFunctions: FunctionDef[],
+    inferredTypes: Map<string, InferredTypes>
+  ) {
     const hasReturn = f.outputs && f.outputs.length > 0;
     const returnType = hasReturn ? 'float' : 'void';
     const params = this.buildFuncParams(f);
@@ -315,6 +347,7 @@ export class CppGenerator {
     }
 
     const edges = reconstructEdges(f);
+    const funcInferred = inferredTypes.get(f.id);
 
 
     // Track which pure nodes have been emitted (for auto declarations)
@@ -332,7 +365,7 @@ export class CppGenerator {
       });
 
       // Use auto with inline initialization
-      const expr = this.compileExpression(node, f, allFunctions, true, emitPure, edges);
+      const expr = this.compileExpression(node, f, allFunctions, true, emitPure, edges, funcInferred);
       lines.push(`    auto ${this.nodeResId(node.id)} = ${expr};`);
     };
 
@@ -343,7 +376,7 @@ export class CppGenerator {
     });
 
     for (const entry of entryNodes) {
-      this.emitChain('    ', entry, f, lines, new Set(), allFunctions, emitPure, edges);
+      this.emitChain('    ', entry, f, lines, new Set(), allFunctions, emitPure, edges, funcInferred);
     }
 
     lines.push('}');
@@ -398,7 +431,8 @@ export class CppGenerator {
     visited: Set<string>,
     allFunctions: FunctionDef[],
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    inferredTypes?: InferredTypes
   ) {
     let curr: Node | undefined = startNode;
 
@@ -415,14 +449,14 @@ export class CppGenerator {
       }
 
       if (curr.op === 'flow_branch') {
-        this.emitBranch(indent, curr, func, lines, visited, allFunctions, emitPure, edges);
+        this.emitBranch(indent, curr, func, lines, visited, allFunctions, emitPure, edges, inferredTypes);
         return;
       } else if (curr.op === 'flow_loop') {
-        this.emitLoop(indent, curr, func, lines, visited, allFunctions, emitPure, edges);
+        this.emitLoop(indent, curr, func, lines, visited, allFunctions, emitPure, edges, inferredTypes);
         return;
       } else if (curr.op === 'func_return') {
         // Store return value in context for readback
-        const retVal = this.resolveArg(curr, 'val', func, allFunctions, emitPure, edges);
+        const retVal = this.resolveArg(curr, 'val', func, allFunctions, emitPure, edges, inferredTypes);
         const hasReturn = func.outputs && func.outputs.length > 0;
         if (retVal && retVal !== '0.0f') {
           lines.push(`${indent}ctx.setReturnValue(${retVal});`);
@@ -436,7 +470,7 @@ export class CppGenerator {
         }
         return;
       } else {
-        this.emitNode(indent, curr, func, lines, allFunctions, emitPure, edges);
+        this.emitNode(indent, curr, func, lines, allFunctions, emitPure, edges, inferredTypes);
       }
 
       const outEdge = edges.find(e => e.from === curr!.id && e.portOut === 'exec_out' && e.type === 'execution');
@@ -452,17 +486,18 @@ export class CppGenerator {
     visited: Set<string>,
     allFunctions: FunctionDef[],
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    inferredTypes?: InferredTypes
   ) {
-    const cond = this.resolveArg(node, 'cond', func, allFunctions, emitPure, edges);
+    const cond = this.resolveArg(node, 'cond', func, allFunctions, emitPure, edges, inferredTypes);
     lines.push(`${indent}if (${cond}) {`);
     const trueEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_true' && e.type === 'execution');
     const trueNode = trueEdge ? func.nodes.find(n => n.id === trueEdge.to) : undefined;
-    if (trueNode) this.emitChain(indent + '    ', trueNode, func, lines, new Set(visited), allFunctions, emitPure, edges);
+    if (trueNode) this.emitChain(indent + '    ', trueNode, func, lines, new Set(visited), allFunctions, emitPure, edges, inferredTypes);
     lines.push(`${indent}} else {`);
     const falseEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_false' && e.type === 'execution');
     const falseNode = falseEdge ? func.nodes.find(n => n.id === falseEdge.to) : undefined;
-    if (falseNode) this.emitChain(indent + '    ', falseNode, func, lines, new Set(visited), allFunctions, emitPure, edges);
+    if (falseNode) this.emitChain(indent + '    ', falseNode, func, lines, new Set(visited), allFunctions, emitPure, edges, inferredTypes);
     lines.push(`${indent}}`);
   }
 
@@ -474,21 +509,22 @@ export class CppGenerator {
     visited: Set<string>,
     allFunctions: FunctionDef[],
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    inferredTypes?: InferredTypes
   ) {
-    const start = this.resolveArg(node, 'start', func, allFunctions, emitPure, edges);
-    const end = this.resolveArg(node, 'end', func, allFunctions, emitPure, edges);
+    const start = this.resolveArg(node, 'start', func, allFunctions, emitPure, edges, inferredTypes);
+    const end = this.resolveArg(node, 'end', func, allFunctions, emitPure, edges, inferredTypes);
     const loopVar = `loop_${node.id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
     lines.push(`${indent}for (int ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
 
     const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
     const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;
-    if (bodyNode) this.emitChain(indent + '    ', bodyNode, func, lines, new Set(visited), allFunctions, emitPure, edges);
+    if (bodyNode) this.emitChain(indent + '    ', bodyNode, func, lines, new Set(visited), allFunctions, emitPure, edges, inferredTypes);
     lines.push(`${indent}}`);
 
     const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
     const nextNode = compEdge ? func.nodes.find(n => n.id === compEdge.to) : undefined;
-    if (nextNode) this.emitChain(indent, nextNode, func, lines, visited, allFunctions, emitPure, edges);
+    if (nextNode) this.emitChain(indent, nextNode, func, lines, visited, allFunctions, emitPure, edges, inferredTypes);
   }
 
   private emitNode(
@@ -498,16 +534,17 @@ export class CppGenerator {
     lines: string[],
     allFunctions: FunctionDef[],
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    inferredTypes?: InferredTypes
   ) {
     if (node.op === 'var_set') {
-      const val = this.resolveArg(node, 'val', func, allFunctions, emitPure, edges);
+      const val = this.resolveArg(node, 'val', func, allFunctions, emitPure, edges, inferredTypes);
       const varId = node['var'];
       lines.push(`${indent}${this.sanitizeId(varId, 'var')} = ${val};`);
     } else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'];
-      const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
-      const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges);
+      const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges, inferredTypes);
+      const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges, inferredTypes);
       // Find buffer index and data type in resources
       const allRes = this.getAllResources();
       const bufferIdx = allRes.findIndex(r => r.id === bufferId);
@@ -521,6 +558,7 @@ export class CppGenerator {
         lines.push(`${indent}ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})] = ${val};`);
       }
     } else if (node.op === 'array_set') {
+      // (unchanged logic omitted for brevity, but arguments updated)
       // array_set modifies a variable in-place, need to find the actual variable name
       // Trace back through the data edge to find the var_get node
       const arrayEdge = edges.find(e => e.to === node.id && e.portIn === 'array' && e.type === 'data');
@@ -533,10 +571,10 @@ export class CppGenerator {
       }
       if (!varName) {
         // Fallback: resolve normally (might create a copy issue)
-        varName = this.resolveArg(node, 'array', func, allFunctions, emitPure, edges);
+        varName = this.resolveArg(node, 'array', func, allFunctions, emitPure, edges, inferredTypes);
       }
-      const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges);
-      const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges);
+      const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges, inferredTypes);
+      const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges, inferredTypes);
       lines.push(`${indent}${varName}[static_cast<size_t>(${idx})] = ${val};`);
     } else if (node.op === 'cmd_resize_resource') {
       const resId = node['resource'];
@@ -551,8 +589,8 @@ export class CppGenerator {
       const sizeVal = node['size'];
       if (Array.isArray(sizeVal) && sizeVal.length === 2) {
         // 2D size [width, height] for textures
-        const wExpr = typeof sizeVal[0] === 'number' ? String(sizeVal[0]) : this.resolveArg(node, 'size', func, allFunctions, emitPure, edges) + '[0]';
-        const hExpr = typeof sizeVal[1] === 'number' ? String(sizeVal[1]) : this.resolveArg(node, 'size', func, allFunctions, emitPure, edges) + '[1]';
+        const wExpr = typeof sizeVal[0] === 'number' ? String(sizeVal[0]) : this.resolveArg(node, 'size', func, allFunctions, emitPure, edges, inferredTypes) + '[0]';
+        const hExpr = typeof sizeVal[1] === 'number' ? String(sizeVal[1]) : this.resolveArg(node, 'size', func, allFunctions, emitPure, edges, inferredTypes) + '[1]';
         if (Array.isArray(clearVal)) {
           const clearItems = clearVal.map((v: number) => this.formatFloat(v)).join(', ');
           lines.push(`${indent}ctx.resizeResource2DWithClear(${resIdx}, ${wExpr}, ${hExpr}, {${clearItems}});`);
@@ -560,7 +598,7 @@ export class CppGenerator {
           lines.push(`${indent}ctx.resizeResource2D(${resIdx}, ${wExpr}, ${hExpr}, ${clearOnResize ? 'true' : 'false'});`);
         }
       } else {
-        const sizeExpr = this.resolveArg(node, 'size', func, allFunctions, emitPure, edges);
+        const sizeExpr = this.resolveArg(node, 'size', func, allFunctions, emitPure, edges, inferredTypes);
         lines.push(`${indent}ctx.resizeResource(${resIdx}, static_cast<int>(${sizeExpr}), ${stride}, ${clearOnResize ? 'true' : 'false'});`);
       }
     } else if (node.op === 'texture_store') {
@@ -574,14 +612,14 @@ export class CppGenerator {
       let dimX: string, dimY: string, dimZ: string;
       if (typeof dispatch === 'string') {
         // dispatch is a node reference (e.g., resource_get_size result)
-        const dispatchExpr = this.resolveArg(node, 'dispatch', func, allFunctions, emitPure, edges);
+        const dispatchExpr = this.resolveArg(node, 'dispatch', func, allFunctions, emitPure, edges, inferredTypes);
         dimX = `static_cast<int>(${dispatchExpr}[0])`;
         dimY = `static_cast<int>(${dispatchExpr}[1])`;
         dimZ = '1';
       } else if (Array.isArray(dispatch)) {
-        dimX = typeof dispatch[0] === 'number' ? String(dispatch[0]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_x']: dispatch[0] } as Node, 'dispatch_x', func, allFunctions, emitPure, edges);
-        dimY = typeof dispatch[1] === 'number' ? String(dispatch[1]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_y']: dispatch[1] } as Node, 'dispatch_y', func, allFunctions, emitPure, edges);
-        dimZ = typeof dispatch[2] === 'number' ? String(dispatch[2]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_z']: dispatch[2] } as Node, 'dispatch_z', func, allFunctions, emitPure, edges);
+        dimX = typeof dispatch[0] === 'number' ? String(dispatch[0]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_x']: dispatch[0] } as Node, 'dispatch_x', func, allFunctions, emitPure, edges, inferredTypes);
+        dimY = typeof dispatch[1] === 'number' ? String(dispatch[1]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_y']: dispatch[1] } as Node, 'dispatch_y', func, allFunctions, emitPure, edges, inferredTypes);
+        dimZ = typeof dispatch[2] === 'number' ? String(dispatch[2]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_z']: dispatch[2] } as Node, 'dispatch_z', func, allFunctions, emitPure, edges, inferredTypes);
       } else {
         dimX = '1'; dimY = '1'; dimZ = '1';
       }
@@ -601,9 +639,9 @@ export class CppGenerator {
           let argExpr: string;
           if (node['args'] && node['args'][input.id]) {
             const argId = node['args'][input.id];
-            argExpr = this.resolveArg({ ...node, [input.id]: argId } as Node, input.id, func, allFunctions, emitPure, edges);
+            argExpr = this.resolveArg({ ...node, [input.id]: argId } as Node, input.id, func, allFunctions, emitPure, edges, inferredTypes);
           } else if (node[input.id] !== undefined) {
-            argExpr = this.resolveArg(node, input.id, func, allFunctions, emitPure, edges);
+            argExpr = this.resolveArg(node, input.id, func, allFunctions, emitPure, edges, inferredTypes);
           } else {
             argExpr = '0.0f';
           }
@@ -634,7 +672,7 @@ export class CppGenerator {
       const target = node['target'];
       const vertex = node['vertex'];
       const fragment = node['fragment'];
-      const count = this.resolveArg(node, 'count', func, allFunctions, emitPure, edges);
+      const count = this.resolveArg(node, 'count', func, allFunctions, emitPure, edges, inferredTypes);
 
       const allRes = this.getAllResources();
       const targetIdx = allRes.findIndex(r => r.id === target);
@@ -642,7 +680,7 @@ export class CppGenerator {
       lines.push(`${indent}ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}));`);
     } else if (this.hasResult(node.op)) {
       // Executable nodes with results (like call_func) need auto declarations
-      const expr = this.compileExpression(node, func, allFunctions, true, emitPure, edges);
+      const expr = this.compileExpression(node, func, allFunctions, true, emitPure, edges, inferredTypes);
       lines.push(`${indent}auto ${this.nodeResId(node.id)} = ${expr};`);
     }
   }
@@ -653,12 +691,13 @@ export class CppGenerator {
     func: FunctionDef,
     allFunctions: FunctionDef[],
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    inferredTypes?: InferredTypes
   ): string {
     const edge = edges.find(e => e.to === node.id && (e.portIn === key || (key === 'val' && e.portIn === 'value')) && e.type === 'data');
     if (edge) {
       const source = func.nodes.find(n => n.id === edge.from);
-      if (source) return this.compileExpression(source, func, allFunctions, false, emitPure, edges);
+      if (source) return this.compileExpression(source, func, allFunctions, false, emitPure, edges, inferredTypes);
     }
 
     let val: any = node[key];
@@ -671,7 +710,7 @@ export class CppGenerator {
         if (this.ir?.inputs?.some(i => i.id === val)) return `ctx.getInput("${val}")`;
         const targetNode = func.nodes.find(n => n.id === val);
         if (targetNode && targetNode.id !== node.id) {
-          return this.compileExpression(targetNode, func, allFunctions, false, emitPure, edges);
+          return this.compileExpression(targetNode, func, allFunctions, false, emitPure, edges, inferredTypes);
         }
       }
       if (typeof val === 'number') return this.formatFloat(val);
@@ -685,22 +724,80 @@ export class CppGenerator {
     return '0.0f';
   }
 
+  private resolveCoercedArgs(
+    node: Node,
+    keys: string[],
+    mode: 'float' | 'unify',
+    func: FunctionDef,
+    allFunctions: FunctionDef[],
+    emitPure: (id: string) => void,
+    edges: Edge[],
+    inferredTypes?: InferredTypes
+  ): string[] {
+    const rawArgs = keys.map(k => this.resolveArg(node, k, func, allFunctions, emitPure, edges, inferredTypes));
+
+    if (!inferredTypes) return rawArgs;
+
+    const argTypes = keys.map(k => {
+      const argId = node[k];
+      return typeof argId === 'string' ? inferredTypes.get(argId) || 'float' : 'float';
+    });
+
+    if (process.env.CPP_DEBUG) {
+      console.log(`[CPP] resolveCoercedArgs op=${node.op} keys=${keys} types=${argTypes} mode=${mode}`);
+    }
+
+    if (mode === 'float') {
+      return rawArgs.map((arg, i) => {
+        const type = argTypes[i];
+        if (type === 'int' || type === 'uint' || type === 'boolean') {
+          return `static_cast<float>(${arg})`;
+        }
+        return arg;
+      });
+    } else if (mode === 'unify') {
+      const hasFloat = argTypes.some(t => t.includes('float'));
+      if (hasFloat) {
+        return rawArgs.map((arg, i) => {
+          const type = argTypes[i];
+          if (type === 'int' || type === 'uint' || type === 'boolean') {
+            return `static_cast<float>(${arg})`;
+          }
+          return arg;
+        });
+      }
+    }
+    return rawArgs;
+  }
+
   private compileExpression(
     node: Node,
     func: FunctionDef,
     allFunctions: FunctionDef[],
     forceEmit: boolean,
     emitPure: (id: string) => void,
-    edges: Edge[]
+    edges: Edge[],
+    inferredTypes?: InferredTypes
   ): string {
     if (!forceEmit && this.hasResult(node.op)) {
       emitPure(node.id);
       return this.nodeResId(node.id);
     }
 
-    const a = (k = 'a') => this.resolveArg(node, k, func, allFunctions, emitPure, edges);
-    const b = (k = 'b') => this.resolveArg(node, k, func, allFunctions, emitPure, edges);
-    const val = (k = 'val') => this.resolveArg(node, k, func, allFunctions, emitPure, edges);
+    const a = (key = 'a') => this.resolveArg(node, key, func, allFunctions, emitPure, edges, inferredTypes);
+    const b = (key = 'b') => this.resolveArg(node, key, func, allFunctions, emitPure, edges, inferredTypes);
+    const val = (key = 'val') => this.resolveArg(node, key, func, allFunctions, emitPure, edges, inferredTypes);
+
+    // Helper for simple binary/unary ops using coercion
+    const binaryOp = (op: string, mode: 'float' | 'unify') => {
+      const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], mode, func, allFunctions, emitPure, edges, inferredTypes);
+      return `${argA} ${op} ${argB}`;
+    };
+
+    const unaryOp = (op: string, mode: 'float' | 'unify', key = 'val') => {
+      const [arg] = this.resolveCoercedArgs(node, [key], mode, func, allFunctions, emitPure, edges, inferredTypes);
+      return `${op}(${arg})`;
+    };
 
     switch (node.op) {
       case 'var_get': {
@@ -737,58 +834,72 @@ export class CppGenerator {
       case 'math_e': return '2.71828182845904523536f';
 
       // Math ops - inlined for simpler code
-      case 'math_neg': return `(-(${val()}))`;
-      case 'math_abs': return `abs(${val()})`;
+      case 'math_neg': return `(-(${val()}))`; // Unary minus likely doesn't need coercion if val is float, but could for unification? 'unify' logic for unary? Usually no.
+      case 'math_abs': return unaryOp('abs', 'unify');
       case 'math_sign': return `applyUnary(${val()}, [](float x) -> float { return x > 0.0f ? 1.0f : (x < 0.0f ? -1.0f : 0.0f); })`;
-      case 'math_sin': return `sin(${val()})`;
-      case 'math_cos': return `cos(${val()})`;
-      case 'math_tan': return `tan(${val()})`;
-      case 'math_asin': return `asin(${val()})`;
-      case 'math_acos': return `acos(${val()})`;
-      case 'math_atan': return `atan(${val()})`;
-      case 'math_sinh': return `sinh(${val()})`;
-      case 'math_cosh': return `cosh(${val()})`;
-      case 'math_tanh': return `tanh(${val()})`;
-      case 'math_sqrt': return `sqrt(${val()})`;
-      case 'math_exp': return `exp(${val()})`;
-      case 'math_exp2': return `exp2(${val()})`;
-      case 'math_log': return `log(${val()})`;
-      case 'math_log2': return `log2(${val()})`;
-      case 'math_ceil': return `ceil(${val()})`;
-      case 'math_floor': return `floor(${val()})`;
-      case 'math_round': return `round(${val()})`;
-      case 'math_trunc': return `trunc(${val()})`;
-      case 'math_fract': { const v = val(); return `((${v}) - floor(${v}))`; }
+      case 'math_sin': return unaryOp('sin', 'float');
+      case 'math_cos': return unaryOp('cos', 'float');
+      case 'math_tan': return unaryOp('tan', 'float');
+      case 'math_asin': return unaryOp('asin', 'float');
+      case 'math_acos': return unaryOp('acos', 'float');
+      case 'math_atan': return unaryOp('atan', 'float');
+      case 'math_sinh': return unaryOp('sinh', 'float');
+      case 'math_cosh': return unaryOp('cosh', 'float');
+      case 'math_tanh': return unaryOp('tanh', 'float');
+      case 'math_sqrt': return unaryOp('sqrt', 'float');
+      case 'math_exp': return unaryOp('exp', 'float');
+      case 'math_exp2': return unaryOp('exp2', 'float');
+      case 'math_log': return unaryOp('log', 'float');
+      case 'math_log2': return unaryOp('log2', 'float');
+      case 'math_ceil': return unaryOp('ceil', 'float');
+      case 'math_floor': return unaryOp('floor', 'float');
+      case 'math_round': return unaryOp('round', 'float');
+      case 'math_trunc': return unaryOp('trunc', 'float');
+      case 'math_fract': { const v = unaryOp('', 'float', 'val'); return `((${v}) - floor(${v}))`; }
 
-      case 'math_add': return `((${a()}) + (${b()}))`;
-      case 'math_sub': return `((${a()}) - (${b()}))`;
-      case 'math_mul': return `((${a()}) * (${b()}))`;
-      case 'math_div': return `((${a()}) / (${b()}))`;
-      case 'math_mod': return `fmod(${a()}, ${b()})`;
-      case 'math_pow': return `pow(${a()}, ${b()})`;
-      case 'math_min': return `std::min(${a()}, ${b()})`;
-      case 'math_max': return `std::max(${a()}, ${b()})`;
-      case 'math_atan2': return `atan2(${a()}, ${b()})`;
-      case 'math_step': { const edge = a('edge'); const v = a('val'); return `((${v}) >= (${edge}) ? 1.0f : 0.0f)`; }
+      case 'math_add': return `(${binaryOp('+', 'unify')})`;
+      case 'math_sub': return `(${binaryOp('-', 'unify')})`;
+      case 'math_mul': return `(${binaryOp('*', 'unify')})`;
+      case 'math_div': return `(${binaryOp('/', 'unify')})`;
+      case 'math_mod': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `fmod(${argA}, ${argB})`; }
+      case 'math_pow': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'float', func, allFunctions, emitPure, edges, inferredTypes); return `pow(${argA}, ${argB})`; }
+      case 'math_min': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `std::min(${argA}, ${argB})`; }
+      case 'math_max': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `std::max(${argA}, ${argB})`; }
+      case 'math_atan2': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'float', func, allFunctions, emitPure, edges, inferredTypes); return `atan2(${argA}, ${argB})`; }
+      case 'math_step': { const [edge, v] = this.resolveCoercedArgs(node, ['edge', 'val'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `((${v}) >= (${edge}) ? 1.0f : 0.0f)`; }
       case 'math_smoothstep': {
-        const e0 = a('edge0'); const e1 = a('edge1'); const v = a('val');
+        const [e0, e1, v] = this.resolveCoercedArgs(node, ['edge0', 'edge1', 'val'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
         return `([](float e0, float e1, float x) { float t = std::max(0.0f, std::min(1.0f, (x - e0) / (e1 - e0))); return t * t * (3.0f - 2.0f * t); }(${e0}, ${e1}, ${v}))`;
       }
       case 'math_mix':
-      case 'math_lerp': return `([](auto a_, auto b_, auto t_) { return a_ + (b_ - a_) * t_; }(${a()}, ${b()}, ${a('t')}))`;
-      case 'math_clamp': return `clamp_val(${a('val')}, ${a('min')}, ${a('max')})`;
-      case 'math_mad': return `((${a()}) * (${b()}) + (${a('c')}))`;
-      case 'math_select': return `((${a('cond')}) != 0.0f ? (${a('true')}) : (${a('false')}))`;
+      case 'math_lerp': {
+        const [argA, argB, argT] = this.resolveCoercedArgs(node, ['a', 'b', 't'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
+        return `([](auto a_, auto b_, auto t_) { return a_ + (b_ - a_) * t_; }(${argA}, ${argB}, ${argT}))`;
+      }
+      case 'math_clamp': {
+        const [val, min, max] = this.resolveCoercedArgs(node, ['val', 'min', 'max'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
+        return `clamp_val(${val}, ${min}, ${max})`;
+      }
+      case 'math_mad': {
+        const [argA, argB, argC] = this.resolveCoercedArgs(node, ['a', 'b', 'c'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
+        return `((${argA}) * (${argB}) + (${argC}))`;
+      }
+      case 'math_select': {
+        const cond = this.resolveArg(node, 'cond', func, allFunctions, emitPure, edges, inferredTypes);
+        // resolveCoercedArgs for 'true' and 'false' branches to unify them?
+        const [t, f] = this.resolveCoercedArgs(node, ['true', 'false'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
+        return `((${cond}) != 0.0f ? (${t}) : (${f}))`;
+      }
 
       // Comparisons
-      case 'math_gt': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x > y ? 1.0f : 0.0f; })`;
-      case 'math_lt': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x < y ? 1.0f : 0.0f; })`;
+      case 'math_gt': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `applyBinary(${argA}, ${argB}, [](float x, float y) -> float { return x > y ? 1.0f : 0.0f; })`; }
+      case 'math_lt': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `applyBinary(${argA}, ${argB}, [](float x, float y) -> float { return x < y ? 1.0f : 0.0f; })`; }
       case 'math_ge':
-      case 'math_gte': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x >= y ? 1.0f : 0.0f; })`;
+      case 'math_gte': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `applyBinary(${argA}, ${argB}, [](float x, float y) -> float { return x >= y ? 1.0f : 0.0f; })`; }
       case 'math_le':
-      case 'math_lte': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x <= y ? 1.0f : 0.0f; })`;
-      case 'math_eq': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x == y ? 1.0f : 0.0f; })`;
-      case 'math_neq': return `applyBinary(${a()}, ${b()}, [](float x, float y) -> float { return x != y ? 1.0f : 0.0f; })`;
+      case 'math_lte': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `applyBinary(${argA}, ${argB}, [](float x, float y) -> float { return x <= y ? 1.0f : 0.0f; })`; }
+      case 'math_eq': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `applyBinary(${argA}, ${argB}, [](float x, float y) -> float { return x == y ? 1.0f : 0.0f; })`; }
+      case 'math_neq': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `applyBinary(${argA}, ${argB}, [](float x, float y) -> float { return x != y ? 1.0f : 0.0f; })`; }
 
       // Logic
       case 'math_and': return `((${a()}) != 0.0f && (${b()}) != 0.0f ? 1.0f : 0.0f)`;
@@ -800,6 +911,19 @@ export class CppGenerator {
       case 'math_is_nan': return `applyUnary(${val()}, [](float x) -> float { return std::isnan(x) ? 1.0f : 0.0f; })`;
       case 'math_is_inf': return `applyUnary(${val()}, [](float x) -> float { return std::isinf(x) ? 1.0f : 0.0f; })`;
       case 'math_is_finite': return `applyUnary(${val()}, [](float x) -> float { return std::isfinite(x) ? 1.0f : 0.0f; })`;
+
+      // Helper functions for vectors
+      case 'vec_dot': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `dot(${argA}, ${argB})`; }
+      case 'vec_cross': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `cross(${argA}, ${argB})`; }
+      case 'vec_length': return `length(${a()})`;
+      case 'vec_distance': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `distance(${argA}, ${argB})`; }
+      case 'vec_normalize': return `normalize(${a()})`;
+      case 'vec_faceforward': { const [n, i, nRef] = this.resolveCoercedArgs(node, ['N', 'I', 'Nref'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `faceforward(${n}, ${i}, ${nRef})`; }
+      case 'vec_reflect': { const [i, n] = this.resolveCoercedArgs(node, ['I', 'N'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `reflect(${i}, ${n})`; }
+      case 'vec_refract': { const [i, n, eta] = this.resolveCoercedArgs(node, ['I', 'N', 'eta'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `refract(${i}, ${n}, ${eta})`; }
+
+      // ... existing code ...
+
       case 'math_mantissa': {
         const v = val(); return `([](float x) { int e; return std::frexp(x, &e); }(${v}))`;
       }
@@ -844,21 +968,9 @@ export class CppGenerator {
         return `std::array<float, 16>{${items.join(', ')}}`;
       }
 
-      case 'vec_dot': return `vec_dot(${a()}, ${b()})`;
-      case 'vec_length': return `vec_length(${a()})`;
-      case 'vec_normalize': return `vec_normalize(${a()})`;
-      case 'vec_mix': return `vec_mix_impl(${a()}, ${b()}, ${a('t')})`;
-      case 'vec_cross': {
-        const va = a(); const vb = b();
-        return `([](auto a_, auto b_) -> std::array<float, 3> { return {a_[1]*b_[2]-a_[2]*b_[1], a_[2]*b_[0]-a_[0]*b_[2], a_[0]*b_[1]-a_[1]*b_[0]}; }(${va}, ${vb}))`;
-      }
-      case 'vec_distance': {
-        const va = a(); const vb = b();
-        return `([](auto a_, auto b_) { float s = 0; for (size_t i = 0; i < a_.size(); ++i) { float d = a_[i] - b_[i]; s += d*d; } return std::sqrt(s); }(${va}, ${vb}))`;
-      }
-      case 'vec_reflect': {
-        const va = a(); const vn = a('n');
-        return `([](auto i_, auto n_) { float d = 2.0f * vec_dot(i_, n_); auto result = i_; for (size_t j = 0; j < i_.size(); ++j) result[j] = i_[j] - d * n_[j]; return result; }(${va}, ${vn}))`;
+      case 'vec_mix': {
+        const [argA, argB, argT] = this.resolveCoercedArgs(node, ['a', 'b', 't'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
+        return `vec_mix_impl(${argA}, ${argB}, ${argT})`;
       }
 
       case 'vec_swizzle': {
@@ -1079,74 +1191,55 @@ export class CppGenerator {
    * Emit code to flatten a C++ expression of a given IR type into _shader_args vector.
    * Handles scalars, vectors, matrices, structs, and arrays recursively.
    */
-  private emitArgFlattening(indent: string, argExpr: string, irType: string, lines: string[]): void {
-    switch (irType) {
-      case 'float':
-        lines.push(`${indent}_shader_args.push_back(${argExpr});`);
-        break;
-      case 'int':
-      case 'i32':
-        lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}));`);
-        break;
-      case 'bool':
-        lines.push(`${indent}_shader_args.push_back(${argExpr} ? 1.0f : 0.0f);`);
-        break;
-      case 'float2':
-      case 'float3':
-      case 'float4':
-      case 'float3x3':
-      case 'float4x4':
-        lines.push(`${indent}_shader_args.insert(_shader_args.end(), ${argExpr}.begin(), ${argExpr}.end());`);
-        break;
-      default: {
-        // Check for struct type
-        const structDef = this.ir?.structs?.find(s => s.id === irType);
-        if (structDef) {
-          for (const member of structDef.members || []) {
-            const memberExpr = `${argExpr}.${this.sanitizeId(member.name, 'field')}`;
-            this.emitArgFlattening(indent, memberExpr, member.type, lines);
-          }
-          break;
-        }
-        // Check for fixed array: array<T, N>
-        const arrayMatch = irType.match(/array<([^,]+),\s*(\d+)>/);
-        if (arrayMatch) {
-          const elemType = arrayMatch[1].trim();
-          if (['float', 'int', 'i32', 'bool'].includes(elemType)) {
-            lines.push(`${indent}for (auto& _e : ${argExpr}) _shader_args.push_back(static_cast<float>(_e));`);
-          } else {
-            const len = parseInt(arrayMatch[2]);
-            for (let i = 0; i < len; i++) {
-              this.emitArgFlattening(indent, `${argExpr}[${i}]`, elemType, lines);
-            }
-          }
-          break;
-        }
-        // Check for dynamic array: T[]
-        const dynMatch = irType.match(/^(.+)\[\]$/);
-        if (dynMatch) {
-          const elemType = dynMatch[1].trim();
-          // Push length first, then flatten each element
-          lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}.size()));`);
-          const elemStructDef = this.ir?.structs?.find(s => s.id === elemType);
-          if (elemStructDef) {
-            // Struct element: flatten each member per element
-            lines.push(`${indent}for (size_t _i = 0; _i < ${argExpr}.size(); _i++) {`);
-            for (const member of elemStructDef.members || []) {
-              const memberExpr = `${argExpr}[_i].${this.sanitizeId(member.name, 'field')}`;
-              this.emitArgFlattening(`${indent}    `, memberExpr, member.type, lines);
-            }
-            lines.push(`${indent}}`);
-          } else {
-            lines.push(`${indent}for (size_t _i = 0; _i < ${argExpr}.size(); _i++) {`);
-            this.emitArgFlattening(`${indent}    `, `${argExpr}[_i]`, elemType, lines);
-            lines.push(`${indent}}`);
-          }
-          break;
-        }
-        // Fallback: try as float
-        lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}));`);
+  private emitArgFlattening(indent: string, argExpr: string, irType: string, lines: string[]) {
+    // Helper to flatten vector/matrix types into float array for shader args
+    const structDef = this.ir?.structs?.find(s => s.id === irType);
+    if (structDef) {
+      // Struct - flatten each member
+      for (const member of structDef.members) {
+        this.emitArgFlattening(indent, `${argExpr}.${this.sanitizeId(member.name, 'field')}`, member.type, lines);
       }
+      return;
+    }
+
+    const arrayMatch = irType.match(/^array<([^,]+),(\d+)>$/);
+    if (arrayMatch) {
+      const elemType = arrayMatch[1];
+      const len = parseInt(arrayMatch[2]);
+      for (let i = 0; i < len; i++) {
+        this.emitArgFlattening(indent, `${argExpr}[${i}]`, elemType, lines);
+      }
+      return;
+    }
+
+    // Dynamic array (shouldn't happen in shader args usually, but handle just in case)
+    const dynMatch = irType.match(/^array<(.+)>$/);
+    if (dynMatch) {
+      // Cannot flatten dynamic array at compile time for constant buffer
+      lines.push(`${indent}// Warning: Dynamic array flattening not fully supported for shader args`);
+      return;
+    }
+
+    // Basic types
+    if (irType === 'float4') {
+      lines.push(`${indent}_shader_args.push_back(${argExpr}[0]);`);
+      lines.push(`${indent}_shader_args.push_back(${argExpr}[1]);`);
+      lines.push(`${indent}_shader_args.push_back(${argExpr}[2]);`);
+      lines.push(`${indent}_shader_args.push_back(${argExpr}[3]);`);
+    } else if (irType === 'float3') {
+      lines.push(`${indent}_shader_args.push_back(${argExpr}[0]);`);
+      lines.push(`${indent}_shader_args.push_back(${argExpr}[1]);`);
+      lines.push(`${indent}_shader_args.push_back(${argExpr}[2]);`);
+    } else if (irType === 'float2') {
+      lines.push(`${indent}_shader_args.push_back(${argExpr}[0]);`);
+      lines.push(`${indent}_shader_args.push_back(${argExpr}[1]);`);
+    } else if (irType === 'int' || irType === 'uint' || irType === 'boolean') {
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}));`);
+    } else {
+      // float or unknown
+      lines.push(`${indent}_shader_args.push_back(${argExpr});`);
     }
   }
+
+
 }

@@ -149,15 +149,33 @@ export const CppMetalBackend: TestBackend = {
     const metallibArg = metallibPath ? `"${metallibPath}" ` : '';
     const inputArgsStr = inputArgs.length > 0 ? inputArgs.join(' ') + ' ' : '';
     let output: string;
-    try {
-      output = execSync(`"${executablePath}" ${metallibArg}${inputArgsStr}${dataFileArg}${resourceSpecs.join(' ')}`, {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        maxBuffer: 64 * 1024 * 1024, // 64MB for large texture outputs
-      });
-    } catch (e: any) {
-      throw new Error(`C++ execution failed: ${e.stderr || e.message}`);
+
+    // Check if spawnSync is available (it is in node)
+    const { spawnSync } = require('child_process');
+
+    // Construct args array for spawnSync to avoid shell parsing issues if possible, but here we used large string
+    // Let's stick to shell execution but use spawnSync to get stderr
+    const cmdStr = `"${executablePath}" ${metallibArg}${inputArgsStr}${dataFileArg}${resourceSpecs.join(' ')}`;
+
+    const res = spawnSync(cmdStr, {
+      shell: true,
+      encoding: 'utf-8',
+      maxBuffer: 64 * 1024 * 1024
+    });
+
+    if (res.error) {
+      throw new Error(`C++ execution failed to spawn: ${res.error.message}`);
     }
+
+    if (res.stderr && res.stderr.length > 0) {
+      console.error(`[CppMetal Stderr]: ${res.stderr}`);
+    }
+
+    if (res.status !== 0) {
+      throw new Error(`C++ execution failed with status ${res.status}: ${res.stderr}`);
+    }
+
+    output = res.stdout;
 
     // 9. Parse JSON output
     const result = JSON.parse(output.trim());
