@@ -1,5 +1,5 @@
 
-#import "AAPLOpenGLMetalInteropTexture.h"
+#import "InteropTexture.h"
 #import <AppKit/AppKit.h>
 #import <Cocoa/Cocoa.h>
 #import <Foundation/Foundation.h>
@@ -111,15 +111,6 @@ int main(int argc, const char *argv[]) {
     }
 
     // Get the entry point
-    // Note: FreeFrame usually exports 'plugMain' as a C symbol.
-    // In a bundle, we can look it up via the bundle's principal class or just
-    // dlsym on the executable handle. However, NSBundle doesn't expose the
-    // handle directly easily for dlsym usage without some tricks or using
-    // CFBundle. A more robust way for FFGL on macOS is often just dlopen the
-    // executable inside MacOS folder, but NSBundle is "canonical" for
-    // resources. Let's use dlsym on the handle we can get from
-    // dlopen(bundle.executablePath).
-
     void *handle =
         dlopen([[bundle executablePath] UTF8String], RTLD_LAZY | RTLD_LOCAL);
     if (!handle) {
@@ -225,20 +216,19 @@ int main(int argc, const char *argv[]) {
     // We provide up to 2 input textures.
     const int numInputs = 2;
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-    AAPLOpenGLMetalInteropTexture *interopInputs[numInputs];
+
+    // Use C++ InteropTexture
+    std::unique_ptr<InteropTexture> interopInputs[numInputs];
     FFGLTextureStruct inputTextureStr[numInputs];
     FFGLTextureStruct *inputTextures[numInputs];
 
     for (int i = 0; i < numInputs; ++i) {
-      interopInputs[i] = [[AAPLOpenGLMetalInteropTexture alloc]
-          initWithMetalDevice:device
-                openGLContext:context
-              createOpenGLFBO:NO
-             metalPixelFormat:MTLPixelFormatBGRA8Unorm
-                        width:width
-                       height:height];
+      interopInputs[i] = std::make_unique<InteropTexture>(
+          device, context,
+          false, // createOpenGLFBO
+          MTLPixelFormatBGRA8Unorm, width, height);
 
-      glBindTexture(GL_TEXTURE_RECTANGLE, interopInputs[i].openGLTexture);
+      glBindTexture(GL_TEXTURE_RECTANGLE, interopInputs[i]->getOpenGLTexture());
       // Fill with different colors for testing (e.g. Red for 0, Green for 1)
       std::vector<unsigned char> data(width * height * 4);
       for (int y = 0; y < height; ++y) {
@@ -263,15 +253,15 @@ int main(int argc, const char *argv[]) {
                       GL_UNSIGNED_BYTE, data.data());
 
       if (registerTex) {
-        registerTex(interopInputs[i].openGLTexture,
-                    (__bridge void *)interopInputs[i].metalTexture);
+        registerTex(interopInputs[i]->getOpenGLTexture(),
+                    (__bridge void *)interopInputs[i]->getMetalTexture());
       }
 
       inputTextureStr[i].Width = width;
       inputTextureStr[i].Height = height;
       inputTextureStr[i].HardwareWidth = width;
       inputTextureStr[i].HardwareHeight = height;
-      inputTextureStr[i].Handle = interopInputs[i].openGLTexture;
+      inputTextureStr[i].Handle = interopInputs[i]->getOpenGLTexture();
       inputTextures[i] = &inputTextureStr[i];
     }
 
@@ -316,11 +306,7 @@ int main(int argc, const char *argv[]) {
 
     // 9. Cleanup
     glDeleteTextures(1, &texColor);
-    // AAPLOpenGLMetalInteropTexture handles its own GL texture cleanup?
-    // Actually it doesn't always, let's check.
-    // It's safer to let it dealloc.
-    for (int i = 0; i < numInputs; ++i)
-      interopInputs[i] = nil;
+    // InteropTexture destructor handles its own cleanup via unique_ptr
     glDeleteFramebuffers(1, &fbo);
 
     plugMain(FF_DEINSTANTIATE_GL, (FFMixed){.PointerValue = nullptr},

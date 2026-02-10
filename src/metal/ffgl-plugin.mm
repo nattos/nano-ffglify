@@ -25,7 +25,7 @@ void RegisterMetalTextureForGL(unsigned int glHandle, void *mtlTexturePtr);
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 
-#import "AAPLOpenGLMetalInteropTexture.h"
+#import "InteropTexture.h"
 #include <FFGL.h>
 #include <FFGLLib.h>
 #include <FFGLPluginSDK.h>
@@ -369,8 +369,28 @@ public:
     _device = MTLCreateSystemDefaultDevice();
     _commandQueue = [_device newCommandQueue];
 
-    NSBundle *bundle =
-        [NSBundle bundleForClass:[AAPLOpenGLMetalInteropTexture class]];
+    // Note: InteropTexture no longer is an ObjC class bundle reference, so we
+    // can't bundleForClass But we still need the default.metallib. It should be
+    // in the main bundle.
+    NSBundle *bundle = [NSBundle mainBundle];
+    // Or if we need the bundle corresponding to the plugin, we might need a
+    // different approach if we aren't using a class But since this code runs
+    // INSIDE the bundle, mainBundle might be the host app? Usually [NSBundle
+    // bundleForClass:[self class]] works if NanoPlugin was an ObjC class, but
+    // it's C++. We can use dladdr to find the bundle.
+
+    Dl_info info;
+    // Use func_main as a symbol reference since PluginInfo is not yet defined
+    if (dladdr((const void *)&func_main, &info)) {
+      bundle = [NSBundle
+          bundleWithPath:[[NSString stringWithUTF8String:info.dli_fname]
+                             stringByDeletingLastPathComponent]];
+      NSString *execPath = [NSString stringWithUTF8String:info.dli_fname];
+      NSString *bundlePath = [[[execPath stringByDeletingLastPathComponent]
+          stringByDeletingLastPathComponent] stringByDeletingLastPathComponent];
+      bundle = [NSBundle bundleWithPath:bundlePath];
+    }
+
     NSError *error = nil;
     _library = [_device newDefaultLibraryWithBundle:bundle error:&error];
     if (!_library) {
@@ -404,6 +424,7 @@ public:
     _blitShader2D.Free();
     _screenQuad.Free();
     _inputInterops.clear();
+    _interopTexture.reset();
     return FF_SUCCESS;
   }
 
@@ -434,15 +455,13 @@ public:
         fs << buf << std::endl;
       // logCount incremented later below
     }
-    if (!_interopTexture || _interopTexture.width != targetWidth ||
-        _interopTexture.height != targetHeight) {
-      _interopTexture = [[AAPLOpenGLMetalInteropTexture alloc]
-          initWithMetalDevice:_device
-                openGLContext:[NSOpenGLContext currentContext]
-              createOpenGLFBO:YES
-             metalPixelFormat:MTLPixelFormatBGRA8Unorm
-                        width:targetWidth
-                       height:targetHeight];
+
+    // Updated: using C++ unique_ptr instead of ObjC alloc init
+    if (!_interopTexture || _interopTexture->getWidth() != targetWidth ||
+        _interopTexture->getHeight() != targetHeight) {
+      _interopTexture = std::make_unique<InteropTexture>(
+          _device, [NSOpenGLContext currentContext], true,
+          MTLPixelFormatBGRA8Unorm, targetWidth, targetHeight);
     }
 
     // Force HostFBO binding if provided
@@ -472,7 +491,7 @@ public:
 
     // 1. Manage input interops using ACTIVE dimensions to avoid stretch
     if (_inputInterops.size() < pGL->numInputTextures) {
-      _inputInterops.resize(pGL->numInputTextures, nil);
+      _inputInterops.resize(pGL->numInputTextures);
     }
     for (unsigned int i = 0; i < pGL->numInputTextures && i < MAX_INPUTS; ++i) {
       if (pGL->inputTextures[i] != nullptr) {
@@ -493,27 +512,17 @@ public:
             fs << buf << std::endl;
         }
 
-        if (!_inputInterops[i] || _inputInterops[i].width != activeW ||
-            _inputInterops[i].height != activeH) {
-          _inputInterops[i] = [[AAPLOpenGLMetalInteropTexture alloc]
-              initWithMetalDevice:_device
-                    openGLContext:[NSOpenGLContext currentContext]
-                  createOpenGLFBO:YES
-                 metalPixelFormat:MTLPixelFormatBGRA8Unorm
-                            width:activeW
-                           height:activeH];
+        if (!_inputInterops[i] || _inputInterops[i]->getWidth() != activeW ||
+            _inputInterops[i]->getHeight() != activeH) {
+          _inputInterops[i] = std::make_unique<InteropTexture>(
+              _device, [NSOpenGLContext currentContext], true,
+              MTLPixelFormatBGRA8Unorm, activeW, activeH);
         }
 
         // Blit host -> interop (1:1 active area)
         {
           GLenum target = GL_TEXTURE_RECTANGLE;
           // Intelligent Target Detection:
-          // If HW size != Logical Size, it implies a padded texture, commonly
-          // GL_TEXTURE_2D (normalized coords) or a Rectangle texture with
-          // padding (uncommon for standard NPOT support). Resolume typically
-          // uses GL_TEXTURE_2D for layers. Standard FFGL convention: if
-          // (HardwareWidth > Width || HardwareHeight > Height) -> Likely
-          // GL_TEXTURE_2D
           if (pInput->HardwareWidth > pInput->Width ||
               pInput->HardwareHeight > pInput->Height) {
             target = GL_TEXTURE_2D;
@@ -522,7 +531,7 @@ public:
           auto &activeShader =
               (target == GL_TEXTURE_2D) ? _blitShader2D : _blitShader;
 
-          native_gl::ScopedFBO fboBinding(_inputInterops[i].openGLFBO);
+          native_gl::ScopedFBO fboBinding(_inputInterops[i]->getOpenGLFBO());
           native_gl::ScopedShader shaderBinding(activeShader.program);
           native_gl::ScopedSampler activateSampler(0);
           native_gl::ScopedTexture textureBinding(target, pInput->Handle);
@@ -556,17 +565,17 @@ public:
     outputState.width = targetWidth;
     outputState.height = targetHeight;
     outputState.isExternal = true;
-    outputState.externalTexture = _interopTexture.metalTexture;
+    outputState.externalTexture = _interopTexture->getMetalTexture();
 
     std::vector<std::unique_ptr<ResourceState>> inputStates;
     std::vector<ResourceState *> inputPtrs;
     for (unsigned int i = 0; i < pGL->numInputTextures && i < MAX_INPUTS; ++i) {
-      if (_inputInterops[i] != nil) {
+      if (_inputInterops[i] != nullptr) {
         auto inputState = std::make_unique<ResourceState>();
-        inputState->width = _inputInterops[i].width;
-        inputState->height = _inputInterops[i].height;
+        inputState->width = _inputInterops[i]->getWidth();
+        inputState->height = _inputInterops[i]->getHeight();
         inputState->isExternal = true;
-        inputState->externalTexture = _inputInterops[i].metalTexture;
+        inputState->externalTexture = _inputInterops[i]->getMetalTexture();
         inputPtrs.push_back(inputState.get());
         inputStates.push_back(std::move(inputState));
       }
@@ -582,15 +591,16 @@ public:
 
       native_gl::ScopedShader shaderBinding(_blitShader.program);
       native_gl::ScopedSampler activateSampler(0);
-      native_gl::ScopedTexture textureBinding(GL_TEXTURE_RECTANGLE,
-                                              _interopTexture.openGLTexture);
+      native_gl::ScopedTexture textureBinding(
+          GL_TEXTURE_RECTANGLE, _interopTexture->getOpenGLTexture());
 
       glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
       glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
       _blitShader.SetInt("InputTexture", 0);
-      FFGLTexCoords maxCoords = (FFGLTexCoords){(float)_interopTexture.width,
-                                                (float)_interopTexture.height};
+      FFGLTexCoords maxCoords =
+          (FFGLTexCoords){(float)_interopTexture->getWidth(),
+                          (float)_interopTexture->getHeight()};
       _blitShader.SetVec2("MaxUV", maxCoords.s, maxCoords.t);
       _screenQuad.Draw();
     }
@@ -617,7 +627,7 @@ private:
   id<MTLDevice> _device;
   id<MTLCommandQueue> _commandQueue;
   id<MTLLibrary> _library;
-  AAPLOpenGLMetalInteropTexture *_interopTexture;
+  std::unique_ptr<InteropTexture> _interopTexture;
   FFGLViewportStruct _currentViewport = {0, 0, 640, 480};
 
   std::map<unsigned int, float> _params;
@@ -625,7 +635,8 @@ private:
   native_gl::GLShader _blitShader;
   native_gl::GLShader _blitShader2D;
   native_gl::GLQuad _screenQuad;
-  std::vector<AAPLOpenGLMetalInteropTexture *> _inputInterops;
+
+  std::vector<std::unique_ptr<InteropTexture>> _inputInterops;
 
   std::vector<ResourceState> _internalResources;
 };

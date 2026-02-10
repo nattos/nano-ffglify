@@ -39,7 +39,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     const cmd = generateCppCompileCmd({
       sourcePaths: [
         runnerSource,
-        path.join(repoRoot, 'tmp/AAPLOpenGLMetalInteropTexture.m')
+        path.join(repoRoot, 'src/metal/InteropTexture.m')
       ],
       outputPath: runnerPath,
       extraFlags: [`-I"${ffglSdkDir}"`, `-I"${path.join(repoRoot, 'tmp')}"`, '-fobjc-arc'],
@@ -256,4 +256,97 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     expect(json.id).toBe('SMIX');
   });
 
+  test('should compile ISOLATED plugin with relative paths and staged deps', () => {
+    // This test simulates the "export to folder" case where we copy everything to a temp dir and build from there.
+
+    const stageDir = path.join(buildDir, 'stage_mix');
+    if (fs.existsSync(stageDir)) fs.rmSync(stageDir, { recursive: true, force: true });
+    fs.mkdirSync(stageDir, { recursive: true });
+
+    // 1. Stage Dependencies
+    const ffglSdkSrc = path.join(repoRoot, 'modules/ffgl/source/lib');
+    const stageSdk = path.join(stageDir, 'ffgl-sdk');
+    fs.cpSync(ffglSdkSrc, stageSdk, { recursive: true });
+
+    const pluginSrc = path.join(repoRoot, 'src/metal/ffgl-plugin.mm');
+    const stageSrc = path.join(stageDir, 'src');
+    fs.mkdirSync(stageSrc, { recursive: true });
+    fs.copyFileSync(pluginSrc, path.join(stageSrc, 'ffgl-plugin.mm'));
+
+    const interopSrc = path.join(repoRoot, 'src/metal/InteropTexture.m');
+    fs.copyFileSync(interopSrc, path.join(stageSrc, 'interop.m'));
+    // Interop header usually next to it or in tmp, checking include...
+    const interopHeader = path.join(repoRoot, 'src/metal/InteropTexture.h');
+    if (fs.existsSync(interopHeader)) fs.copyFileSync(interopHeader, path.join(stageSrc, 'InteropTexture.h'));
+
+    // Copy intrinsics.incl.h
+    const intrinsicsSrc = path.join(repoRoot, 'src/metal/intrinsics.incl.h');
+    fs.copyFileSync(intrinsicsSrc, path.join(stageSrc, 'intrinsics.incl.h'));
+
+    // Generated files
+    // Use NOISE_SHADER logic again for simplicity or pass previous generated logic
+    const genSrc = path.join(stageDir, 'generated');
+    fs.mkdirSync(genSrc, { recursive: true });
+    // We reuse the generated logic from previous tests which should be in `generatedDir` default location,
+    // let's copy them to stage
+    fs.copyFileSync(path.join(generatedDir, 'logic.cpp'), path.join(genSrc, 'logic.cpp'));
+    fs.copyFileSync(path.join(generatedDir, 'shaders.metal'), path.join(genSrc, 'shaders.metal'));
+
+
+    // 2. Generate Build Script using RELATIVE PATHS
+    const steps: string[] = [];
+
+    // Paths relative to `stageDir` (where the script will live)
+    const relSdk = './ffgl-sdk';
+    const relSrc = './src';
+    const relGen = './generated';
+    const relBuild = './build';
+
+    // Metal Compile
+    // Note: metal compile currently takes absolute paths or paths relative to CWD.
+    // The script will run from `stageDir`.
+    // generateMetalCompileCmds logic: `mkdir -p outputDir`
+    const metalCmds = generateMetalCompileCmds(`${relGen}/shaders.metal`, relBuild);
+    steps.push(...metalCmds);
+
+    // FFGL Compile
+    const bundlePath = `${relBuild}/IsoNoise.bundle`;
+    const ffglCmds = generateFFGLPluginCmds({
+      outputPath: bundlePath,
+      name: 'Iso Noise',
+      pluginId: 'ISON',
+      textureInputCount: 0,
+      internalResourceCount: 0,
+      paths: {
+        ffglSdkDir: relSdk,
+        pluginSource: `${relSrc}/ffgl-plugin.mm`,
+        interopSource: `${relSrc}/interop.m`,
+        additionalIncludes: [relSrc, relGen, '.']
+      }
+    });
+    steps.push(...ffglCmds);
+
+    // Copy Metallib
+    steps.push(`mkdir -p "${bundlePath}/Contents/Resources"`);
+    steps.push(`cp "${relBuild}/shaders.metallib" "${bundlePath}/Contents/Resources/default.metallib"`);
+
+    // 3. Write and Execute Script
+    const scriptPath = path.join(stageDir, 'build_isolated.sh');
+    fs.writeFileSync(scriptPath, generateBuildScript(steps));
+    fs.chmodSync(scriptPath, '755');
+
+    // Run in stageDir
+    execSync(`./build_isolated.sh`, { cwd: stageDir, stdio: 'inherit' });
+
+    // 4. Verify
+    const finalBundlePath = path.join(stageDir, 'build/IsoNoise.bundle');
+    expect(fs.existsSync(finalBundlePath)).toBe(true);
+
+    // Run it
+    const cmd = `"${runnerPath}" "${finalBundlePath}"`;
+    const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+    const json = JSON.parse(result.trim());
+    expect(json.success).toBe(true);
+    expect(json.id).toBe('ISON');
+  });
 });

@@ -93,12 +93,20 @@ export function compileCppHost(options: CppCompileOptions): string {
   return options.outputPath;
 }
 
+export interface FFGLCompilePaths {
+  ffglSdkDir: string;
+  pluginSource: string;
+  interopSource: string;
+  additionalIncludes?: string[];
+}
+
 export interface FFGLCompileOptions {
   outputPath: string; // .../NanoFFGL.bundle
   name?: string;
   pluginId?: string;
   textureInputCount?: number;
   internalResourceCount?: number;
+  paths?: FFGLCompilePaths;
 }
 
 /**
@@ -106,17 +114,24 @@ export interface FFGLCompileOptions {
  */
 export function generateFFGLPluginCmds(options: FFGLCompileOptions): string[] {
   const { outputPath } = options;
+
+  // Default path resolution (backward compatibility / dev mode)
   const repoRoot = path.resolve(__dirname, '../..');
-  const ffglSdkDir = path.join(repoRoot, 'modules/ffgl/source/lib');
-  const tmpDir = path.join(repoRoot, 'tmp');
-  const srcMetalDir = path.join(repoRoot, 'src/metal');
+  const defaultPaths: FFGLCompilePaths = {
+    ffglSdkDir: path.join(repoRoot, 'modules/ffgl/source/lib'),
+    pluginSource: path.join(repoRoot, 'src/metal/ffgl-plugin.mm'),
+    interopSource: path.join(repoRoot, 'src/metal/InteropTexture.m'),
+    additionalIncludes: [
+      path.join(repoRoot, 'src/metal'),
+      path.join(repoRoot, 'src/metal/generated')
+    ]
+  };
+
+  const finalPaths = options.paths || defaultPaths;
+  const { ffglSdkDir, pluginSource, interopSource, additionalIncludes = [] } = finalPaths;
 
   const bundleName = options.name ? options.name.replace(/\s+/g, '') : path.basename(outputPath, '.bundle');
   const parentDir = path.dirname(outputPath);
-
-  // Create relative paths for the script if possible, but keep absolute for reliability for now
-  // We want the script to be runnable from anywhere or a specific root?
-  // For now, let's keep absolute paths as they are safe.
 
   const actualBundlePath = path.join(parentDir, `${bundleName}.bundle`);
   const contentsDir = path.join(actualBundlePath, 'Contents');
@@ -134,15 +149,15 @@ export function generateFFGLPluginCmds(options: FFGLCompileOptions): string[] {
 
   // Source files
   const sources = [
-    path.join(srcMetalDir, 'ffgl-plugin.mm'),
-    path.join(ffglSdkDir, 'ffgl/FFGL.cpp'),
-    path.join(ffglSdkDir, 'ffgl/FFGLLog.cpp'),
-    path.join(ffglSdkDir, 'ffgl/FFGLThumbnailInfo.cpp'),
-    path.join(ffglSdkDir, 'ffgl/FFGLPluginInfo.cpp'),
-    path.join(ffglSdkDir, 'ffgl/FFGLPluginInfoData.cpp'),
-    path.join(ffglSdkDir, 'ffgl/FFGLPluginManager.cpp'),
-    path.join(ffglSdkDir, 'ffgl/FFGLPluginSDK.cpp'),
-    path.join(tmpDir, 'AAPLOpenGLMetalInteropTexture.m'),
+    `"${pluginSource}"`,
+    `"${path.join(ffglSdkDir, 'ffgl/FFGL.cpp')}"`,
+    `"${path.join(ffglSdkDir, 'ffgl/FFGLLog.cpp')}"`,
+    `"${path.join(ffglSdkDir, 'ffgl/FFGLThumbnailInfo.cpp')}"`,
+    `"${path.join(ffglSdkDir, 'ffgl/FFGLPluginInfo.cpp')}"`,
+    `"${path.join(ffglSdkDir, 'ffgl/FFGLPluginInfoData.cpp')}"`,
+    `"${path.join(ffglSdkDir, 'ffgl/FFGLPluginManager.cpp')}"`,
+    `"${path.join(ffglSdkDir, 'ffgl/FFGLPluginSDK.cpp')}"`,
+    `"${interopSource}"`,
   ];
 
   // Includes
@@ -150,9 +165,8 @@ export function generateFFGLPluginCmds(options: FFGLCompileOptions): string[] {
     `-I"${ffglSdkDir}"`,
     `-I"${path.join(ffglSdkDir, 'ffgl')}"`,
     `-I"${path.join(ffglSdkDir, 'ffglex')}"`,
-    `-I"${tmpDir}"`,
-    `-I"${srcMetalDir}"`,
-    `-I"${path.join(srcMetalDir, 'generated')}"`,
+    `-I"${path.dirname(interopSource)}"`,
+    ...additionalIncludes.map(p => `-I"${p}"`)
   ].join(' ');
 
   // Frameworks
@@ -187,7 +201,7 @@ export function generateFFGLPluginCmds(options: FFGLCompileOptions): string[] {
   ].filter(f => f !== '').join(' ');
 
   // Compile
-  cmds.push(`clang++ ${flags} ${includeFlags} ${frameworkFlags} "${sources.join('" "')}" -o "${binaryPath}"`);
+  cmds.push(`clang++ ${flags} ${includeFlags} ${frameworkFlags} ${sources.join(' ')} -o "${binaryPath}"`);
 
   // Codesign
   cmds.push(`codesign -s - "${binaryPath}"`);

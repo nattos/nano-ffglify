@@ -5,10 +5,12 @@ Create a "one-click" build system that packages the FFGL plugin and all its depe
 
 ## Phasing
 
-### Phase 1: Script Generation (Completed)
+### Phase 1: Script Generation (Complete & Refined)
+
 - [x] Refactor `metal-compile.ts` to separate command generation from execution.
 - [x] Create `generateBuildScript` function that outputs a bash script string.
 - [x] Update tests to verify the generated script correctness and then execute it.
+- [x] **Refinement**: Support relative paths and isolated build environments (staging dependencies).
 
 ### Phase 2: packaging
 - Add a step to the build script to copy all artifacts (bundle, readme, license) to a distribution folder.
