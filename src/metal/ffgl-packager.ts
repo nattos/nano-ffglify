@@ -149,7 +149,6 @@ export function generateFFGLPluginCmds(options: FFGLCompileOptions): string[] {
     '-bundle',
     '-fobjc-arc',
     '-D TARGET_MACOS=1',
-    '-D FFGL_MACOS',
     '-D GL_SILENCE_DEPRECATION',
     '-Wl,-exported_symbol,_plugMain',
     '-g',

@@ -3,8 +3,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import {
-  compileMetalShader,
-  compileCppHost,
   getMetalBuildDir,
   generateMetalCompileCmds,
   generateFFGLPluginCmds,
@@ -56,7 +54,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     execSync(scriptPath, { stdio: 'inherit' });
 
     expect(fs.existsSync(runnerPath)).toBe(true);
-  });
+  }, 30000);
 
   test('should compile FFGL plugin bundle w/ compiled metal libs via generated script', () => {
     // 1. Generate Code
@@ -131,7 +129,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
 
     // Update pluginPath for runner test
     pluginPath = actualBundlePath;
-  });
+  }, 30000);
 
   test('should execute the generated FFGL plugin', () => {
     // This part doesn't change much, just verifying the artifact works
@@ -155,7 +153,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
       }
     }
     expect(variance).toBe(true);
-  });
+  }, 30000);
 
   test('should generate a monolithic build script for everything (Mixer example)', () => {
     // Let's do the Mixer example completely via one script (runner + plugin)

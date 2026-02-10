@@ -149,6 +149,44 @@ using elem::tan;
 using elem::tanh;
 using elem::trunc;
 
+// Common vector aliases
+template <typename T, size_t N>
+inline T dot(const std::array<T, N> &a, const std::array<T, N> &b) {
+  return vec_dot(a, b);
+}
+
+template <typename T, size_t N> inline T length(const std::array<T, N> &v) {
+  return vec_length(v);
+}
+
+template <typename T, size_t N>
+inline std::array<T, N> normalize(const std::array<T, N> &v) {
+  return vec_normalize(v);
+}
+
+template <typename T, size_t N>
+inline T distance(const std::array<T, N> &a, const std::array<T, N> &b) {
+  return length(applyBinary(a, b, [](T x, T y) { return x - y; }));
+}
+
+template <typename T, size_t N>
+inline std::array<T, N> cross(const std::array<T, N> &a,
+                              const std::array<T, N> &b) {
+  static_assert(N == 3, "Cross product only defined for 3-component vectors");
+  return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+          a[0] * b[1] - a[1] * b[0]};
+}
+
+template <typename T, size_t N>
+inline std::array<T, N> reflect(const std::array<T, N> &i,
+                                const std::array<T, N> &n) {
+  T d = 2 * vec_dot(i, n);
+  std::array<T, N> result;
+  for (size_t k = 0; k < N; ++k)
+    result[k] = i[k] - d * n[k];
+  return result;
+}
+
 // Matrix multiplication helpers
 template <size_t R, size_t C, size_t K>
 inline std::array<float, R * C>

@@ -19,7 +19,8 @@
 id<MTLLibrary> loadMetalLib(id<MTLDevice> device, const char *path) {
   NSError *error = nil;
   NSString *nsPath = [NSString stringWithUTF8String:path];
-  id<MTLLibrary> library = [device newLibraryWithFile:nsPath error:&error];
+  NSURL *libraryURL = [NSURL fileURLWithPath:nsPath];
+  id<MTLLibrary> library = [device newLibraryWithURL:libraryURL error:&error];
   if (!library) {
     std::cerr << "Failed to load metallib: "
               << (error ? [[error localizedDescription] UTF8String] : "unknown")

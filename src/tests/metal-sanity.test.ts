@@ -16,7 +16,7 @@ describe('Metal Sanity', () => {
     const hostSource = path.join(metalDir, 'metal-runner.mm');
     const hostExecutable = path.join(buildDir, 'metal-runner');
     compileCppHost({
-      sourcePath: hostSource,
+      sourcePaths: [hostSource],
       outputPath: hostExecutable,
     });
 
