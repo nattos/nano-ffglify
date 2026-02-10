@@ -14,6 +14,8 @@ import {
 import { NOISE_SHADER } from '../domain/example-ir';
 import { CppGenerator } from './cpp-generator';
 import { MslGenerator } from './msl-generator';
+import { ZipFileSystem } from './virtual-fs';
+import { packageFFGLPlugin } from './ffgl-packager';
 
 describe('FFGL Build Pipeline with Bash Script Generation', () => {
   const buildDir = getMetalBuildDir();
@@ -264,85 +266,31 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     fs.mkdirSync(stageDir, { recursive: true });
 
 
-    // 1. Stage Dependencies using FFGL_ASSETS
-    const { FFGL_ASSETS } = await import('./ffgl-assets');
+    // 1. Stage Dependencies using packageFFGLPlugin
+    const vfs = new ZipFileSystem();
+    await packageFFGLPlugin(vfs, { ir: NOISE_SHADER });
 
-    const relSdk = './ffgl-sdk';
-    const relSrc = './src';
-    const relGen = './generated';
-    const relBuild = './build';
+    // Generate Zip
+    const zipData = await vfs.generateZip();
+    const zipPath = path.join(stageDir, 'build.zip');
+    fs.writeFileSync(zipPath, zipData);
 
-    // Helper to write assets to stage dir
-    const writeAsset = (assetName: string, content: string) => {
-      // Determine target path based on asset name
-      let targetPath = '';
-      if (assetName.startsWith('ffgl/')) {
-        targetPath = path.join(stageDir, 'ffgl-sdk', assetName);
-      } else {
-        targetPath = path.join(stageDir, 'src', assetName);
-      }
+    // 2. Unzip onto disk
+    // We use the unzip command available on macOS
+    execSync(`unzip -o "${zipPath}" -d "${stageDir}"`);
 
-      const dir = path.dirname(targetPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(targetPath, content);
-    };
-
-    // Write all assets
-    Object.entries(FFGL_ASSETS).forEach(([name, content]) => {
-      writeAsset(name, content);
-    });
-
-    // Generated files
-    // Use NOISE_SHADER logic again for simplicity or pass previous generated logic
-    const genSrc = path.join(stageDir, 'generated');
-    fs.mkdirSync(genSrc, { recursive: true });
-    // We reuse the generated logic from previous tests which should be in `generatedDir` default location,
-    // let's copy them to stage
-    fs.copyFileSync(path.join(generatedDir, 'logic.cpp'), path.join(genSrc, 'logic.cpp'));
-    fs.copyFileSync(path.join(generatedDir, 'shaders.metal'), path.join(genSrc, 'shaders.metal'));
-
-
-    // 2. Generate Build Script using RELATIVE PATHS
-    const steps: string[] = [];
-
-    // Metal Compile
-    // Note: metal compile currently takes absolute paths or paths relative to CWD.
-    // The script will run from `stageDir`.
-    // generateMetalCompileCmds logic: `mkdir -p outputDir`
-    const metalCmds = generateMetalCompileCmds(`${relGen}/shaders.metal`, relBuild);
-    steps.push(...metalCmds);
-
-    // FFGL Compile
-    const bundlePath = `${relBuild}/IsoNoise.bundle`;
-    const ffglCmds = generateFFGLPluginCmds({
-      outputPath: bundlePath,
-      name: 'Iso Noise',
-      pluginId: 'ISON',
-      textureInputCount: 0,
-      internalResourceCount: 0,
-      paths: {
-        ffglSdkDir: relSdk,
-        pluginSource: `${relSrc}/ffgl-plugin.mm`,
-        interopSource: `${relSrc}/InteropTexture.m`,
-        additionalIncludes: [relSrc, relGen, '.']
-      }
-    });
-    steps.push(...ffglCmds);
-
-    // Copy Metallib
-    steps.push(`mkdir -p "${bundlePath}/Contents/Resources"`);
-    steps.push(`cp "${relBuild}/shaders.metallib" "${bundlePath}/Contents/Resources/default.metallib"`);
-
-    // 3. Write and Execute Script
-    const scriptPath = path.join(stageDir, 'build_isolated.sh');
-    fs.writeFileSync(scriptPath, generateBuildScript(steps));
+    // 3. Execute Build Script from the unzipped contents
+    // The packager writes 'build.sh' to the root of the zip
+    const scriptPath = path.join(stageDir, 'build.sh');
     fs.chmodSync(scriptPath, '755');
 
     // Run in stageDir
-    execSync(`./build_isolated.sh`, { cwd: stageDir, stdio: 'inherit' });
+    execSync(`./build.sh`, { cwd: stageDir, stdio: 'inherit' });
 
     // 4. Verify
-    const finalBundlePath = path.join(stageDir, 'build/IsoNoise.bundle');
+    // The packager derived bundle name: "Simple Noise Generator" -> "SimpleNoiseGenerator.bundle"
+    // and puts it in the 'build' folder (see ffgl-packager.ts)
+    const finalBundlePath = path.join(stageDir, 'build/SimpleNoiseGenerator.bundle');
     expect(fs.existsSync(finalBundlePath)).toBe(true);
 
     // Run it
@@ -350,6 +298,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
     const json = JSON.parse(result.trim());
     expect(json.success).toBe(true);
-    expect(json.id).toBe('ISON');
+    // Derived ID from "Simple Noise Generator" hash is E541
+    expect(json.id).toBe('E541');
   });
 });
