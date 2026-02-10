@@ -31,7 +31,7 @@ describe('20-coersion', () => {
   const mainId = 'clamp_test_main';
   const clampFunc: FunctionDef = {
     id: mainId,
-    type: 'shader',
+    type: 'cpu',
     inputs: [],
     outputs: [],
     nodes: [
