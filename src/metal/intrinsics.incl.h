@@ -718,7 +718,8 @@ struct EvalContext {
           desc.pixelFormat = MTLPixelFormatRGBA8Unorm;
           desc.width = texWidths[i];
           desc.height = texHeights[i];
-          desc.usage = MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead;
+          desc.usage = MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead |
+                       MTLTextureUsageRenderTarget;
           desc.storageMode = MTLStorageModeShared;
           id<MTLTexture> texture = [device newTextureWithDescriptor:desc];
           metalTextures[i] = texture;
@@ -887,6 +888,94 @@ struct EvalContext {
     [cmdBuffer waitUntilCompleted];
 
     // Sync back to CPU
+    syncFromMetal();
+  }
+
+  // Draw call (render pipeline)
+  void draw(size_t targetIdx, const char *vsFunc, const char *fsFunc,
+            int vertexCount) {
+    if (metalBuffers.empty()) {
+      syncToMetal();
+    }
+
+    if (targetIdx >= metalTextures.size() || metalTextures[targetIdx] == nil) {
+      std::cerr << "Draw target texture not found for index " << targetIdx
+                << std::endl;
+      return;
+    }
+
+    MTLRenderPipelineDescriptor *pipelineDesc =
+        [[MTLRenderPipelineDescriptor alloc] init];
+    pipelineDesc.colorAttachments[0].pixelFormat =
+        metalTextures[targetIdx].pixelFormat;
+
+    NSString *vsName = [NSString stringWithUTF8String:vsFunc];
+    NSString *fsName = [NSString stringWithUTF8String:fsFunc];
+
+    pipelineDesc.vertexFunction = [library newFunctionWithName:vsName];
+    pipelineDesc.fragmentFunction = [library newFunctionWithName:fsName];
+
+    if (!pipelineDesc.vertexFunction || !pipelineDesc.fragmentFunction) {
+      std::cerr << "Failed to load shaders for draw: " << vsFunc << ", "
+                << fsFunc << std::endl;
+      return;
+    }
+
+    NSError *error = nil;
+    id<MTLRenderPipelineState> pipelineState =
+        [device newRenderPipelineStateWithDescriptor:pipelineDesc error:&error];
+    if (!pipelineState) {
+      std::cerr << "Failed to create render pipeline state: "
+                << (error ? [[error localizedDescription] UTF8String]
+                          : "unknown")
+                << std::endl;
+      return;
+    }
+
+    MTLRenderPassDescriptor *passDesc =
+        [MTLRenderPassDescriptor renderPassDescriptor];
+    passDesc.colorAttachments[0].texture = metalTextures[targetIdx];
+    passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
+    passDesc.colorAttachments[0].clearColor =
+        MTLClearColorMake(0, 0, 0, 0); // Clear to transparent black
+    passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
+
+    id<MTLCommandBuffer> cmdBuffer = [commandQueue commandBuffer];
+    id<MTLRenderCommandEncoder> encoder =
+        [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
+    [encoder setRenderPipelineState:pipelineState];
+
+    // Bind resources (buffers and textures) to both vertex and fragment stages
+    // Bindings start at 1 (0 is reserved for potential uniforms, though
+    // currently unused in draw)
+    for (size_t i = 0; i < resources.size(); ++i) {
+      auto *res = resources[i];
+      if (i < metalTextures.size() && metalTextures[i] != nil) {
+        if (res->isExternal && res->externalTexture) {
+          [encoder setVertexTexture:res->externalTexture atIndex:i + 1];
+          [encoder setFragmentTexture:res->externalTexture atIndex:i + 1];
+        } else {
+          [encoder setVertexTexture:metalTextures[i] atIndex:i + 1];
+          [encoder setFragmentTexture:metalTextures[i] atIndex:i + 1];
+        }
+        if (i < metalSamplers.size() && metalSamplers[i] != nil) {
+          [encoder setVertexSamplerState:metalSamplers[i] atIndex:i + 1];
+          [encoder setFragmentSamplerState:metalSamplers[i] atIndex:i + 1];
+        }
+      } else if (i < metalBuffers.size()) {
+        [encoder setVertexBuffer:metalBuffers[i] offset:0 atIndex:i + 1];
+        [encoder setFragmentBuffer:metalBuffers[i] offset:0 atIndex:i + 1];
+      }
+    }
+
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                vertexStart:0
+                vertexCount:vertexCount];
+    [encoder endEncoding];
+
+    [cmdBuffer commit];
+    [cmdBuffer waitUntilCompleted];
+
     syncFromMetal();
   }
 };

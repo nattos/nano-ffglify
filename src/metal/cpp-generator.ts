@@ -9,6 +9,7 @@ import { reconstructEdges } from '../ir/utils';
 export interface ShaderFunctionInfo {
   id: string;
   inputs: { id: string; type: string }[];
+  stage?: 'compute' | 'vertex' | 'fragment';
 }
 
 export interface CppCompileResult {
@@ -36,7 +37,7 @@ export class CppGenerator {
     // Collect all required functions via call graph traversal
     const requiredFuncs = new Set<string>();
     const callStack: string[] = [];
-    const shaderFuncs = new Map<string, FunctionDef>();
+    const shaderFuncs = new Map<string, { func: FunctionDef, stage: 'compute' | 'vertex' | 'fragment' }>();
 
     const collectFunctions = (funcId: string) => {
       // Check for recursion
@@ -65,7 +66,22 @@ export class CppGenerator {
           if (targetFunc) {
             const shaderFunc = allFunctions.find((f: FunctionDef) => f.id === targetFunc);
             if (shaderFunc && shaderFunc.type === 'shader') {
-              shaderFuncs.set(targetFunc, shaderFunc);
+              shaderFuncs.set(targetFunc, { func: shaderFunc, stage: 'compute' });
+            }
+          }
+        } else if (node.op === 'cmd_draw') {
+          const vertexFunc = node['vertex'];
+          const fragmentFunc = node['fragment'];
+          if (vertexFunc) {
+            const shaderFunc = allFunctions.find((f: FunctionDef) => f.id === vertexFunc);
+            if (shaderFunc && shaderFunc.type === 'shader') {
+              shaderFuncs.set(vertexFunc, { func: shaderFunc, stage: 'vertex' });
+            }
+          }
+          if (fragmentFunc) {
+            const shaderFunc = allFunctions.find((f: FunctionDef) => f.id === fragmentFunc);
+            if (shaderFunc && shaderFunc.type === 'shader') {
+              shaderFuncs.set(fragmentFunc, { func: shaderFunc, stage: 'fragment' });
             }
           }
         }
@@ -165,7 +181,7 @@ export class CppGenerator {
     const internalRes = ir.resources.filter(r => !r.isOutput);
     internalRes.forEach((r, idx) => {
       lines.push(`    ctx.resources.push_back(&_internalResources[${idx}]);`);
-      const isTex = r.type === 'texture2d' || r.type === 'image2d';
+      const isTex = r.type === 'texture2d';
       lines.push(`    ctx.isTextureResource.push_back(${isTex});`);
       lines.push(`    ctx.texWidths.push_back(_internalResources[${idx}].width);`);
       lines.push(`    ctx.texHeights.push_back(_internalResources[${idx}].height);`);
@@ -186,9 +202,11 @@ export class CppGenerator {
 
 
     // Build shader function info for Metal compilation
-    const shaderFunctions: ShaderFunctionInfo[] = Array.from(shaderFuncs.entries()).map(([id, func]) => ({
+    // Build shader function info for Metal compilation
+    const shaderFunctions: ShaderFunctionInfo[] = Array.from(shaderFuncs.entries()).map(([id, info]) => ({
       id,
-      inputs: (func.inputs || []).map(i => ({ id: i.id, type: i.type || 'float' }))
+      inputs: (info.func.inputs || []).map(i => ({ id: i.id, type: i.type || 'float' })),
+      stage: info.stage
     }));
 
     return {
@@ -612,6 +630,16 @@ export class CppGenerator {
       } else {
         lines.push(`${indent}ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ});`);
       }
+    } else if (node.op === 'cmd_draw') {
+      const target = node['target'];
+      const vertex = node['vertex'];
+      const fragment = node['fragment'];
+      const count = this.resolveArg(node, 'count', func, allFunctions, emitPure, edges);
+
+      const allRes = this.getAllResources();
+      const targetIdx = allRes.findIndex(r => r.id === target);
+
+      lines.push(`${indent}ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}));`);
     } else if (this.hasResult(node.op)) {
       // Executable nodes with results (like call_func) need auto declarations
       const expr = this.compileExpression(node, func, allFunctions, true, emitPure, edges);

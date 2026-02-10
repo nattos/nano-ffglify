@@ -14,6 +14,8 @@ export interface MslOptions {
   kernelName?: string;
   /** Skip Metal header (include, namespace) */
   skipHeader?: boolean;
+  /** Shader stages: map entry point ID to 'vertex' | 'fragment' | 'compute' */
+  stages?: Map<string, 'vertex' | 'fragment' | 'compute'>;
 }
 
 export interface MslCompilationResult {
@@ -225,9 +227,14 @@ export class MslGenerator {
         }
       }
 
-      // Emit entry point as kernel
-      const kernelOptions = { ...options, kernelName: entryId };
-      this.emitKernel(entryFunc, lines, allFunctions, varMap, resourceBindings, kernelOptions);
+      // Emit entry point as kernel or stage function
+      const stage = options.stages?.get(entryId) || 'compute';
+      if (stage === 'vertex' || stage === 'fragment') {
+        this.emitStageFunction(entryFunc, stage, lines, allFunctions, resourceBindings, options);
+      } else {
+        const kernelOptions = { ...options, kernelName: entryId };
+        this.emitKernel(entryFunc, lines, allFunctions, varMap, resourceBindings, kernelOptions);
+      }
       lines.push('');
     }
 
@@ -283,7 +290,8 @@ export class MslGenerator {
       lines.push(`struct ${this.sanitizeId(s.id, 'struct')} {`);
       for (const m of s.members || []) {
         const mslType = this.irTypeToMsl(m.type);
-        lines.push(`    ${mslType} ${this.sanitizeId(m.name, 'field')};`);
+        const attr = m.builtin === 'position' ? ' [[position]]' : '';
+        lines.push(`    ${mslType} ${this.sanitizeId(m.name, 'field')}${attr};`);
       }
       lines.push('};');
     }
@@ -455,6 +463,85 @@ export class MslGenerator {
     lines.push('');
   }
 
+  private emitStageFunction(
+    func: FunctionDef,
+    stage: 'vertex' | 'fragment',
+    lines: string[],
+    allFunctions: FunctionDef[],
+    resourceBindings: Map<string, number>,
+    options: MslOptions
+  ) {
+    const isVertex = stage === 'vertex';
+    const entryName = options.kernelName || func.id;
+    const outputType = func.outputs?.[0]?.type ? this.irTypeToMsl(func.outputs[0].type) : 'void';
+
+    // Build params: vertex_id for VS, stage_in for FS
+    const params: string[] = [];
+    if (isVertex) {
+      params.push('uint vid [[vertex_id]]');
+      // If there are other inputs (e.g. uniforms), they should be buffers
+      // But for now, we only support vertex_id driven indexing
+    } else {
+      // Fragment shader input from proper stage_in struct
+      // Find the input that matches the VS output (usually the first input)
+      const inputType = func.inputs?.[0]?.type;
+      if (inputType) {
+        params.push(`${this.irTypeToMsl(inputType)} stage_in [[stage_in]]`);
+      }
+    }
+
+    // Add resource bindings (textures, buffers) similar to kernel
+    // But exclude b_globals since it's not supported for non-compute
+    // And exclude 'inputs' buffer - we expect data driven by vertex_id or stage_in
+    for (const [resId, binding] of resourceBindings) {
+      const res = this.ir?.resources.find(r => r.id === resId) ||
+        this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d');
+      if (!res) continue;
+
+      if ('type' in res && res.type === 'buffer') {
+        const elemType = this.irTypeToMsl((res as any).dataType || 'float');
+        params.push(`device ${elemType}* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
+      } else {
+        const isWrite = false; // Render pipeline shaders usually read textures
+        if (isWrite) {
+          params.push(`texture2d<float, access::write> ${this.sanitizeId(resId)}_tex [[texture(${binding})]]`);
+        } else {
+          params.push(`texture2d<float> ${this.sanitizeId(resId)}_tex [[texture(${binding})]]`);
+          params.push(`sampler ${this.sanitizeId(resId)}_sampler [[sampler(${binding})]]`);
+        }
+      }
+    }
+
+    lines.push(`${stage} ${outputType} ${entryName}(${params.join(', ')}) {`);
+
+    // Preamble: unpack inputs to local vars
+    if (isVertex) {
+      // For now, map vertex_id to first input if it's int/uint
+      const vIdx = func.inputs?.[0];
+      if (vIdx) {
+        lines.push(`    ${this.irTypeToMsl(vIdx.type)} ${this.sanitizeId(vIdx.id)} = vid;`);
+      }
+    } else {
+      // Fragment: map stage_in members to inputs? Or just map the struct itself?
+      // Usually FS takes the struct as a whole.
+      // If the function expects separate inputs, we'd need to unpack stage_in.
+      // But since we control IR generation, let's assume valid IR passes struct.
+      const sIn = func.inputs?.[0];
+      if (sIn) {
+        lines.push(`    ${this.irTypeToMsl(sIn.type)} ${this.sanitizeId(sIn.id)} = stage_in;`);
+      }
+    }
+
+    // No varMap needed for globals readback since we return values directly
+    const varMap = new Map<string, number>();
+    const edges = reconstructEdges(func);
+
+    // Use isKernel=false so func_return emits 'return val;'
+    this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, false);
+
+    lines.push('}');
+  }
+
   private emitKernel(
     func: FunctionDef,
     lines: string[],
@@ -493,7 +580,7 @@ export class MslGenerator {
       if (!res) continue;
 
       if ('type' in res && res.type === 'buffer') {
-        const elemType = this.irTypeToMsl(res.dataType || 'float');
+        const elemType = this.irTypeToMsl((res as any).dataType || 'float');
         bufferParams.push(`device ${elemType}* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
       } else {
         // Must be texture2d (either from resources or inputs)
@@ -586,7 +673,15 @@ export class MslGenerator {
           }
         }
         const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges);
-        lines.push(`    auto ${this.nodeResId(node.id)} = ${expr};`);
+        if (node.op === 'array_construct') {
+          let len = node['length'] as number || 1;
+          if (Array.isArray(node['values'])) {
+            len = node['values'].length;
+          }
+          lines.push(`    float ${this.nodeResId(node.id)}[${len}] = ${expr};`);
+        } else {
+          lines.push(`    auto ${this.nodeResId(node.id)} = ${expr};`);
+        }
         emittedPure.add(nodeId);
       }
     };
@@ -1132,6 +1227,13 @@ export class MslGenerator {
       // Array operations
       case 'array_construct': {
         const length = node['length'] as number || 1;
+        const values = node['values'];
+
+        if (Array.isArray(values) && values.length > 0) {
+          const elements = values.map((v: any) => this.formatFloat(Number(v)));
+          return `{ ${elements.join(', ')} }`;
+        }
+
         const fill = node['fill'];
         const fillVal = fill !== undefined ? this.formatFloat(fill as number) : '0.0f';
         // Use Metal array syntax
@@ -1238,6 +1340,12 @@ export class MslGenerator {
     if (edge) {
       const source = func.nodes.find(n => n.id === edge.from);
       if (source) {
+        // Prevent inlining of complex constructors that emit initializer lists (unless checking length)
+        // struct_construct and array_construct emit { ... } which cannot be used in expressions directly
+        if ((source.op === 'array_construct' || source.op === 'struct_construct') && node.op !== 'array_length') {
+          emitPure(source.id);
+          return this.nodeResId(source.id);
+        }
         return this.compileExpression(source, func, allFunctions, varMap, resourceBindings, emitPure, edges);
       }
     }

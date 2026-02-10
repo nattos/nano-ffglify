@@ -49,8 +49,14 @@ export const CppMetalBackend: TestBackend = {
     if (shaderFunctions.length > 0) {
       const mslGen = new MslGenerator();
 
+      // Construct stages map
+      const stages = new Map<string, 'compute' | 'vertex' | 'fragment'>();
+      shaderFunctions.forEach(f => {
+        if (f.stage) stages.set(f.id, f.stage);
+      });
+
       // Generate MSL for all shader functions in one go
-      const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map(s => s.id));
+      const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map(s => s.id), { stages });
 
       // Write MSL source
       const mslPath = path.join(buildDir, 'shaders.metal');
