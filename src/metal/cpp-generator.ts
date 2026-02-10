@@ -1202,7 +1202,8 @@ export class CppGenerator {
       return;
     }
 
-    const arrayMatch = irType.match(/^array<([^,]+),(\d+)>$/);
+    // Check for fixed array: array<T, N> (allow optional space)
+    const arrayMatch = irType.match(/^array<([^,]+),\s*(\d+)>$/);
     if (arrayMatch) {
       const elemType = arrayMatch[1];
       const len = parseInt(arrayMatch[2]);
@@ -1212,11 +1213,27 @@ export class CppGenerator {
       return;
     }
 
-    // Dynamic array (shouldn't happen in shader args usually, but handle just in case)
-    const dynMatch = irType.match(/^array<(.+)>$/);
+    // Dynamic array: T[] (e.g. "float[]" or "Point[]")
+    const dynMatch = irType.match(/^(.+)\[\]$/);
     if (dynMatch) {
-      // Cannot flatten dynamic array at compile time for constant buffer
-      lines.push(`${indent}// Warning: Dynamic array flattening not fully supported for shader args`);
+      const elemType = dynMatch[1];
+      // 1. Push length
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}.size()));`);
+      // 2. Push elements
+      lines.push(`${indent}for (const auto& elem : ${argExpr}) {`);
+      this.emitArgFlattening(`${indent}  `, 'elem', elemType, lines);
+      lines.push(`${indent}}`);
+      return;
+    }
+
+    // Dynamic array via array<T> is treated as T[]
+    const legacyDynMatch = irType.match(/^array<(.+)>$/);
+    if (legacyDynMatch) {
+      const elemType = legacyDynMatch[1];
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}.size()));`);
+      lines.push(`${indent}for (const auto& elem : ${argExpr}) {`);
+      this.emitArgFlattening(`${indent}  `, 'elem', elemType, lines);
+      lines.push(`${indent}}`);
       return;
     }
 
@@ -1233,6 +1250,16 @@ export class CppGenerator {
     } else if (irType === 'float2') {
       lines.push(`${indent}_shader_args.push_back(${argExpr}[0]);`);
       lines.push(`${indent}_shader_args.push_back(${argExpr}[1]);`);
+    } else if (irType === 'float4x4') {
+      // Flatten 4x4 matrix (16 floats)
+      for (let i = 0; i < 16; i++) {
+        lines.push(`${indent}_shader_args.push_back(${argExpr}[${i}]);`);
+      }
+    } else if (irType === 'float3x3') {
+      // Flatten 3x3 matrix (9 floats)
+      for (let i = 0; i < 9; i++) {
+        lines.push(`${indent}_shader_args.push_back(${argExpr}[${i}]);`);
+      }
     } else if (irType === 'int' || irType === 'uint' || irType === 'boolean') {
       lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}));`);
     } else {

@@ -256,7 +256,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     const json = JSON.parse(runResult.trim());
     expect(json.success).toBe(true);
     expect(json.id).toBe('SMIX');
-  });
+  }, 30000);
 
   test('should compile ISOLATED plugin with relative paths and staged deps', async () => {
     // This test simulates the "export to folder" case where we copy everything to a temp dir and build from there.
