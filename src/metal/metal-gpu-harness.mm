@@ -36,14 +36,16 @@ int main(int argc, const char *argv[]) {
     // Example: metal-gpu-harness source.metal 16 b_result:4:[]
 
     if (argc < 3) {
-      std::cerr << "{\"error\": \"Usage: metal-gpu-harness <metal_source> "
-                   "<globals_size> [buffer_id:size:data ...]\"}"
-                << std::endl;
+      std::cerr
+          << "{\"error\": \"Usage: metal-gpu-harness <metal_source> "
+             "<globals_size> [-g globals_data] [buffer_id:size:data ...]\"}"
+          << std::endl;
       return 1;
     }
 
     NSString *sourcePath = [NSString stringWithUTF8String:argv[1]];
     int globalsSize = std::atoi(argv[2]);
+    std::vector<float> initialGlobals;
 
     // Parse buffer and texture definitions
     struct BufferDef {
@@ -68,6 +70,13 @@ int main(int argc, const char *argv[]) {
 
     for (int i = 3; i < argc; i++) {
       std::string arg = argv[i];
+
+      // Check for -g prefix (globals)
+      if (arg == "-g" && i + 1 < argc) {
+        i++;
+        initialGlobals = parseFloatArray(argv[i]);
+        continue;
+      }
 
       // Check for -t prefix (texture)
       if (arg == "-t" && i + 1 < argc) {
@@ -129,7 +138,8 @@ int main(int argc, const char *argv[]) {
 
     // 3. Compile to library
     MTLCompileOptions *compileOptions = [[MTLCompileOptions alloc] init];
-    compileOptions.fastMathEnabled = NO; // Ensure IEEE 754 compliance (NaN, Inf)
+    compileOptions.fastMathEnabled =
+        NO; // Ensure IEEE 754 compliance (NaN, Inf)
     id<MTLLibrary> library = [device newLibraryWithSource:source
                                                   options:compileOptions
                                                     error:&error];
@@ -160,7 +170,12 @@ int main(int argc, const char *argv[]) {
     id<MTLBuffer> globalsBuffer =
         [device newBufferWithLength:globalsSize
                             options:MTLResourceStorageModeShared];
-    memset([globalsBuffer contents], 0, globalsSize);
+    float *gptr = (float *)[globalsBuffer contents];
+    memset(gptr, 0, globalsSize);
+    for (size_t j = 0;
+         j < initialGlobals.size() && j < (globalsSize / sizeof(float)); j++) {
+      gptr[j] = initialGlobals[j];
+    }
 
     // 7. Create resource buffers
     std::vector<id<MTLBuffer>> resourceBuffers;
@@ -183,10 +198,12 @@ int main(int argc, const char *argv[]) {
       // Create texture descriptor
       MTLTextureDescriptor *texDesc = [[MTLTextureDescriptor alloc] init];
       texDesc.textureType = MTLTextureType2D;
-      // Auto-detect format: if data has 4 floats per pixel, use RGBA32F; otherwise R32F
+      // Auto-detect format: if data has 4 floats per pixel, use RGBA32F;
+      // otherwise R32F
       size_t pixelCount = def.width * def.height;
       bool isRGBA = (def.data.size() >= pixelCount * 4);
-      texDesc.pixelFormat = isRGBA ? MTLPixelFormatRGBA32Float : MTLPixelFormatR32Float;
+      texDesc.pixelFormat =
+          isRGBA ? MTLPixelFormatRGBA32Float : MTLPixelFormatR32Float;
       texDesc.width = def.width;
       texDesc.height = def.height;
       texDesc.usage = MTLTextureUsageShaderRead;
@@ -268,9 +285,12 @@ int main(int argc, const char *argv[]) {
 
     // 11. Read back results and output JSON
     auto emitFloat = [](float val) {
-      if (std::isnan(val)) std::cout << "null";
-      else if (std::isinf(val)) std::cout << (val > 0 ? "1e999" : "-1e999");
-      else std::cout << std::setprecision(10) << val;
+      if (std::isnan(val))
+        std::cout << "null";
+      else if (std::isinf(val))
+        std::cout << (val > 0 ? "1e999" : "-1e999");
+      else
+        std::cout << std::setprecision(10) << val;
     };
 
     std::cout << "{\"resources\": [";
@@ -294,7 +314,8 @@ int main(int argc, const char *argv[]) {
       int floatCount = globalsSize / sizeof(float);
       std::cout << ", \"globals\": [";
       for (int j = 0; j < floatCount; j++) {
-        if (j > 0) std::cout << ", ";
+        if (j > 0)
+          std::cout << ", ";
         emitFloat(gptr[j]);
       }
       std::cout << "]";

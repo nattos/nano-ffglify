@@ -59,12 +59,18 @@ export class MslGenerator {
     let varOffset = 0;
 
     // Allocate space for inputs.
-    // If it's a shader function, use its own inputs. Otherwise use IR-global inputs.
-    const inputs = (entryFunc.type === 'shader' ? entryFunc.inputs : ir.inputs) || [];
+    // Use IR-global inputs and entry point inputs.
+    const inputs = [...(ir.inputs || [])];
+    if (entryFunc.type === 'shader' && entryFunc.inputs) {
+      for (const inp of entryFunc.inputs) {
+        if (!inputs.some(i => i.id === inp.id)) inputs.push(inp);
+      }
+    }
+
     inputs.forEach(input => {
       if (!varMap.has(input.id)) {
         varMap.set(input.id, varOffset);
-        varOffset += this.getTypeSize(input.type);
+        varOffset += this.getTypeFlatSize(input.type);
       }
     });
 
@@ -581,14 +587,17 @@ export class MslGenerator {
     // Build kernel signature with buffer bindings
     const bufferParams: string[] = [];
 
-    const hasShaderInputs = func.type === 'shader' && func.inputs && func.inputs.length > 0;
-
-    if (hasShaderInputs) {
-      // Use flat float buffer for marshalling - avoids type alignment issues
-      bufferParams.push('constant float* inputs [[buffer(0)]]');
-    } else {
-      bufferParams.push('device float* b_globals [[buffer(0)]]');
+    // Combine IR-global and shader-specific inputs
+    const inputs = [...(this.ir?.inputs || [])];
+    if (func.type === 'shader' && func.inputs) {
+      for (const inp of func.inputs) {
+        if (!inputs.some(i => i.id === inp.id)) inputs.push(inp);
+      }
     }
+
+    const hasShaderInputs = (func.type === 'shader' || (this.ir?.inputs && this.ir.inputs.length > 0)) && inputs.length > 0;
+
+    bufferParams.push('device float* b_globals [[buffer(0)]]');
 
     for (const [resId, binding] of resourceBindings) {
       const res = this.ir?.resources.find(r => r.id === resId) ||
@@ -617,7 +626,14 @@ export class MslGenerator {
 
     // Emit input unpacking preamble - reconstruct typed locals from flat float buffer
     if (hasShaderInputs) {
-      this.emitInputUnpacking(func, lines);
+      lines.push('    device float* inputs = b_globals;');
+      let offset = 0;
+      for (const input of inputs) {
+        const irType = input.type || 'float';
+        const varName = this.sanitizeId(input.id);
+        offset = this.emitUnpackInput(varName, irType, offset, lines);
+        if (offset < 0) break;
+      }
     }
 
     // Remove duplicate edges decl if present
@@ -1466,8 +1482,9 @@ export class MslGenerator {
   }
 
   private getVariableExpr(varId: string, func: FunctionDef, varMap: Map<string, number>): string {
-    // Check if it's a shader function input - use the unpacked local variable
-    if (func.type === 'shader' && func.inputs?.some(i => i.id === varId)) {
+    // Check if it's a shader function input or an IR global input - use the unpacked local variable
+    if ((func.type === 'shader' || this.ir?.inputs?.length) &&
+      (func.inputs?.some(i => i.id === varId) || this.ir?.inputs?.some(i => i.id === varId))) {
       return this.sanitizeId(varId);
     }
 
@@ -1664,7 +1681,7 @@ export class MslGenerator {
       case 'float': case 'int': case 'i32': case 'bool': return 1;
       case 'float2': return 2;
       case 'float3': return 3;
-      case 'float4': return 4;
+      case 'float4': case 'quat': return 4;
       case 'float3x3': return 9;
       case 'float4x4': return 16;
       default: {
@@ -1807,7 +1824,7 @@ export class MslGenerator {
             lines.push(`    }`);
           } else {
             // Simple type dynamic array: use pointer into flat buffer
-            lines.push(`    constant float* ${varName} = &inputs[${offset + 1}];`);
+            lines.push(`    device float* ${varName} = &inputs[${offset + 1}];`);
           }
           return -1; // Dynamic array consumes the rest
         }

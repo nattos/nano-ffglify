@@ -111,7 +111,7 @@ export const MetalBackend: TestBackend = {
         const state = ctx.resources.get(res.id);
         if (state) {
           const data = state.data || [];
-          const dataStr = '[' + data.map(v => String(v)).join(',') + ']';
+          const dataStr = '[' + data.map((v: any) => String(v)).join(',') + ']';
           // Calculate actual float count based on element type
           const elemCount = state.width || 1;
           const dataType = (res as any).dataType || 'float';
@@ -129,7 +129,7 @@ export const MetalBackend: TestBackend = {
           const width = state.width || 1;
           const height = state.height || 1;
           const data = state.data || [];
-          const dataStr = '[' + data.map(v => String(v)).join(',') + ']';
+          const dataStr = '[' + data.map((v: any) => String(v)).join(',') + ']';
           // Get sampler settings from resource definition
           const sampler = (res as any).sampler || { filter: 'linear', wrap: 'clamp' };
           const filter = sampler.filter || 'linear';
@@ -140,10 +140,36 @@ export const MetalBackend: TestBackend = {
       }
     }
 
-    // 4. Execute harness
+    // 4. Build initial globals buffer data for inputs
     const globalsSize = result.metadata.globalBufferSize;
-    // Pass buffers first, then textures with -t prefix
-    const allArgs = [...bufferArgs, ...textureArgs.map(t => `-t ${t}`)];
+    const varMap = result.metadata.varMap;
+    const initialGlobals = new Float32Array(globalsSize / 4);
+
+    // Fill globals with inputs
+    for (const input of ir.inputs || []) {
+      const val = ctx.inputs.get(input.id);
+      const offset = varMap.get(input.id);
+      if (val !== undefined && offset !== undefined) {
+        if (typeof val === 'number') {
+          initialGlobals[offset] = val;
+        } else if (typeof val === 'boolean') {
+          initialGlobals[offset] = val ? 1 : 0;
+        } else if (Array.isArray(val)) {
+          // Flatten nesting if any (e.g. for vectors/matrices)
+          const flat = val.flat(Infinity);
+          for (let i = 0; i < flat.length; i++) {
+            if (offset + i < initialGlobals.length) {
+              initialGlobals[offset + i] = Number(flat[i]);
+            }
+          }
+        }
+      }
+    }
+    const globalsDataStr = '[' + Array.from(initialGlobals).map(v => String(v)).join(',') + ']';
+
+    // 5. Execute harness
+    // Pass buffers first, textures with -t prefix, and globals with -g prefix
+    const allArgs = [...bufferArgs, ...textureArgs.map(t => `-t ${t}`), `-g "${globalsDataStr}"`];
     const cmd = `"${harness}" "${sourceFile}" ${globalsSize} ${allArgs.join(' ')}`;
 
     if (process.env.MSL_DEBUG) {
@@ -198,14 +224,14 @@ export const MetalBackend: TestBackend = {
       ctx.pushFrame(entryPoint);
     }
     const globalsData: (number | null)[] = jsonResult.globals || [];
-    const varMap = result.metadata.varMap as Map<string, number>;
+    const varMap2 = result.metadata.varMap as Map<string, number>;
     if (process.env.MSL_DEBUG) {
       console.log('[MetalBackend] globalsData:', JSON.stringify(globalsData));
-      console.log('[MetalBackend] varMap:', varMap ? JSON.stringify([...varMap.entries()]) : 'null');
+      console.log('[MetalBackend] varMap:', varMap2 ? JSON.stringify([...varMap2.entries()]) : 'null');
       const ef = ir.functions.find(f => f.id === entryPoint);
       console.log('[MetalBackend] localVars:', JSON.stringify(ef?.localVars));
     }
-    if (varMap && globalsData.length > 0) {
+    if (varMap2 && globalsData.length > 0) {
       const entryFunc = ir.functions.find(f => f.id === entryPoint);
       if (entryFunc) {
 
@@ -214,7 +240,7 @@ export const MetalBackend: TestBackend = {
         const returnVarId = returnNode ? (returnNode as any).val : undefined;
 
         for (const v of entryFunc.localVars || []) {
-          const offset = varMap.get(v.id);
+          const offset = varMap2.get(v.id);
           if (offset === undefined) continue;
           const typeSize = v.type === 'float4' ? 4 : v.type === 'float3' ? 3 : v.type === 'float2' ? 2
             : v.type === 'float4x4' ? 16 : v.type === 'float3x3' ? 9 : 1;
