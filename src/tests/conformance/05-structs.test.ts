@@ -62,7 +62,7 @@ describe('Conformance: Structs and Arrays', () => {
     { from: 'extract', portOut: 'val', to: 'store', portIn: 'value', type: 'data' },
     { from: 'set_var', portOut: 'exec_out', to: 'set_elem', portIn: 'exec_in', type: 'execution' },
     { from: 'set_elem', portOut: 'exec_out', to: 'store', portIn: 'exec_in', type: 'execution' }
-  ], [{ id: 'arr', type: 'array<f32, 3>' }]);
+  ], [{ id: 'arr', type: 'array<float, 3>' }]);
 
   runParametricTest('should Construct and Extract Nested Structs', [
     // 1. Create inner structs

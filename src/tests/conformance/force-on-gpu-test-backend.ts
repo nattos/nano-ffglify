@@ -35,11 +35,11 @@ const getElementSize = (type?: string) => {
  * 6. Read back the storage buffer and populate the EvaluationContext variables.
  */
 const getComponentCount = (type: string): number => {
-  if (type === 'float2' || type === 'vec2<f32>') return 2;
-  if (type === 'float3' || type === 'vec3<f32>') return 3;
-  if (type === 'float4' || type === 'vec4<f32>') return 4;
-  if (type === 'float3x3' || type === 'mat3x3<f32>') return 9;
-  if (type === 'float4x4' || type === 'mat4x4<f32>') return 16;
+  if (type === 'float2' || type === 'vec2<float>') return 2;
+  if (type === 'float3' || type === 'vec3<float>') return 3;
+  if (type === 'float4' || type === 'vec4<float>') return 4;
+  if (type === 'float3x3' || type === 'mat3x3<float>') return 9;
+  if (type === 'float4x4' || type === 'mat4x4<float>') return 16;
   if (type.startsWith('array<')) {
     const match = type.match(/,\s*(\d+)>/);
     if (match) return parseInt(match[1]);
@@ -135,8 +135,8 @@ export const ForceOntoGPUTestBackend: TestBackend = {
                   bytesPerPixel = 4;
                   srcBytes = new Uint8Array(flatFloats.map(v => Math.max(0, Math.min(255, Math.floor(v * 255)))));
                 } else {
-                  const f32 = new Float32Array(flatFloats);
-                  srcBytes = new Uint8Array(f32.buffer);
+                  const float = new Float32Array(flatFloats);
+                  srcBytes = new Uint8Array(float.buffer);
                   bytesPerPixel = gpuFormat === 'r32float' ? 4 : 16;
                 }
 

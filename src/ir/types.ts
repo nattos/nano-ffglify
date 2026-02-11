@@ -1,14 +1,14 @@
 export type DataType =
-  | 'float' | 'int' | 'bool'
+  | 'float' | 'int' | 'uint' | 'bool'
   | 'float2' | 'float3' | 'float4'
   | 'float3x3' | 'float4x4'
   | 'string' // logic only, usually
   | 'texture2d' // resource handle
   | 'sampler'
-  | string; // Allow custom Struct IDs or "array<T, N>" syntax (e.g. "array<f32, 10>")
+  | string; // Allow custom Struct IDs or "array<T, N>" syntax (e.g. "array<float, 10>")
 
 export const PRIMITIVE_TYPES = [
-  'float', 'int', 'bool',
+  'float', 'int', 'uint', 'bool',
   'float2', 'float3', 'float4',
   'float3x3', 'float4x4',
   'string',

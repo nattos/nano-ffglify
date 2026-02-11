@@ -28,7 +28,7 @@ describe('Compliance: Negative Data Type Validation', () => {
     doc.resources.push({
       id: 'buf_invalid',
       type: 'buffer',
-      dataType: 'vec4<f32>', // Invalid
+      dataType: 'vec4<float>', // Invalid
       size: { mode: 'fixed', value: 1 },
       persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
     } as any);
@@ -36,7 +36,7 @@ describe('Compliance: Negative Data Type Validation', () => {
     const errors = validateIR(doc);
     expect(errors).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        message: expect.stringContaining("Buffer resource 'buf_invalid': Invalid data type 'vec4<f32>'"),
+        message: expect.stringContaining("Buffer resource 'buf_invalid': Invalid data type 'vec4<float>'"),
         severity: 'error'
       })
     ]));

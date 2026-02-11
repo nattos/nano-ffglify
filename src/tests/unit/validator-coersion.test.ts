@@ -113,7 +113,7 @@ describe('Validator Coercion Rules', () => {
     const errors = validateIR(ir);
     // buffer_store logic in validator.ts checks: if (actual !== expected) error.
     // actual='int', expected='float'.
-    // It specifically mentions: "strict type casting (e.g. i32 -> f32) in generation implies implicit is BAD."
+    // It specifically mentions: "strict type casting (e.g. int -> float) in generation implies implicit is BAD."
     expect(errors).toHaveLength(1);
     expect(errors[0].message).toMatch(/Type Mismatch in buffer_store/);
   });

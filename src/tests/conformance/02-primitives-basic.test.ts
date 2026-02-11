@@ -29,9 +29,9 @@ describe('Conformance: Basic Primitives', () => {
       const nodesWithMeta = cases.map((c, i) => {
         const size = Array.isArray(c.expected) ? c.expected.length : 1;
         let dataType = 'float';
-        if (size === 2) dataType = 'vec2<f32>';
-        if (size === 3) dataType = 'vec3<f32>';
-        if (size === 4) dataType = 'vec4<f32>';
+        if (size === 2) dataType = 'vec2<float>';
+        if (size === 3) dataType = 'vec3<float>';
+        if (size === 4) dataType = 'vec4<float>';
 
         const nodeOffset = currentOffset;
         currentOffset += size;

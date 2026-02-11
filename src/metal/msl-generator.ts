@@ -1621,9 +1621,9 @@ export class MslGenerator {
   private irTypeToMsl(irType: string | undefined): string {
     if (!irType) return 'float';
     switch (irType) {
-      case 'float': case 'f32': return 'float';
-      case 'int': case 'i32': return 'int';
-      case 'uint': case 'u32': return 'uint';
+      case 'float': return 'float';
+      case 'int': return 'int';
+      case 'uint': return 'uint';
       case 'bool': return 'bool';
       case 'float2': return 'float2';
       case 'float3': return 'float3';
@@ -1682,7 +1682,7 @@ export class MslGenerator {
    */
   private getTypeFlatSize(irType: string): number {
     switch (irType) {
-      case 'float': case 'int': case 'i32': case 'bool': return 1;
+      case 'float': case 'int': case 'bool': case 'uint': return 1;
       case 'float2': return 2;
       case 'float3': return 3;
       case 'float4': case 'quat': return 4;
@@ -1724,8 +1724,11 @@ export class MslGenerator {
       case 'float':
         lines.push(`    float ${varName} = inputs[${offset}];`);
         return offset + 1;
-      case 'int': case 'i32':
+      case 'int':
         lines.push(`    int ${varName} = int(inputs[${offset}]);`);
+        return offset + 1;
+      case 'uint':
+        lines.push(`    uint ${varName} = uint(inputs[${offset}]);`);
         return offset + 1;
       case 'bool':
         lines.push(`    bool ${varName} = inputs[${offset}] != 0.0f;`);
@@ -1761,8 +1764,11 @@ export class MslGenerator {
             if (mt === 'float') {
               memberExprs.push(`inputs[${memberOffset}]`);
               memberOffset += 1;
-            } else if (mt === 'int' || mt === 'i32') {
+            } else if (mt === 'int') {
               memberExprs.push(`int(inputs[${memberOffset}])`);
+              memberOffset += 1;
+            } else if (mt === 'uint') {
+              memberExprs.push(`uint(inputs[${memberOffset}])`);
               memberOffset += 1;
             } else if (mt === 'float2') {
               memberExprs.push(`float2(inputs[${memberOffset}], inputs[${memberOffset + 1}])`);
@@ -1804,8 +1810,10 @@ export class MslGenerator {
                   lines.push(`    ${varName}[${i}].${fieldName} = float3(inputs[${offset + i * elemSize + memberOff}], inputs[${offset + i * elemSize + memberOff + 1}], inputs[${offset + i * elemSize + memberOff + 2}]);`);
                 } else if (mt === 'float4') {
                   lines.push(`    ${varName}[${i}].${fieldName} = float4(inputs[${offset + i * elemSize + memberOff}], inputs[${offset + i * elemSize + memberOff + 1}], inputs[${offset + i * elemSize + memberOff + 2}], inputs[${offset + i * elemSize + memberOff + 3}]);`);
-                } else if (mt === 'int' || mt === 'i32') {
+                } else if (mt === 'int') {
                   lines.push(`    ${varName}[${i}].${fieldName} = int(inputs[${offset + i * elemSize + memberOff}]);`);
+                } else if (mt === 'uint') {
+                  lines.push(`    ${varName}[${i}].${fieldName} = uint(inputs[${offset + i * elemSize + memberOff}]);`);
                 } else {
                   lines.push(`    ${varName}[${i}].${fieldName} = inputs[${offset + i * elemSize + memberOff}];`);
                 }
@@ -1839,8 +1847,11 @@ export class MslGenerator {
               if (mt === 'float') {
                 lines.push(`        ${varName}[_i].${fieldName} = inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}];`);
                 memberOff += 1;
-              } else if (mt === 'int' || mt === 'i32') {
+              } else if (mt === 'int') {
                 lines.push(`        ${varName}[_i].${fieldName} = int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}]);`);
+                memberOff += 1;
+              } else if (mt === 'uint') {
+                lines.push(`        ${varName}[_i].${fieldName} = uint(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}]);`);
                 memberOff += 1;
               } else if (mt === 'float2') {
                 lines.push(`        ${varName}[_i].${fieldName} = float2(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}], inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 1}]);`);

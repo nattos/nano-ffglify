@@ -616,10 +616,10 @@ export class WgslGenerator {
         const v = func.localVars.find(l => l.id === varId);
         const i = func.inputs.find(inp => inp.id === varId);
         const t = (v?.type || i?.type || '').toLowerCase();
-        if (t.includes('i32') || t.includes('int')) elemType = 'i32';
-        else if (t.includes('u32') || t.includes('uint')) elemType = 'u32';
-        else if (t.includes('bool')) elemType = 'bool';
-        else if (t.includes('f32') || t.includes('float')) elemType = 'f32';
+        if (t === 'int') elemType = 'int';
+        else if (t === 'uint') elemType = 'uint';
+        else if (t === 'bool') elemType = 'bool';
+        else if (t === 'float') elemType = 'float';
       }
 
       const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
@@ -1388,10 +1388,16 @@ export class WgslGenerator {
         const len = match[2];
         return len ? `array<${this.resolveType(inner)}, ${len}>` : `array<${this.resolveType(inner)} > `;
       }
-      return type.replace(/\bfloat\b/g, 'f32').replace(/\bint\b/g, 'i32');
+      const match2 = type.match(/^array<(.+?)(?:,\s*(\d+))?>$/);
+      if (match2) {
+        const inner = match2[1];
+        const len = match2[2];
+        return len ? `array<${this.resolveType(inner)}, ${len}>` : `array<${this.resolveType(inner)}>`;
+      }
+      return type;
     }
 
-    return type.replace(/\bfloat\b/g, 'f32').replace(/\bint\b/g, 'i32');
+    return type;
   }
 
   private getComponentCount(type: DataType | string): number {
@@ -1585,9 +1591,9 @@ export class WgslGenerator {
     const fromCount = this.getComponentCount(fromType);
     const toCount = this.getComponentCount(toType);
 
-    if (toType === 'float' || toType === 'f32') return `f32(${expr})`;
-    if (toType === 'int' || toType === 'i32') return `i32(${expr})`;
-    if (toType === 'uint' || toType === 'u32') return `u32(${expr})`;
+    if (toType === 'float') return `f32(${expr})`;
+    if (toType === 'int') return `i32(${expr})`;
+    if (toType === 'uint') return `u32(${expr})`;
     if (toType === 'bool' || toType === 'boolean') return `bool(${expr})`;
 
     if (toType.startsWith('float') && toCount > 1 && !toType.includes('x')) {

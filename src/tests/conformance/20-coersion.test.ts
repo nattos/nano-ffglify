@@ -150,7 +150,7 @@ describe('20-coersion', () => {
   const shaderFloatArr: FunctionDef = {
     id: 'shader_float_arr',
     type: 'shader',
-    inputs: [{ id: 'data', type: 'array<f32, 2>' }],
+    inputs: [{ id: 'data', type: 'array<float, 2>' }],
     outputs: [],
     localVars: [],
     nodes: [

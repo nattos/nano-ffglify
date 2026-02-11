@@ -320,15 +320,15 @@ const resolveNodeType = (
       if (Array.isArray(node['values'])) len = node['values'].length;
       else if (typeof node['length'] === 'number') len = node['length'];
 
-      // Normalize internal type names to WGSL types for the string
+      // Normalize internal type names to official IR types
       let scalarType = type;
-      if (type === 'float') scalarType = 'f32';
-      else if (type === 'int' || type === 'i32') scalarType = 'i32';
-      else if (type === 'uint' || type === 'u32') scalarType = 'u32';
+      if (type === 'float') scalarType = 'float';
+      else if (type === 'int') scalarType = 'int';
+      else if (type === 'uint') scalarType = 'uint';
       else if (type === 'bool' || type === 'boolean') scalarType = 'bool';
 
       // Special case: Float arrays of length 2/3/4 are vectors in our signatures
-      if (scalarType === 'f32') {
+      if (scalarType === 'float') {
         if (len === 2) { cache.set(nodeId, 'float2'); return 'float2'; }
         if (len === 3) { cache.set(nodeId, 'float3'); return 'float3'; }
         if (len === 4) { cache.set(nodeId, 'float4'); return 'float4'; }
@@ -344,7 +344,7 @@ const resolveNodeType = (
       const localVar = func.localVars.find(v => v.id === varId);
       const globalVar = doc.inputs?.find(i => i.id === varId);
       const type = localVar?.type || globalVar?.type || 'float';
-      const vType = type === 'f32' ? 'float' : (type === 'i32' || type === 'int' ? 'int' : type as ValidationType);
+      const vType = type as ValidationType;
       cache.set(nodeId, vType);
       return vType;
     }
@@ -354,17 +354,17 @@ const resolveNodeType = (
       const resDef = doc.resources?.find(r => r.id === resId);
 
       const type = resDef?.dataType || 'float';
-      // Normalize 'vecN<f32>' or 'floatN' to internal ValidationType
-      let vType: ValidationType = 'float';
-      if (type === 'f32' || type === 'float') vType = 'float';
-      else if (type === 'i32' || type === 'int') vType = 'int';
-      else if (type === 'u32' || type === 'uint') vType = 'uint';
+      // Normalize 'floatN' to internal ValidationType
+      let vType = type as ValidationType;
+      if (type === 'float') vType = 'float';
+      else if (type === 'int') vType = 'int';
+      else if (type === 'uint') vType = 'uint';
       else if (type === 'bool' || type === 'boolean') vType = 'boolean';
-      else if (type === 'vec2<f32>' || type === 'float2') vType = 'float2';
-      else if (type === 'vec3<f32>' || type === 'float3') vType = 'float3';
-      else if (type === 'vec4<f32>' || type === 'float4') vType = 'float4';
-      else if (type === 'mat3x3<f32>' || type === 'float3x3') vType = 'float3x3';
-      else if (type === 'mat4x4<f32>' || type === 'float4x4') vType = 'float4x4';
+      else if (type === 'float2') vType = 'float2';
+      else if (type === 'float3') vType = 'float3';
+      else if (type === 'float4') vType = 'float4';
+      else if (type === 'float3x3') vType = 'float3x3';
+      else if (type === 'float4x4') vType = 'float4x4';
 
       cache.set(nodeId, vType);
       return vType;
@@ -384,10 +384,10 @@ const resolveNodeType = (
         if (match) {
           const sType = match[1];
           // Map back to ValidationType
-          if (sType === 'f32') { cache.set(nodeId, 'float'); return 'float'; }
-          if (sType === 'i32') { cache.set(nodeId, 'int'); return 'int'; }
-          if (sType === 'u32') { cache.set(nodeId, 'uint'); return 'uint'; }
-          if (sType === 'bool') { cache.set(nodeId, 'boolean'); return 'boolean'; }
+          if (sType === 'float') { cache.set(nodeId, 'float'); return 'float'; }
+          if (sType === 'int') { cache.set(nodeId, 'int'); return 'int'; }
+          if (sType === 'uint') { cache.set(nodeId, 'uint'); return 'uint'; }
+          if (sType === 'bool' || sType === 'boolean') { cache.set(nodeId, 'boolean'); return 'boolean'; }
           // If it is a struct name or other type
           cache.set(nodeId, sType as ValidationType);
           return sType as ValidationType;
@@ -416,9 +416,9 @@ const resolveNodeType = (
         const member = structDef.members.find(m => m.name === field);
         if (member) {
           let mType = member.type as ValidationType;
-          if (mType === 'f32') mType = 'float';
-          else if (mType === 'i32' || mType === 'int') mType = 'int';
-          else if (mType === 'u32' || mType === 'uint') mType = 'uint';
+          if (mType === 'float') mType = 'float';
+          else if (mType === 'int') mType = 'int';
+          else if (mType === 'uint') mType = 'uint';
 
           cache.set(nodeId, mType);
           return mType;
@@ -508,8 +508,21 @@ const validateDataType = (type: string, doc: IRDocument, errors: LogicValidation
   const isStruct = doc.structs?.some(s => s.id === type);
   if (isStruct) return;
 
-  if (type.startsWith('array<')) return;
-  if (type.endsWith('[]')) return;
+  if (type.startsWith('array<')) {
+    const match = type.match(/^array<([^,]+),\s*(\d+)?>/);
+    if (!match) {
+      errors.push({ functionId, message: `${contextMsg}: Invalid array syntax '${type}'. Expected 'array<Type, N>'.`, severity: 'error' });
+      return;
+    }
+    const innerType = match[1].trim();
+    validateDataType(innerType, doc, errors, `${contextMsg} (array element)`, functionId);
+    return;
+  }
+  if (type.endsWith('[]')) {
+    const innerType = type.substring(0, type.length - 2).trim();
+    validateDataType(innerType, doc, errors, `${contextMsg} (array element)`, functionId);
+    return;
+  }
 
   errors.push({ functionId, message: `${contextMsg}: Invalid data type '${type}'. Must be a primitive or defined struct.`, severity: 'error' });
 };
