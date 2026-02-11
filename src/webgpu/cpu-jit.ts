@@ -6,6 +6,7 @@ import { reconstructEdges } from '../ir/utils';
 import { CompilationMetadata, WgslGenerator } from './wgsl-generator';
 import { CompiledTaskFunction, CompiledInitFunction } from './jit-types';
 import { precomputeShaderInfo, precomputeResourceLayout } from './precompute';
+import { inferFunctionTypes, InferredTypes } from '../ir/validator';
 
 export interface CompiledJitResult {
   initCode: string;
@@ -108,7 +109,8 @@ export class CpuJitCompiler {
     for (const fid of reachable) {
       const f = allFunctions.find((func: any) => func.id === fid);
       if (f) {
-        this.emitFunction(f, lines, sanitizeId, nodeResId, funcName, allFunctions);
+        const inferredTypes = inferFunctionTypes(f, ir);
+        this.emitFunction(f, lines, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes);
         lines.push('');
       }
     }
@@ -244,7 +246,7 @@ require('./intrinsics.js');
     return lines.join('\n');
   }
 
-  private emitFunction(f: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[]) {
+  private emitFunction(f: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes) {
     lines.push(`async function ${funcName(f.id)} (ctx, args) {
       `);
 
@@ -282,7 +284,7 @@ require('./intrinsics.js');
         emitPure(edge.from);
       });
 
-      lines.push(`  ${nodeResId(node.id)} = ${this.compileExpression(node, f, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure, edges)}; `);
+      lines.push(`  ${nodeResId(node.id)} = ${this.compileExpression(node, f, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, true, emitPure, edges)}; `);
     };
 
     // Compile node logic
@@ -295,7 +297,7 @@ require('./intrinsics.js');
     });
 
     for (const entry of entryNodes) {
-      this.emitChain('  ', entry, f, lines, new Set(), sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      this.emitChain('  ', entry, f, lines, new Set(), sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
     }
 
     lines.push(`  return 0; // Default return`);
@@ -308,7 +310,7 @@ require('./intrinsics.js');
       op === 'cmd_resize_resource' || op === 'cmd_draw' || op === 'cmd_dispatch';
   }
 
-  private emitChain(indent: string, startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
+  private emitChain(indent: string, startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]) {
     let curr: Node | undefined = startNode;
 
     while (curr) {
@@ -329,18 +331,18 @@ require('./intrinsics.js');
       // even if it's executable, so its variable is settled if used later.
       if (this.hasResult(curr.op)) {
         // For executable nodes that have results, we emit them directly in the chain
-        this.emitNode(indent, curr, func, lines, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        this.emitNode(indent, curr, func, lines, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       } else if (curr.op === 'flow_branch') {
-        this.emitBranch(indent, curr, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        this.emitBranch(indent, curr, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         return;
       } else if (curr.op === 'flow_loop') {
-        this.emitLoop(indent, curr, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        this.emitLoop(indent, curr, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         return;
       } else if (curr.op === 'func_return') {
-        lines.push(`${indent}return ${this.resolveArg(curr, 'val', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)};`);
+        lines.push(`${indent}return ${this.resolveArg(curr, 'val', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)};`);
         return;
       } else {
-        this.emitNode(indent, curr, func, lines, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        this.emitNode(indent, curr, func, lines, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       }
 
       const outEdge = edges.find(e => e.from === curr!.id && e.portOut === 'exec_out' && e.type === 'execution');
@@ -348,71 +350,71 @@ require('./intrinsics.js');
     }
   }
 
-  private emitBranch(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
-    const cond = this.resolveArg(node, 'cond', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+  private emitBranch(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]) {
+    const cond = this.resolveArg(node, 'cond', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
     lines.push(`${indent}if (${cond}) {`);
     const trueEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_true' && e.type === 'execution');
     const trueNode = trueEdge ? func.nodes.find(n => n.id === trueEdge.to) : undefined;
-    if (trueNode) this.emitChain(indent + '  ', trueNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+    if (trueNode) this.emitChain(indent + '  ', trueNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
     lines.push(`${indent}} else {`);
     const falseEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_false' && e.type === 'execution');
     const falseNode = falseEdge ? func.nodes.find(n => n.id === falseEdge.to) : undefined;
-    if (falseNode) this.emitChain(indent + '  ', falseNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+    if (falseNode) this.emitChain(indent + '  ', falseNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
     lines.push(`${indent}}`);
   }
 
-  private emitLoop(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
-    const start = this.resolveArg(node, 'start', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-    const end = this.resolveArg(node, 'end', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+  private emitLoop(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]) {
+    const start = this.resolveArg(node, 'start', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+    const end = this.resolveArg(node, 'end', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
     const loopVar = `loop_${node.id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
     lines.push(`${indent}for (let ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
 
     const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
     const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;
-    if (bodyNode) this.emitChain(indent + '  ', bodyNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+    if (bodyNode) this.emitChain(indent + '  ', bodyNode, func, lines, new Set(visited), sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
     lines.push(`${indent}}`);
 
     const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
     const nextNode = compEdge ? func.nodes.find(n => n.id === compEdge.to) : undefined;
-    if (nextNode) this.emitChain(indent, nextNode, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+    if (nextNode) this.emitChain(indent, nextNode, func, lines, visited, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
   }
 
-  private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]) {
+  private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]) {
     if (node.op === 'cmd_dispatch') {
       const targetId = node['func'];
-      const dimExpr = this.resolveArg(node, 'dispatch', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-      lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimExpr}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
+      const dimExpr = this.resolveArg(node, 'dispatch', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+      lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimExpr}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)});`);
     }
     else if (node.op === 'call_func') {
       const targetId = node['func'];
       const targetFunc = allFunctions.find(f => f.id === targetId);
       if (targetFunc?.type === 'shader') {
-        const dimExpr = this.resolveArg(node, 'dispatch', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimExpr}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
+        const dimExpr = this.resolveArg(node, 'dispatch', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimExpr}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)});`);
       } else if (targetFunc) {
-        lines.push(`${indent}${nodeResId(node.id)} = await ${funcName(targetId)}(ctx, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)});`);
+        lines.push(`${indent}${nodeResId(node.id)} = await ${funcName(targetId)}(ctx, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)});`);
       }
     }
     else if (node.op === 'cmd_draw') {
       const target = node['target'];
       const vertex = node['vertex'];
       const fragment = node['fragment'];
-      const count = this.resolveArg(node, 'count', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      const count = this.resolveArg(node, 'count', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       const pipeline = JSON.stringify(node['pipeline'] || {});
       lines.push(`${indent}await ctx.globals.draw('${target}', '${vertex}', '${fragment}', ${count}, ${pipeline});`);
     }
     else if (node.op === 'cmd_resize_resource') {
       const resId = node['resource'];
-      const size = this.resolveArg(node, 'size', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      const size = this.resolveArg(node, 'size', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       const resolveRaw = (key: string) => {
         const edge = edges.find(e => e.to === node.id && e.portIn === key && e.type === 'data');
-        if (edge || node[key] !== undefined) return this.resolveArg(node, key, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        if (edge || node[key] !== undefined) return this.resolveArg(node, key, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         return 'undefined';
       };
       lines.push(`${indent}ctx.globals.resize('${resId}', ${size}, ${resolveRaw('format')}, ${resolveRaw('clear')});`);
     }
     else if (node.op === 'var_set') {
-      const val = this.resolveArg(node, 'val', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      const val = this.resolveArg(node, 'val', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       const varId = node['var'];
       if (func.localVars.some(v => v.id === varId)) lines.push(`${indent}${sanitizeId(varId, 'var')} = ${val};`);
       else if (func.inputs.some(i => i.id === varId)) lines.push(`${indent}${sanitizeId(varId, 'input')} = ${val};`);
@@ -428,14 +430,14 @@ require('./intrinsics.js');
     }
     else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'];
-      const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       lines.push(`${indent}ctx.resources.get('${bufferId}').data[${idx}] = ${val};`);
     }
     else if (node.op === 'texture_store') {
       const texId = node['tex'];
-      const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       lines.push(`${indent}((coords, val) => {
         const res = ctx.resources.get('${texId}');
         if (!res) return;
@@ -444,15 +446,15 @@ require('./intrinsics.js');
       })(${coords}, ${val});`);
     }
     else if (this.hasResult(node.op)) {
-      lines.push(`${indent}${nodeResId(node.id)} = ${this.compileExpression(node, func, sanitizeId, nodeResId, funcName, allFunctions, true, emitPure, edges)};`);
+      lines.push(`${indent}${nodeResId(node.id)} = ${this.compileExpression(node, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, true, emitPure, edges)};`);
     }
   }
 
-  private resolveArg(node: Node, key: string, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]): string {
+  private resolveArg(node: Node, key: string, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]): string {
     const edge = edges.find(e => e.to === node.id && (e.portIn === key || (key === 'val' && e.portIn === 'value')) && e.type === 'data');
     if (edge) {
       const source = func.nodes.find(n => n.id === edge.from);
-      if (source) return this.compileExpression(source, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure, edges);
+      if (source) return this.compileExpression(source, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, false, emitPure, edges);
     }
 
     let val: any = undefined;
@@ -475,7 +477,7 @@ require('./intrinsics.js');
           if (func.inputs.some(i => i.id === s)) return sanitizeId(s, 'input');
           if (this.ir?.inputs.some((i: any) => i.id === s)) return `ctx.inputs.get('${s}')`;
           const targetNode = func.nodes.find(n => n.id === s);
-          if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, false, emitPure, edges);
+          if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, false, emitPure, edges);
         }
         return JSON.stringify(s);
       };
@@ -488,15 +490,15 @@ require('./intrinsics.js');
     return '0';
   }
 
-  private compileExpression(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], forceEmit: boolean = false, emitPure: (id: string) => void, edges: Edge[]): string {
+  private compileExpression(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, forceEmit: boolean = false, emitPure: (id: string) => void, edges: Edge[]): string {
     if (!forceEmit && this.hasResult(node.op)) {
       emitPure(node.id);
       return nodeResId(node.id);
     }
 
-    const a = (k = 'a') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-    const b = (k = 'b') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-    const val = (k = 'val') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+    const a = (k = 'a') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+    const b = (k = 'b') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+    const val = (k = 'val') => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
 
     switch (node.op) {
       case 'var_get': {
@@ -519,7 +521,7 @@ require('./intrinsics.js');
       }
       case 'texture_load': {
         const texId = node['tex'];
-        const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         return `((coords) => {
           const res = ctx.resources.get('${texId}');
           if (!res) return [0, 0, 0, 0];
@@ -530,7 +532,7 @@ require('./intrinsics.js');
       }
       case 'texture_sample': {
         const texId = node['tex'];
-        const uv = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const uv = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         return `((uv) => {
           const res = ctx.resources.get('${texId}');
           if (!res) return [0, 0, 0, 0];
@@ -655,33 +657,61 @@ require('./intrinsics.js');
         return Math.floor(Math.log2(Math.abs(v))) + 1;
       })`;
 
-      case 'math_add': return `_applyBinary(${a()}, ${b()}, (x, y) => x + y)`;
-      case 'math_sub': return `_applyBinary(${a()}, ${b()}, (x, y) => x - y)`;
-      case 'math_mul': return `_applyBinary(${a()}, ${b()}, (x, y) => x * y)`;
-      case 'math_div': return `_applyBinary(${a()}, ${b()}, (x, y) => x / y)`;
-      case 'math_mod': return `_applyBinary(${a()}, ${b()}, (x, y) => x % y)`;
-      case 'math_pow': return `_applyBinary(${a()}, ${b()}, Math.pow)`;
-      case 'math_min': return `_applyBinary(${a()}, ${b()}, Math.min)`;
-      case 'math_max': return `_applyBinary(${a()}, ${b()}, Math.max)`;
-      case 'math_atan2': return `_applyBinary(${a()}, ${b()}, Math.atan2)`;
+      case 'math_add': {
+        const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${aExpr}, ${bExpr}, (x, y) => x + y)`;
+      }
+      case 'math_sub': {
+        const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${aExpr}, ${bExpr}, (x, y) => x - y)`;
+      }
+      case 'math_mul': {
+        const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${aExpr}, ${bExpr}, (x, y) => x * y)`;
+      }
+      case 'math_div': {
+        const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${aExpr}, ${bExpr}, (x, y) => x / y)`;
+      }
+      case 'math_mod': {
+        const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${aExpr}, ${bExpr}, (x, y) => x % y)`;
+      }
+      case 'math_pow': {
+        const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${aExpr}, ${bExpr}, Math.pow)`;
+      }
+      case 'math_min': {
+        const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${aExpr}, ${bExpr}, Math.min)`;
+      }
+      case 'math_max': {
+        const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${aExpr}, ${bExpr}, Math.max)`;
+      }
+      case 'math_atan2': {
+        const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${aExpr}, ${bExpr}, Math.atan2)`;
+      }
       case 'math_clamp': {
-        const minVal = this.resolveArg(node, 'min', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        const maxVal = this.resolveArg(node, 'max', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        return `((v, min, max) => _applyBinary(_applyBinary(v, min, Math.max), max, Math.min))(${val()}, ${minVal}, ${maxVal})`;
+        const result = this.resolveCoercedArgs(node, ['val', 'min', 'max'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `((v, min, max) => _applyBinary(_applyBinary(v, min, Math.max), max, Math.min))(${result[0]}, ${result[1]}, ${result[2]})`;
       }
       case 'math_mad': {
-        const cVal = this.resolveArg(node, 'c', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        return `_applyBinary(_applyBinary(${a()}, ${b()}, (x, y) => x * y), ${cVal}, (x, y) => x + y)`;
+        const [aExp, bExp, cExp] = this.resolveCoercedArgs(node, ['a', 'b', 'c'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(_applyBinary(${aExp}, ${bExp}, (x, y) => x * y), ${cExp}, (x, y) => x + y)`;
       }
       case 'math_mix': {
-        const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${a()}, ${b()}, ${t})`;
+        const [aExp, bExp, tExp] = this.resolveCoercedArgs(node, ['a', 'b', 't'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${aExp}, ${bExp}, ${tExp})`;
       }
-      case 'math_step': return `_applyBinary(${this.resolveArg(node, 'edge', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}, ${val()}, (e, x) => x < e ? 0 : 1)`;
+      case 'math_step': {
+        const [edge, x] = this.resolveCoercedArgs(node, ['edge', 'val'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `_applyBinary(${edge}, ${x}, (e, x) => x < e ? 0 : 1)`;
+      }
       case 'math_smoothstep': {
-        const e0 = this.resolveArg(node, 'edge0', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        const e1 = this.resolveArg(node, 'edge1', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        return `((v, edge0, edge1) => _applyUnary(_applyBinary(_applyBinary(v, edge0, (x, e) => (x - e)), _applyBinary(edge1, edge0, (e1, e0) => (e1 - e0)), (n, d) => Math.max(0, Math.min(1, n / d))), t => t * t * (3 - 2 * t)))(${val()}, ${e0}, ${e1})`;
+        const [e0, e1, v] = this.resolveCoercedArgs(node, ['edge0', 'edge1', 'val'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `((v, edge0, edge1) => _applyUnary(_applyBinary(_applyBinary(v, edge0, (x, e) => (x - e)), _applyBinary(edge1, edge0, (e1, e0) => (e1 - e0)), (n, d) => Math.max(0, Math.min(1, n / d))), t => t * t * (3 - 2 * t)))(${v}, ${e0}, ${e1})`;
       }
 
       case 'mat_identity': {
@@ -707,7 +737,7 @@ require('./intrinsics.js');
         const src = b();
         const tEdge = edges.find(e => e.to === node.id && e.portIn === 't' && e.type === 'data');
         if (tEdge || (node['t'] !== undefined)) {
-          const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+          const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
           return `_applyBinary(_applyBinary(${dst}, _applyBinary(1, ${t}, (x, y) => x - y), (x, y) => x * y), _applyBinary(${src}, ${t}, (x, y) => x * y), (x, y) => x + y)`;
         }
         return `((d, s) => {
@@ -722,10 +752,10 @@ require('./intrinsics.js');
         })(${dst}, ${src})`;
       }
 
-      case 'vec_get_element': return `(${this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}[${this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}])`;
+      case 'vec_get_element': return `(${this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)}[${this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)}])`;
       case 'vec_mix': {
-        const t = this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${a()}, ${b()}, ${t})`;
+        const [aExp, bExp, tExp] = this.resolveCoercedArgs(node, ['a', 'b', 't'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${aExp}, ${bExp}, ${tExp})`;
       }
 
       case 'math_pi': return `Math.PI`;
@@ -763,13 +793,13 @@ require('./intrinsics.js');
         }
         const keys = size === 9 ? ['m00', 'm10', 'm20', 'm01', 'm11', 'm21', 'm02', 'm12', 'm22'] :
           ['m00', 'm10', 'm20', 'm30', 'm01', 'm11', 'm21', 'm31', 'm02', 'm12', 'm22', 'm32', 'm03', 'm13', 'm23', 'm33'];
-        return `[${keys.map(k => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)).join(', ')}]`;
+        return `[${keys.map(k => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)).join(', ')}]`;
       }
       case 'vec_dot': return `_vec_dot(${a()}, ${b()})`;
       case 'vec_length': return `_vec_length(${a()})`;
       case 'vec_normalize': return `_vec_normalize(${a()})`;
       case 'vec_swizzle': {
-        const vec = this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const vec = this.resolveArg(node, 'vec', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         const channels = node['channels'] || 'x';
         const map: any = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3 };
         const idxs = channels.split('').map((c: string) => map[c]);
@@ -780,27 +810,27 @@ require('./intrinsics.js');
       case 'struct_construct': {
         const type = node['type'];
         const structDef = this.ir?.structs?.find(s => s.id === type);
-        const parts = structDef ? structDef.members.map(m => `'${m.name}': ${this.resolveArg(node, `values.${m.name}`, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}`) : [];
+        const parts = structDef ? structDef.members.map(m => `'${m.name}': ${this.resolveArg(node, `values.${m.name}`, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)}`) : [];
         return `{ ${parts.join(', ')} }`;
       }
-      case 'struct_extract': return `(${this.resolveArg(node, 'struct', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}['${node['field'] || node['member']}'])`;
+      case 'struct_extract': return `(${this.resolveArg(node, 'struct', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)}['${node['field'] || node['member']}'])`;
 
       case 'array_construct': {
         const values = node['values'];
         if (Array.isArray(values)) {
-          const items = values.map((_, i) => this.resolveArg(node, `values[${i}]`, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges));
+          const items = values.map((_, i) => this.resolveArg(node, `values[${i}]`, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges));
           return `[${items.join(', ')}]`;
         }
-        const len = this.resolveArg(node, 'length', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
-        const fill = this.resolveArg(node, 'fill', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+        const len = this.resolveArg(node, 'length', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        const fill = this.resolveArg(node, 'fill', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         if (len !== undefined && len !== 'undefined') {
           return `new Array(${len}).fill(${fill ?? 0})`;
         }
         return `[]`;
       }
-      case 'array_extract': return `${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}[${a('index')}]`;
-      case 'array_length': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}.length)`;
-      case 'array_set': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)}[${a('index')}] = ${val('value')})`;
+      case 'array_extract': return `${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)}[${a('index')}]`;
+      case 'array_length': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)}.length)`;
+      case 'array_set': return `(${this.resolveArg(node, 'array', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)}[${a('index')}] = ${val('value')})`;
 
       case 'quat': return `[${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}]`;
       case 'quat_identity': return `[0, 0, 0, 1]`;
@@ -822,14 +852,71 @@ require('./intrinsics.js');
           ];
         })(${v}, ${q})`;
       }
-      case 'quat_slerp': return `_quat_slerp(${a()}, ${b()}, ${this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)})`;
-      case 'quat_to_float4x4': return `_quat_to_mat4(${this.resolveArg(node, 'q', func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges)})`;
+      case 'quat_slerp': return `_quat_slerp(${a()}, ${b()}, ${this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)})`;
+      case 'quat_to_float4x4': return `_quat_to_mat4(${this.resolveArg(node, 'q', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)})`;
 
       default: return '0';
     }
   }
 
-  private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], emitPure: (id: string) => void, edges: Edge[]): string {
+  private resolveCoercedArgs(
+    node: Node,
+    keys: string[],
+    mode: 'float' | 'unify',
+    func: FunctionDef,
+    sanitizeId: (id: string, type?: any) => string,
+    nodeResId: (id: string) => string,
+    funcName: (id: string) => string,
+    allFunctions: FunctionDef[],
+    inferredTypes: InferredTypes,
+    emitPure: (id: string) => void,
+    edges: Edge[]
+  ): string[] {
+    const rawArgs = keys.map(k => this.resolveArg(node, k, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges));
+
+    if (!inferredTypes) return rawArgs; // Should not happen with new architecture
+
+    const getType = (k: string) => {
+      const val = node[k];
+      // Check cached/inferred type of the node if it's a reference
+      if (typeof val === 'string') {
+        const t = inferredTypes.get(val);
+        if (t) return t;
+        // Check locals/inputs
+        if (func.localVars.some(v => v.id === val)) return func.localVars.find(v => v.id === val)!.type;
+        if (func.inputs.some(i => i.id === val)) return func.inputs.find(i => i.id === val)!.type;
+      }
+      if (typeof val === 'number') return Number.isInteger(val) ? 'int' : 'float';
+      if (typeof val === 'boolean') return 'bool';
+      return 'float';
+    };
+
+    const argTypes = keys.map(getType);
+
+    if (mode === 'float') {
+      return rawArgs.map((arg, i) => {
+        const t = argTypes[i];
+        if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool' || t === 'boolean') {
+          return `Number(${arg})`;
+        }
+        return arg;
+      });
+    } else if (mode === 'unify') {
+      const hasFloat = argTypes.some(t => t.includes('float') || t.includes('vec') || t.includes('mat') || t === 'f32');
+      if (hasFloat) {
+        return rawArgs.map((arg, i) => {
+          const t = argTypes[i];
+          if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool') {
+            return `Number(${arg})`;
+          }
+          return arg;
+        });
+      }
+    }
+    return rawArgs;
+  }
+
+  private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]): string {
     const targetId = node['func'] as string;
     const targetFunc = allFunctions.find(f => f.id === targetId);
     if (!targetFunc) return '{}';
@@ -837,7 +924,7 @@ require('./intrinsics.js');
 
     const parts: string[] = [];
     targetFunc.inputs.forEach(input => {
-      const valExpr = this.resolveArg(node, `args.${input.id}`, func, sanitizeId, nodeResId, funcName, allFunctions, emitPure, edges);
+      const valExpr = this.resolveArg(node, `args.${input.id}`, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       parts.push(`'${input.id}': ${valExpr}`);
     });
     return `{ ${parts.join(', ')} }`;

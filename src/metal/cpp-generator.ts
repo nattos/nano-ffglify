@@ -181,8 +181,11 @@ export class CppGenerator {
     const params = ir.inputs.filter(i => i.type !== 'texture2d');
     params.forEach((p, idx) => {
       const label = p.label || p.id;
-      const def = p.default !== undefined ? p.default : 0.5;
-      lines.push(`    SetParamInfo(${idx}, "${label}", FF_TYPE_STANDARD, ${this.formatFloat(def)});`);
+      let def = p.default !== undefined ? p.default : 0.5;
+      if (Array.isArray(def)) {
+        def = def[0] !== undefined ? def[0] : 0.0;
+      }
+      lines.push(`    SetParamInfo(${idx}, "${label}", FF_TYPE_STANDARD, ${this.formatFloat(def as any)});`);
     });
     lines.push('}');
     lines.push('');
@@ -278,7 +281,8 @@ export class CppGenerator {
   /**
    * Format a number as a C++ float literal
    */
-  private formatFloat(n: number): string {
+  private formatFloat(n: number | boolean): string {
+    if (typeof n === 'boolean') return n ? '1.0f' : '0.0f';
     // Ensure we have a decimal point for float literals
     const s = String(n);
     if (s.includes('.') || s.includes('e') || s.includes('E')) {

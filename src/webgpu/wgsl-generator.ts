@@ -1182,15 +1182,9 @@ export class WgslGenerator {
     if (op === 'math_e') return '2.71828183';
 
     // Core Arithmetic with Broadcasting
+    // Core Arithmetic with Broadcasting
     if (op === 'math_add' || op === 'math_sub' || op === 'math_div' || op === 'math_mod' || op === 'math_atan2') {
-      const typeA = getType('a');
-      const typeB = getType('b');
-      // Use the output type (which is usually the vector type) as target for broadcasting
-      // If output is scalar, both inputs should be scalar anyway
-      const targetType = (this.getComponentCount(typeA) > 1) ? typeA : ((this.getComponentCount(typeB) > 1) ? typeB : 'float');
-
-      const aExpr = broadcast('a', targetType);
-      const bExpr = broadcast('b', targetType);
+      const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, options, ir, edges);
 
       if (op === 'math_add') return `(${aExpr} + ${bExpr})`;
       if (op === 'math_sub') return `(${aExpr} - ${bExpr})`;
@@ -1413,6 +1407,69 @@ export class WgslGenerator {
     }
 
     return 1;
+  }
+
+  private resolveCoercedArgs(
+    node: Node,
+    keys: string[],
+    mode: 'float' | 'unify',
+    func: FunctionDef,
+    options: WgslOptions,
+    ir: IRDocument,
+    edges: Edge[]
+  ): string[] {
+    // Resolve raw args first (using 'any' to get their natural representation)
+    const rawArgs = keys.map(k => this.resolveArg(node, k, func, options, ir, 'any', edges));
+
+    if (!options.nodeTypes) return rawArgs;
+
+    // Determine types
+    const getType = (k: string) => {
+      const val = node[k];
+      if (typeof val === 'number') return Number.isInteger(val) ? 'int' : 'float';
+      if (typeof val === 'boolean') return 'bool';
+      // Look up type from var or node
+      let t: string | undefined;
+      if (typeof val === 'string') {
+        t = options.nodeTypes?.get(val);
+        // Fallback: check input types or var types if not in nodeTypes
+        if (!t) {
+          const v = func.inputs.find(i => i.id === val);
+          if (v) t = v.type;
+        }
+        if (!t) {
+          const v = func.localVars.find(v => v.id === val);
+          if (v) t = v.type;
+        }
+      }
+      return t || 'float';
+    };
+
+    const argTypes = keys.map(getType);
+
+    // Apply unification/casting
+    if (mode === 'float') {
+      return rawArgs.map((arg, i) => {
+        const t = argTypes[i];
+        if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool') {
+          return `f32(${arg})`;
+        }
+        return arg;
+      });
+    } else if (mode === 'unify') {
+      const hasFloat = argTypes.some(t => t.includes('float') || t.includes('vec') || t.includes('mat') || t === 'f32');
+      if (hasFloat) {
+        return rawArgs.map((arg, i) => {
+          const t = argTypes[i];
+          if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool') {
+            return `f32(${arg})`;
+          }
+          return arg;
+        });
+      }
+    }
+
+    return rawArgs;
   }
 
   private formatLiteral(val: any, type: string | DataType): string {
