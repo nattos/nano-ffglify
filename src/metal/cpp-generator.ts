@@ -354,6 +354,10 @@ export class CppGenerator {
     const emittedPure = new Set<string>();
     const emitPure = (nodeId: string) => {
       if (emittedPure.has(nodeId)) return;
+      if (!f || !f.nodes) {
+        console.error(`[CPP] emitPure error: f=${!!f} nodes=${f?.nodes ? 'ok' : 'missing'} for nodeId=${nodeId}`);
+        throw new Error('FunctionDef invalid in emitPure');
+      }
       const node = f.nodes.find(n => n.id === nodeId);
       if (!node || this.isExecutable(node.op)) return;
 
@@ -707,7 +711,28 @@ export class CppGenerator {
         if (func.localVars.some(v => v.id === val)) return this.sanitizeId(val, 'var');
         if (func.inputs.some(i => i.id === val)) return this.sanitizeId(val, 'input');
         // Check IR global inputs (input inheritance)
-        if (this.ir?.inputs?.some(i => i.id === val)) return `ctx.getInput("${val}")`;
+        if (this.ir?.inputs?.some(i => i.id === val)) {
+          const varId = val;
+          const inputDef = this.ir.inputs.find(i => i.id === varId)!;
+          if (inputDef.type === 'float2') {
+            return `std::array<float, 2>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1")}`;
+          }
+          if (inputDef.type === 'float3') {
+            return `std::array<float, 3>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1"), ctx.getInput("${varId}_2")}`;
+          }
+          if (inputDef.type === 'float4') {
+            return `std::array<float, 4>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1"), ctx.getInput("${varId}_2"), ctx.getInput("${varId}_3")}`;
+          }
+          if (inputDef.type === 'float4x4') {
+            const items = Array.from({ length: 16 }, (_, i) => `ctx.getInput("${varId}_${i}")`);
+            return `std::array<float, 16>{${items.join(', ')}}`;
+          }
+          if (inputDef.type === 'float3x3') {
+            const items = Array.from({ length: 9 }, (_, i) => `ctx.getInput("${varId}_${i}")`);
+            return `std::array<float, 9>{${items.join(', ')}}`;
+          }
+          return `ctx.getInput("${varId}")`;
+        }
         const targetNode = func.nodes.find(n => n.id === val);
         if (targetNode && targetNode.id !== node.id) {
           return this.compileExpression(targetNode, func, allFunctions, false, emitPure, edges, inferredTypes);
@@ -804,8 +829,29 @@ export class CppGenerator {
         const varId = node['var'];
         if (func.localVars.some(v => v.id === varId)) return this.sanitizeId(varId, 'var');
         if (func.inputs.some(i => i.id === varId)) return this.sanitizeId(varId, 'input');
-        // Fallback: check IR global inputs (input inheritance)
-        if (this.ir?.inputs?.some(i => i.id === val)) return `ctx.getInput("${varId}")`;
+        if (this.ir?.inputs?.some(i => i.id === varId)) {
+          const inputDef = this.ir.inputs.find(i => i.id === varId)!;
+          if (inputDef.type === 'float2') {
+            return `std::array<float, 2>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1")}`;
+          }
+          if (inputDef.type === 'float3') {
+            return `std::array<float, 3>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1"), ctx.getInput("${varId}_2")}`;
+          }
+          if (inputDef.type === 'float4') {
+            return `std::array<float, 4>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1"), ctx.getInput("${varId}_2"), ctx.getInput("${varId}_3")}`;
+          }
+          if (inputDef.type === 'float4x4') {
+            // 16 floats
+            const items = Array.from({ length: 16 }, (_, i) => `ctx.getInput("${varId}_${i}")`);
+            return `std::array<float, 16>{${items.join(', ')}}`;
+          }
+          if (inputDef.type === 'float3x3') {
+            const items = Array.from({ length: 9 }, (_, i) => `ctx.getInput("${varId}_${i}")`);
+            return `std::array<float, 9>{${items.join(', ')}}`;
+          }
+          // Array types? "float[]" -> logic needed?
+          return `ctx.getInput("${varId}")`;
+        }
         throw new Error(`Variable '${varId}' is not defined`);
       }
       case 'literal': {
@@ -1180,6 +1226,8 @@ export class CppGenerator {
         const fmtId = formatMap[fmt] ?? 0;
         return `${this.formatFloat(fmtId)}`;
       }
+
+
 
       default:
         throw new Error(`C++ Generator: Unsupported op '${node.op}'`);

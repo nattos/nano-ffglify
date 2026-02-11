@@ -145,10 +145,13 @@ export const CppMetalBackend: TestBackend = {
         value.forEach((v, i) => {
           inputArgs.push('-i', `${name}_${i}:${v}`);
         });
+      } else if (typeof value === 'boolean') {
+        inputArgs.push('-i', `${name}:${value ? 1 : 0}`);
       } else if (typeof value === 'number') {
         inputArgs.push('-i', `${name}:${value}`);
       }
     }
+
 
     // 8. Run executable with optional metallib path, inputs, data file, and resource specs
     const metallibArg = metallibPath ? `"${metallibPath}" ` : '';

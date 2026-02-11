@@ -519,6 +519,11 @@ export const validateStructs = (doc: IRDocument, errors: LogicValidationError[])
 };
 
 const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<string>, errors: LogicValidationError[]) => {
+  if (!func || !Array.isArray(func.nodes)) {
+    errors.push({ functionId: func?.id || 'unknown', message: 'Function definition missing or invalid: nodes array is required', severity: 'error' });
+    return;
+  }
+
   // Validate Signatures
   func.inputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' input '${param.id}'`, func.id));
   func.outputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' output '${param.id}'`, func.id));
