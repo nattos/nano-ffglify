@@ -659,8 +659,8 @@ export class CppGenerator {
 
         for (const input of this.ir!.inputs!) {
           const irType = input.type || 'float';
-          const argExpr = `ctx.getInput("${input.id}")`;
-          this.emitArgFlattening(`${indent}    `, argExpr, irType, lines);
+          // Use flattened global inputs (e.g. "u_color_tint_0", "u_color_tint_1")
+          this.emitGlobalInputFlattening(`${indent}    `, input.id, irType, lines, []);
         }
 
         lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
@@ -805,7 +805,7 @@ export class CppGenerator {
         if (func.localVars.some(v => v.id === varId)) return this.sanitizeId(varId, 'var');
         if (func.inputs.some(i => i.id === varId)) return this.sanitizeId(varId, 'input');
         // Fallback: check IR global inputs (input inheritance)
-        if (this.ir?.inputs?.some(i => i.id === varId)) return `ctx.getInput("${varId}")`;
+        if (this.ir?.inputs?.some(i => i.id === val)) return `ctx.getInput("${varId}")`;
         throw new Error(`Variable '${varId}' is not defined`);
       }
       case 'literal': {
@@ -834,7 +834,7 @@ export class CppGenerator {
       case 'math_e': return '2.71828182845904523536f';
 
       // Math ops - inlined for simpler code
-      case 'math_neg': return `(-(${val()}))`; // Unary minus likely doesn't need coercion if val is float, but could for unification? 'unify' logic for unary? Usually no.
+      case 'math_neg': return `(-(${val()}))`;
       case 'math_abs': return unaryOp('abs', 'unify');
       case 'math_sign': return `applyUnary(${val()}, [](float x) -> float { return x > 0.0f ? 1.0f : (x < 0.0f ? -1.0f : 0.0f); })`;
       case 'math_sin': return unaryOp('sin', 'float');
@@ -869,8 +869,9 @@ export class CppGenerator {
       case 'math_step': { const [edge, v] = this.resolveCoercedArgs(node, ['edge', 'val'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `((${v}) >= (${edge}) ? 1.0f : 0.0f)`; }
       case 'math_smoothstep': {
         const [e0, e1, v] = this.resolveCoercedArgs(node, ['edge0', 'edge1', 'val'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
-        return `([](float e0, float e1, float x) { float t = std::max(0.0f, std::min(1.0f, (x - e0) / (e1 - e0))); return t * t * (3.0f - 2.0f * t); }(${e0}, ${e1}, ${v}))`;
+        return `clamp_val(((${v}) - (${e0})) / ((${e1}) - (${e0})), 0.0f, 1.0f) * (clamp_val(((${v}) - (${e0})) / ((${e1}) - (${e0})), 0.0f, 1.0f) * (3.0f - 2.0f * clamp_val(((${v}) - (${e0})) / ((${e1}) - (${e0})), 0.0f, 1.0f)))`;
       }
+
       case 'math_mix':
       case 'math_lerp': {
         const [argA, argB, argT] = this.resolveCoercedArgs(node, ['a', 'b', 't'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
@@ -921,8 +922,6 @@ export class CppGenerator {
       case 'vec_faceforward': { const [n, i, nRef] = this.resolveCoercedArgs(node, ['N', 'I', 'Nref'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `faceforward(${n}, ${i}, ${nRef})`; }
       case 'vec_reflect': { const [i, n] = this.resolveCoercedArgs(node, ['I', 'N'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `reflect(${i}, ${n})`; }
       case 'vec_refract': { const [i, n, eta] = this.resolveCoercedArgs(node, ['I', 'N', 'eta'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `refract(${i}, ${n}, ${eta})`; }
-
-      // ... existing code ...
 
       case 'math_mantissa': {
         const v = val(); return `([](float x) { int e; return std::frexp(x, &e); }(${v}))`;
@@ -1187,6 +1186,44 @@ export class CppGenerator {
     }
   }
 
+  private emitGlobalInputFlattening(indent: string, inputId: string, irType: string, lines: string[], keys: string[] = []) {
+    // Helper to flatten vector/matrix inputs for global inputs
+    // For global inputs, we expect flattened keys in ctx.inputs (e.g. "u_color_tint_0")
+
+    // Check for fixed array: array<T, N>
+    const arrayMatch = irType.match(/^array<([^,]+),\s*(\d+)>$/);
+    if (arrayMatch) {
+      const elemType = arrayMatch[1];
+      const len = parseInt(arrayMatch[2]);
+      for (let i = 0; i < len; i++) {
+        this.emitGlobalInputFlattening(indent, inputId, elemType, lines, [...keys, String(i)]);
+      }
+      return;
+    }
+
+    // Basic types
+    const emitPush = (suffix: string) => {
+      const key = keys.length > 0 ? `${inputId}_${keys.join('_')}${suffix}` : `${inputId}${suffix}`;
+      lines.push(`${indent}_shader_args.push_back(ctx.getInput("${key}"));`);
+    };
+
+    if (irType === 'float4') {
+      emitPush('_0'); emitPush('_1'); emitPush('_2'); emitPush('_3');
+    } else if (irType === 'float3') {
+      emitPush('_0'); emitPush('_1'); emitPush('_2');
+    } else if (irType === 'float2') {
+      emitPush('_0'); emitPush('_1');
+    } else if (irType === 'float4x4') {
+      for (let i = 0; i < 16; i++) emitPush(`_${i}`);
+    } else if (irType === 'float3x3') {
+      for (let i = 0; i < 9; i++) emitPush(`_${i}`);
+    } else {
+      // Scalar or unknown, just use base ID (or with accumulated keys)
+      const key = keys.length > 0 ? `${inputId}_${keys.join('_')}` : inputId;
+      lines.push(`${indent}_shader_args.push_back(ctx.getInput("${key}"));`);
+    }
+  }
+
   /**
    * Emit code to flatten a C++ expression of a given IR type into _shader_args vector.
    * Handles scalars, vectors, matrices, structs, and arrays recursively.
@@ -1267,6 +1304,4 @@ export class CppGenerator {
       lines.push(`${indent}_shader_args.push_back(${argExpr});`);
     }
   }
-
-
 }

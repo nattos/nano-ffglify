@@ -845,6 +845,15 @@ export class MslGenerator {
     visited: Set<string>,
     inferredTypes?: InferredTypes
   ) {
+    // Pre-load dependencies for the completion path (exec_completed)
+    // This ensures that any pure nodes used AFTER the loop are emitted BEFORE the loop scope opens.
+    // Otherwise, if they are first encountered inside the loop (e.g. if the loop body also uses them),
+    // they would be scoped inside the loop and invisible to the completion path.
+    const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
+    if (compEdge) {
+      this.preloadDependencies(compEdge.to, func, edges, emitPure);
+    }
+
     const start = this.resolveArg(node, 'start', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     const end = this.resolveArg(node, 'end', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     const loopVar = `loop_${this.sanitizeId(node.id, 'var')}`;
@@ -855,9 +864,61 @@ export class MslGenerator {
     if (bodyNode) this.emitChain(bodyNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ', inferredTypes);
     lines.push(`${indent}}`);
 
-    const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
     const nextNode = compEdge ? func.nodes.find(n => n.id === compEdge.to) : undefined;
     if (nextNode) this.emitChain(nextNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, visited, indent, inferredTypes);
+  }
+
+  private preloadDependencies(
+    startNodeId: string,
+    func: FunctionDef,
+    edges: Edge[],
+    emitPure: (id: string) => void
+  ) {
+    // BFS traversal of execution chain to find all data dependencies
+    const queue = [startNodeId];
+    const visited = new Set<string>();
+
+    while (queue.length > 0) {
+      const currId = queue.shift()!;
+      if (visited.has(currId)) continue;
+      visited.add(currId);
+
+      const node = func.nodes.find(n => n.id === currId);
+      if (!node) continue;
+
+      // 1. Emit direct data dependencies (edges)
+      for (const edge of edges) {
+        if (edge.to === currId && edge.type === 'data') {
+          emitPure(edge.from);
+        }
+      }
+
+      // 2. Emit inline references
+      for (const k in node) {
+        if (['id', 'op', 'metadata', 'func', 'args', 'dispatch'].includes(k)) continue;
+        const val = (node as any)[k];
+        if (typeof val === 'string' && func.nodes.some(n => n.id === val)) {
+          emitPure(val);
+        }
+      }
+
+      // 3. Follow execution edges
+      // Standard chain
+      const nextEdge = edges.find(e => e.from === currId && e.type === 'execution' && e.portOut === 'exec_out');
+      if (nextEdge) queue.push(nextEdge.to);
+
+      // Branch
+      const trueEdge = edges.find(e => e.from === currId && e.type === 'execution' && e.portOut === 'exec_true');
+      if (trueEdge) queue.push(trueEdge.to);
+      const falseEdge = edges.find(e => e.from === currId && e.type === 'execution' && e.portOut === 'exec_false');
+      if (falseEdge) queue.push(falseEdge.to);
+
+      // Loop
+      const bodyEdge = edges.find(e => e.from === currId && e.type === 'execution' && e.portOut === 'exec_body');
+      if (bodyEdge) queue.push(bodyEdge.to);
+      const compEdge = edges.find(e => e.from === currId && e.type === 'execution' && e.portOut === 'exec_completed');
+      if (compEdge) queue.push(compEdge.to);
+    }
   }
 
   private emitNode(

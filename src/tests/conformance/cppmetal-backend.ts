@@ -141,8 +141,13 @@ export const CppMetalBackend: TestBackend = {
     // 7. Build input args from ctx.inputs
     const inputArgs: string[] = [];
     for (const [name, value] of ctx.inputs) {
-      const numVal = typeof value === 'number' ? value : Array.isArray(value) ? value[0] : 0;
-      inputArgs.push('-i', `${name}:${numVal}`);
+      if (Array.isArray(value)) {
+        value.forEach((v, i) => {
+          inputArgs.push('-i', `${name}_${i}:${v}`);
+        });
+      } else if (typeof value === 'number') {
+        inputArgs.push('-i', `${name}:${value}`);
+      }
     }
 
     // 8. Run executable with optional metallib path, inputs, data file, and resource specs
