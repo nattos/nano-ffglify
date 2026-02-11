@@ -1,0 +1,795 @@
+
+> nano-repatch@1.0.0 test
+> vitest --run src/tests/conformance/01-control-flow.test.ts
+
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90m/Users/nattos/Code/nano-ffglify/src[39m
+
+[90mstdout[2m | tests/conformance/01-control-flow.test.ts[2m > [22m[2mConformance: Control Flow[2m > [22m[2mshould execute Branch (True path) [GPU]
+[22m[39m[Browser] --- GENERATED WGSL ---
+ fn safe_f32_to_i32(v: f32) -> i32 {
+  if (v >= 2147483648.0) { return bitcast<i32>(u32(v)); }
+  return i32(v);
+}
+fn get_nan() -> f32 { var u = 0x7fc00000u; return bitcast<f32>(u); }
+fn get_inf() -> f32 { var u = 0x7f800000u; return bitcast<f32>(u); }
+fn get_neginf() -> f32 { var u = 0xff800000u; return bitcast<f32>(u); }
+fn mat4_from_array_i32(arr: array<i32, 16>) -> mat4x4<f32> {
+  return mat4x4<f32>(
+    f32(arr[0]), f32(arr[1]), f32(arr[2]), f32(arr[3]),
+    f32(arr[4]), f32(arr[5]), f32(arr[6]), f32(arr[7]),
+    f32(arr[8]), f32(arr[9]), f32(arr[10]), f32(arr[11]),
+    f32(arr[12]), f32(arr[13]), f32(arr[14]), f32(arr[15])
+  );
+}
+fn mat3_inverse(m: mat3x3<f32>) -> mat3x3<f32> {
+  let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2];
+  let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2];
+  let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2];
+  let b01 = a22 * a11 - a12 * a21;
+  let b11 = -a22 * a01 + a02 * a21;
+  let b21 = a12 * a01 - a02 * a11;
+  let det = a00 * b01 + a10 * b11 + a20 * b21;
+  if (det == 0.0) { return mat3x3<f32>(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0); }
+  let invDet = 1.0 / det;
+  return mat3x3<f32>(
+    b01 * invDet,
+    (-a22 * a10 + a12 * a20) * invDet,
+    (a21 * a10 - a11 * a20) * invDet,
+    b11 * invDet,
+    (a22 * a00 - a02 * a20) * invDet,
+    (-a21 * a00 + a01 * a20) * invDet,
+    b21 * invDet,
+    (-a12 * a00 + a02 * a10) * invDet,
+    (a11 * a00 - a01 * a10) * invDet
+  );
+}
+
+fn mat4_inverse(m: mat4x4<f32>) -> mat4x4<f32> {
+  let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2]; let a03 = m[0][3];
+  let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2]; let a13 = m[1][3];
+  let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2]; let a23 = m[2][3];
+  let a30 = m[3][0]; let a31 = m[3][1]; let a32 = m[3][2]; let a33 = m[3][3];
+  let b00 = a00 * a11 - a01 * a10; let b01 = a00 * a12 - a02 * a10;
+  let b02 = a00 * a13 - a03 * a10; let b03 = a01 * a12 - a02 * a11;
+  let b04 = a01 * a13 - a03 * a11; let b05 = a02 * a13 - a03 * a12;
+  let b06 = a20 * a31 - a21 * a30; let b07 = a20 * a32 - a22 * a30;
+  let b08 = a20 * a33 - a23 * a30; let b09 = a21 * a32 - a22 * a31;
+  let b10 = a21 * a33 - a23 * a31; let b11 = a22 * a33 - a23 * a32;
+  let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  if (det == 0.0) { return mat4x4<f32>(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0); }
+  let invDet = 1.0 / det;
+  return mat4x4<f32>(
+    (a11 * b11 - a12 * b10 + a13 * b09) * invDet,
+    (a02 * b10 - a01 * b11 - a03 * b09) * invDet,
+    (a31 * b05 - a32 * b04 + a33 * b03) * invDet,
+    (a22 * b04 - a21 * b05 - a23 * b03) * invDet,
+    (a12 * b08 - a10 * b11 - a13 * b07) * invDet,
+    (a00 * b11 - a02 * b08 + a03 * b07) * invDet,
+    (a32 * b02 - a30 * b05 - a33 * b01) * invDet,
+    (a20 * b05 - a22 * b02 + a23 * b01) * invDet,
+    (a10 * b10 - a11 * b08 + a13 * b06) * invDet,
+    (a01 * b08 - a00 * b10 - a03 * b06) * invDet,
+    (a30 * b04 - a31 * b02 + a33 * b00) * invDet,
+    (a21 * b02 - a20 * b04 - a23 * b00) * invDet,
+    (a11 * b07 - a10 * b09 - a12 * b06) * invDet,
+    (a00 * b09 - a01 * b07 + a02 * b06) * invDet,
+    (a31 * b01 - a30 * b03 - a32 * b00) * invDet,
+    (a20 * b03 - a21 * b01 + a22 * b00) * invDet
+  );
+}
+fn is_nan(v: f32) -> bool {
+  return (bitcast<u32>(v) & 0x7fffffffu) > 0x7f800000u;
+}
+fn is_inf(v: f32) -> bool {
+  return (bitcast<u32>(v) & 0x7fffffffu) == 0x7f800000u;
+}
+fn is_finite(v: f32) -> bool {
+  return (bitcast<u32>(v) & 0x7fffffffu) < 0x7f800000u;
+}
+fn is_nan_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) > vec2<u32>(0x7f800000u); }
+fn is_nan_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) > vec3<u32>(0x7f800000u); }
+fn is_nan_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) > vec4<u32>(0x7f800000u); }
+
+fn is_inf_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) == vec2<u32>(0x7f800000u); }
+fn is_inf_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) == vec3<u32>(0x7f800000u); }
+fn is_inf_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) == vec4<u32>(0x7f800000u); }
+
+fn is_finite_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) < vec2<u32>(0x7f800000u); }
+fn is_finite_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) < vec3<u32>(0x7f800000u); }
+fn is_finite_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) < vec4<u32>(0x7f800000u); }
+
+fn flush_subnormal(v: f32) -> f32 {
+  let u = bitcast<u32>(v);
+  if ((u & 0x7f800000u) == 0u && (u & 0x007fffffu) != 0u) {
+    return 0.0;
+  }
+  return v;
+}
+fn get_mantissa(v: f32) -> f32 {
+  return frexp(v).fract;
+}
+fn get_exponent(v: f32) -> f32 {
+  return f32(frexp(v).exp);
+}
+
+fn quat_from_axis_angle(axis: vec3<f32>, angle: f32) -> vec4<f32> {
+  let half_angle = angle * 0.5;
+  let s = sin(half_angle);
+  let c = cos(half_angle);
+  return vec4<f32>(axis * s, c);
+}
+fn quat_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+  return vec4<f32>(
+    a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+    a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+    a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+    a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+  );
+}
+fn quat_slerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
+  let cos_half_theta = dot(a, b);
+  if (abs(cos_half_theta) >= 1.0) { return a; }
+  let sin_half_theta = sqrt(1.0 - cos_half_theta * cos_half_theta);
+  if (abs(sin_half_theta) < 0.001) { return vec4<f32>((1.0 - t) * a + t * b); }
+  let half_theta = acos(cos_half_theta);
+  let ratio_a = sin((1.0 - t) * half_theta) / sin_half_theta;
+  let ratio_b = sin(t * half_theta) / sin_half_theta;
+  return ratio_a * a + ratio_b * b;
+}
+fn quat_rotate(v: vec3<f32>, q: vec4<f32>) -> vec3<f32> {
+  let t = 2.0 * cross(q.xyz, v);
+  return v + q.w * t + cross(q.xyz, t);
+}
+fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
+  let x2 = q.x + q.x; let y2 = q.y + q.y; let z2 = q.z + q.z;
+  let xx = q.x * x2; let xy = q.x * y2; let xz = q.x * z2;
+  let yy = q.y * y2; let yz = q.y * z2; let zz = q.z * z2;
+  let wx = q.w * x2; let wy = q.w * y2; let wz = q.w * z2;
+  return mat4x4<f32>(
+    1.0 - (yy + zz), xy + wz, xz - wy, 0.0,
+    xy - wz, 1.0 - (xx + zz), yz + wx, 0.0,
+    xz + wy, yz - wx, 1.0 - (xx + yy), 0.0,
+    0.0, 0.0, 0.0, 1.0
+  );
+}
+fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let outA = src.a + dst.a * (1.0 - src.a);
+  if (outA < 1e-6) { return vec4<f32>(0.0); }
+  return vec4<f32>((src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / outA, outA);
+}
+
+
+struct Inputs {
+  u_dispatch_size : vec3<u32>,
+}
+@group(0) @binding(1) var<storage, read> b_inputs : Inputs;
+
+struct Buffer_b_result { data: array<f32> }
+@group(0) @binding(2) var<storage, read_write> b_result : Buffer_b_result;
+
+@compute @workgroup_size(16, 16, 1)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+  _ = &b_result.data;
+  if (any(gid >= b_inputs.u_dispatch_size)) { return; }
+  if (true) {
+  b_result.data[u32(0)] = f32(1);
+  } else {
+  b_result.data[u32(0)] = f32(2);
+  }
+}
+ 
+---------------------
+
+[90mstdout[2m | tests/conformance/01-control-flow.test.ts[2m > [22m[2mConformance: Control Flow[2m > [22m[2mshould execute Branch (False path) [GPU]
+[22m[39m[Browser] --- GENERATED WGSL ---
+ fn safe_f32_to_i32(v: f32) -> i32 {
+  if (v >= 2147483648.0) { return bitcast<i32>(u32(v)); }
+  return i32(v);
+}
+fn get_nan() -> f32 { var u = 0x7fc00000u; return bitcast<f32>(u); }
+fn get_inf() -> f32 { var u = 0x7f800000u; return bitcast<f32>(u); }
+fn get_neginf() -> f32 { var u = 0xff800000u; return bitcast<f32>(u); }
+fn mat4_from_array_i32(arr: array<i32, 16>) -> mat4x4<f32> {
+  return mat4x4<f32>(
+    f32(arr[0]), f32(arr[1]), f32(arr[2]), f32(arr[3]),
+    f32(arr[4]), f32(arr[5]), f32(arr[6]), f32(arr[7]),
+    f32(arr[8]), f32(arr[9]), f32(arr[10]), f32(arr[11]),
+    f32(arr[12]), f32(arr[13]), f32(arr[14]), f32(arr[15])
+  );
+}
+fn mat3_inverse(m: mat3x3<f32>) -> mat3x3<f32> {
+  let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2];
+  let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2];
+  let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2];
+  let b01 = a22 * a11 - a12 * a21;
+  let b11 = -a22 * a01 + a02 * a21;
+  let b21 = a12 * a01 - a02 * a11;
+  let det = a00 * b01 + a10 * b11 + a20 * b21;
+  if (det == 0.0) { return mat3x3<f32>(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0); }
+  let invDet = 1.0 / det;
+  return mat3x3<f32>(
+    b01 * invDet,
+    (-a22 * a10 + a12 * a20) * invDet,
+    (a21 * a10 - a11 * a20) * invDet,
+    b11 * invDet,
+    (a22 * a00 - a02 * a20) * invDet,
+    (-a21 * a00 + a01 * a20) * invDet,
+    b21 * invDet,
+    (-a12 * a00 + a02 * a10) * invDet,
+    (a11 * a00 - a01 * a10) * invDet
+  );
+}
+
+fn mat4_inverse(m: mat4x4<f32>) -> mat4x4<f32> {
+  let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2]; let a03 = m[0][3];
+  let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2]; let a13 = m[1][3];
+  let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2]; let a23 = m[2][3];
+  let a30 = m[3][0]; let a31 = m[3][1]; let a32 = m[3][2]; let a33 = m[3][3];
+  let b00 = a00 * a11 - a01 * a10; let b01 = a00 * a12 - a02 * a10;
+  let b02 = a00 * a13 - a03 * a10; let b03 = a01 * a12 - a02 * a11;
+  let b04 = a01 * a13 - a03 * a11; let b05 = a02 * a13 - a03 * a12;
+  let b06 = a20 * a31 - a21 * a30; let b07 = a20 * a32 - a22 * a30;
+  let b08 = a20 * a33 - a23 * a30; let b09 = a21 * a32 - a22 * a31;
+  let b10 = a21 * a33 - a23 * a31; let b11 = a22 * a33 - a23 * a32;
+  let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  if (det == 0.0) { return mat4x4<f32>(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0); }
+  let invDet = 1.0 / det;
+  return mat4x4<f32>(
+    (a11 * b11 - a12 * b10 + a13 * b09) * invDet,
+    (a02 * b10 - a01 * b11 - a03 * b09) * invDet,
+    (a31 * b05 - a32 * b04 + a33 * b03) * invDet,
+    (a22 * b04 - a21 * b05 - a23 * b03) * invDet,
+    (a12 * b08 - a10 * b11 - a13 * b07) * invDet,
+    (a00 * b11 - a02 * b08 + a03 * b07) * invDet,
+    (a32 * b02 - a30 * b05 - a33 * b01) * invDet,
+    (a20 * b05 - a22 * b02 + a23 * b01) * invDet,
+    (a10 * b10 - a11 * b08 + a13 * b06) * invDet,
+    (a01 * b08 - a00 * b10 - a03 * b06) * invDet,
+    (a30 * b04 - a31 * b02 + a33 * b00) * invDet,
+    (a21 * b02 - a20 * b04 - a23 * b00) * invDet,
+    (a11 * b07 - a10 * b09 - a12 * b06) * invDet,
+    (a00 * b09 - a01 * b07 + a02 * b06) * invDet,
+    (a31 * b01 - a30 * b03 - a32 * b00) * invDet,
+    (a20 * b03 - a21 * b01 + a22 * b00) * invDet
+  );
+}
+fn is_nan(v: f32) -> bool {
+  return (bitcast<u32>(v) & 0x7fffffffu) > 0x7f800000u;
+}
+fn is_inf(v: f32) -> bool {
+  return (bitcast<u32>(v) & 0x7fffffffu) == 0x7f800000u;
+}
+fn is_finite(v: f32) -> bool {
+  return (bitcast<u32>(v) & 0x7fffffffu) < 0x7f800000u;
+}
+fn is_nan_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) > vec2<u32>(0x7f800000u); }
+fn is_nan_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) > vec3<u32>(0x7f800000u); }
+fn is_nan_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) > vec4<u32>(0x7f800000u); }
+
+fn is_inf_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) == vec2<u32>(0x7f800000u); }
+fn is_inf_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) == vec3<u32>(0x7f800000u); }
+fn is_inf_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) == vec4<u32>(0x7f800000u); }
+
+fn is_finite_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) < vec2<u32>(0x7f800000u); }
+fn is_finite_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) < vec3<u32>(0x7f800000u); }
+fn is_finite_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) < vec4<u32>(0x7f800000u); }
+
+fn flush_subnormal(v: f32) -> f32 {
+  let u = bitcast<u32>(v);
+  if ((u & 0x7f800000u) == 0u && (u & 0x007fffffu) != 0u) {
+    return 0.0;
+  }
+  return v;
+}
+fn get_mantissa(v: f32) -> f32 {
+  return frexp(v).fract;
+}
+fn get_exponent(v: f32) -> f32 {
+  return f32(frexp(v).exp);
+}
+
+fn quat_from_axis_angle(axis: vec3<f32>, angle: f32) -> vec4<f32> {
+  let half_angle = angle * 0.5;
+  let s = sin(half_angle);
+  let c = cos(half_angle);
+  return vec4<f32>(axis * s, c);
+}
+fn quat_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+  return vec4<f32>(
+    a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+    a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+    a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+    a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+  );
+}
+fn quat_slerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
+  let cos_half_theta = dot(a, b);
+  if (abs(cos_half_theta) >= 1.0) { return a; }
+  let sin_half_theta = sqrt(1.0 - cos_half_theta * cos_half_theta);
+  if (abs(sin_half_theta) < 0.001) { return vec4<f32>((1.0 - t) * a + t * b); }
+  let half_theta = acos(cos_half_theta);
+  let ratio_a = sin((1.0 - t) * half_theta) / sin_half_theta;
+  let ratio_b = sin(t * half_theta) / sin_half_theta;
+  return ratio_a * a + ratio_b * b;
+}
+fn quat_rotate(v: vec3<f32>, q: vec4<f32>) -> vec3<f32> {
+  let t = 2.0 * cross(q.xyz, v);
+  return v + q.w * t + cross(q.xyz, t);
+}
+fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
+  let x2 = q.x + q.x; let y2 = q.y + q.y; let z2 = q.z + q.z;
+  let xx = q.x * x2; let xy = q.x * y2; let xz = q.x * z2;
+  let yy = q.y * y2; let yz = q.y * z2; let zz = q.z * z2;
+  let wx = q.w * x2; let wy = q.w * y2; let wz = q.w * z2;
+  return mat4x4<f32>(
+    1.0 - (yy + zz), xy + wz, xz - wy, 0.0,
+    xy - wz, 1.0 - (xx + zz), yz + wx, 0.0,
+    xz + wy, yz - wx, 1.0 - (xx + yy), 0.0,
+    0.0, 0.0, 0.0, 1.0
+  );
+}
+fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let outA = src.a + dst.a * (1.0 - src.a);
+  if (outA < 1e-6) { return vec4<f32>(0.0); }
+  return vec4<f32>((src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / outA, outA);
+}
+
+
+struct Inputs {
+  u_dispatch_size : vec3<u32>,
+}
+@group(0) @binding(1) var<storage, read> b_inputs : Inputs;
+
+struct Buffer_b_result { data: array<f32> }
+@group(0) @binding(2) var<storage, read_write> b_result : Buffer_b_result;
+
+@compute @workgroup_size(16, 16, 1)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+  _ = &b_result.data;
+  if (any(gid >= b_inputs.u_dispatch_size)) { return; }
+  if (false) {
+  b_result.data[u32(0)] = f32(1);
+  } else {
+  b_result.data[u32(0)] = f32(2);
+  }
+}
+ 
+---------------------
+
+[90mstdout[2m | tests/conformance/01-control-flow.test.ts[2m > [22m[2mConformance: Control Flow[2m > [22m[2mshould execute Loop (Accumulate Index) [GPU]
+[22m[39m[Browser] --- GENERATED WGSL ---
+ fn safe_f32_to_i32(v: f32) -> i32 {
+  if (v >= 2147483648.0) { return bitcast<i32>(u32(v)); }
+  return i32(v);
+}
+fn get_nan() -> f32 { var u = 0x7fc00000u; return bitcast<f32>(u); }
+fn get_inf() -> f32 { var u = 0x7f800000u; return bitcast<f32>(u); }
+fn get_neginf() -> f32 { var u = 0xff800000u; return bitcast<f32>(u); }
+fn mat4_from_array_i32(arr: array<i32, 16>) -> mat4x4<f32> {
+  return mat4x4<f32>(
+    f32(arr[0]), f32(arr[1]), f32(arr[2]), f32(arr[3]),
+    f32(arr[4]), f32(arr[5]), f32(arr[6]), f32(arr[7]),
+    f32(arr[8]), f32(arr[9]), f32(arr[10]), f32(arr[11]),
+    f32(arr[12]), f32(arr[13]), f32(arr[14]), f32(arr[15])
+  );
+}
+fn mat3_inverse(m: mat3x3<f32>) -> mat3x3<f32> {
+  let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2];
+  let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2];
+  let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2];
+  let b01 = a22 * a11 - a12 * a21;
+  let b11 = -a22 * a01 + a02 * a21;
+  let b21 = a12 * a01 - a02 * a11;
+  let det = a00 * b01 + a10 * b11 + a20 * b21;
+  if (det == 0.0) { return mat3x3<f32>(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0); }
+  let invDet = 1.0 / det;
+  return mat3x3<f32>(
+    b01 * invDet,
+    (-a22 * a10 + a12 * a20) * invDet,
+    (a21 * a10 - a11 * a20) * invDet,
+    b11 * invDet,
+    (a22 * a00 - a02 * a20) * invDet,
+    (-a21 * a00 + a01 * a20) * invDet,
+    b21 * invDet,
+    (-a12 * a00 + a02 * a10) * invDet,
+    (a11 * a00 - a01 * a10) * invDet
+  );
+}
+
+fn mat4_inverse(m: mat4x4<f32>) -> mat4x4<f32> {
+  let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2]; let a03 = m[0][3];
+  let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2]; let a13 = m[1][3];
+  let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2]; let a23 = m[2][3];
+  let a30 = m[3][0]; let a31 = m[3][1]; let a32 = m[3][2]; let a33 = m[3][3];
+  let b00 = a00 * a11 - a01 * a10; let b01 = a00 * a12 - a02 * a10;
+  let b02 = a00 * a13 - a03 * a10; let b03 = a01 * a12 - a02 * a11;
+  let b04 = a01 * a13 - a03 * a11; let b05 = a02 * a13 - a03 * a12;
+  let b06 = a20 * a31 - a21 * a30; let b07 = a20 * a32 - a22 * a30;
+  let b08 = a20 * a33 - a23 * a30; let b09 = a21 * a32 - a22 * a31;
+  let b10 = a21 * a33 - a23 * a31; let b11 = a22 * a33 - a23 * a32;
+  let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  if (det == 0.0) { return mat4x4<f32>(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0); }
+  let invDet = 1.0 / det;
+  return mat4x4<f32>(
+    (a11 * b11 - a12 * b10 + a13 * b09) * invDet,
+    (a02 * b10 - a01 * b11 - a03 * b09) * invDet,
+    (a31 * b05 - a32 * b04 + a33 * b03) * invDet,
+    (a22 * b04 - a21 * b05 - a23 * b03) * invDet,
+    (a12 * b08 - a10 * b11 - a13 * b07) * invDet,
+    (a00 * b11 - a02 * b08 + a03 * b07) * invDet,
+    (a32 * b02 - a30 * b05 - a33 * b01) * invDet,
+    (a20 * b05 - a22 * b02 + a23 * b01) * invDet,
+    (a10 * b10 - a11 * b08 + a13 * b06) * invDet,
+    (a01 * b08 - a00 * b10 - a03 * b06) * invDet,
+    (a30 * b04 - a31 * b02 + a33 * b00) * invDet,
+    (a21 * b02 - a20 * b04 - a23 * b00) * invDet,
+    (a11 * b07 - a10 * b09 - a12 * b06) * invDet,
+    (a00 * b09 - a01 * b07 + a02 * b06) * invDet,
+    (a31 * b01 - a30 * b03 - a32 * b00) * invDet,
+    (a20 * b03 - a21 * b01 + a22 * b00) * invDet
+  );
+}
+fn is_nan(v: f32) -> bool {
+  return (bitcast<u32>(v) & 0x7fffffffu) > 0x7f800000u;
+}
+fn is_inf(v: f32) -> bool {
+  return (bitcast<u32>(v) & 0x7fffffffu) == 0x7f800000u;
+}
+fn is_finite(v: f32) -> bool {
+  return (bitcast<u32>(v) & 0x7fffffffu) < 0x7f800000u;
+}
+fn is_nan_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) > vec2<u32>(0x7f800000u); }
+fn is_nan_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) > vec3<u32>(0x7f800000u); }
+fn is_nan_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) > vec4<u32>(0x7f800000u); }
+
+fn is_inf_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) == vec2<u32>(0x7f800000u); }
+fn is_inf_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) == vec3<u32>(0x7f800000u); }
+fn is_inf_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) == vec4<u32>(0x7f800000u); }
+
+fn is_finite_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) < vec2<u32>(0x7f800000u); }
+fn is_finite_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) < vec3<u32>(0x7f800000u); }
+fn is_finite_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) < vec4<u32>(0x7f800000u); }
+
+fn flush_subnormal(v: f32) -> f32 {
+  let u = bitcast<u32>(v);
+  if ((u & 0x7f800000u) == 0u && (u & 0x007fffffu) != 0u) {
+    return 0.0;
+  }
+  return v;
+}
+fn get_mantissa(v: f32) -> f32 {
+  return frexp(v).fract;
+}
+fn get_exponent(v: f32) -> f32 {
+  return f32(frexp(v).exp);
+}
+
+fn quat_from_axis_angle(axis: vec3<f32>, angle: f32) -> vec4<f32> {
+  let half_angle = angle * 0.5;
+  let s = sin(half_angle);
+  let c = cos(half_angle);
+  return vec4<f32>(axis * s, c);
+}
+fn quat_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+  return vec4<f32>(
+    a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+    a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+    a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+    a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+  );
+}
+fn quat_slerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
+  let cos_half_theta = dot(a, b);
+  if (abs(cos_half_theta) >= 1.0) { return a; }
+  let sin_half_theta = sqrt(1.0 - cos_half_theta * cos_half_theta);
+  if (abs(sin_half_theta) < 0.001) { return vec4<f32>((1.0 - t) * a + t * b); }
+  let half_theta = acos(cos_half_theta);
+  let ratio_a = sin((1.0 - t) * half_theta) / sin_half_theta;
+  let ratio_b = sin(t * half_theta) / sin_half_theta;
+  return ratio_a * a + ratio_b * b;
+}
+fn quat_rotate(v: vec3<f32>, q: vec4<f32>) -> vec3<f32> {
+  let t = 2.0 * cross(q.xyz, v);
+  return v + q.w * t + cross(q.xyz, t);
+}
+fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
+  let x2 = q.x + q.x; let y2 = q.y + q.y; let z2 = q.z + q.z;
+  let xx = q.x * x2; let xy = q.x * y2; let xz = q.x * z2;
+  let yy = q.y * y2; let yz = q.y * z2; let zz = q.z * z2;
+  let wx = q.w * x2; let wy = q.w * y2; let wz = q.w * z2;
+  return mat4x4<f32>(
+    1.0 - (yy + zz), xy + wz, xz - wy, 0.0,
+    xy - wz, 1.0 - (xx + zz), yz + wx, 0.0,
+    xz + wy, yz - wx, 1.0 - (xx + yy), 0.0,
+    0.0, 0.0, 0.0, 1.0
+  );
+}
+fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let outA = src.a + dst.a * (1.0 - src.a);
+  if (outA < 1e-6) { return vec4<f32>(0.0); }
+  return vec4<f32>((src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / outA, outA);
+}
+
+
+struct Globals { data: array<f32> }
+@group(0) @binding(0) var<storage, read_write> b_globals : Globals;
+
+struct Inputs {
+  u_dispatch_size : vec3<u32>,
+}
+@group(0) @binding(1) var<storage, read> b_inputs : Inputs;
+
+struct Buffer_b_result { data: array<f32> }
+@group(0) @binding(2) var<storage, read_write> b_result : Buffer_b_result;
+
+@compute @workgroup_size(16, 16, 1)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+  _ = &b_result.data;
+  if (any(gid >= b_inputs.u_dispatch_size)) { return; }
+  var l_acc : i32 = 0;
+  for (var i_loop = 0; i_loop < 5; i_loop++) {
+  b_globals.data[0] = f32((b_globals.data[0] + i_loop));
+  }
+  b_result.data[u32(0)] = f32(b_globals.data[0]);
+}
+ 
+---------------------
+
+[90mstdout[2m | tests/conformance/01-control-flow.test.ts[2m > [22m[2mConformance: Control Flow[2m > [22m[2mshould execute Loop (Accumulate Index) [GPU]
+[22m[39m[Browser] Compilation log for [Invalid ShaderModule (unlabeled)]:
+1 error(s) generated while compiling the shader:
+:171:28 error: no matching overload for 'operator + (f32, i32)'
+
+5 candidate operators:
+ • 'operator + (T  ✓ , T  ✗ ) -> T' where:
+      ✓  'T' is 'abstract-float', 'abstract-int', 'f32', 'i32', 'u32' or 'f16'
+ • 'operator + (vecN<T>  ✗ , T  ✓ ) -> vecN<T>' where:
+      ✓  'T' is 'abstract-float', 'abstract-int', 'f32', 'i32', 'u32' or 'f16'
+ • 'operator + (T  ✓ , vecN<T>  ✗ ) -> vecN<T>' where:
+      ✓  'T' is 'abstract-float', 'abstract-int', 'f32', 'i32', 'u32' or 'f16'
+ • 'operator + (vecN<T>  ✗ , vecN<T>  ✗ ) -> vecN<T>' where:
+      ✗  'T' is 'abstract-float', 'abstract-int', 'f32', 'i32', 'u32' or 'f16'
+ • 'operator + (matNxM<T>  ✗ , matNxM<T>  ✗ ) -> matNxM<T>' where:
+      ✗  'T' is 'abstract-float', 'f32' or 'f16'
+
+  b_globals.data[0] = f32((b_globals.data[0] + i_loop));
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+[90mstdout[2m | tests/conformance/01-control-flow.test.ts[2m > [22m[2mConformance: Control Flow[2m > [22m[2mshould execute Loop (Accumulate Index) [GPU]
+[22m[39m[Browser] [Shader Compilation Error]
+[ERROR] line 171:28 - no matching overload for 'operator + (f32, i32)'
+
+5 candidate operators:
+ • 'operator + (T  ✓ , T  ✗ ) -> T' where:
+      ✓  'T' is 'abstract-float', 'abstract-int', 'f32', 'i32', 'u32' or 'f16'
+ • 'operator + (vecN<T>  ✗ , T  ✓ ) -> vecN<T>' where:
+      ✓  'T' is 'abstract-float', 'abstract-int', 'f32', 'i32', 'u32' or 'f16'
+ • 'operator + (T  ✓ , vecN<T>  ✗ ) -> vecN<T>' where:
+      ✓  'T' is 'abstract-float', 'abstract-int', 'f32', 'i32', 'u32' or 'f16'
+ • 'operator + (vecN<T>  ✗ , vecN<T>  ✗ ) -> vecN<T>' where:
+      ✗  'T' is 'abstract-float', 'abstract-int', 'f32', 'i32', 'u32' or 'f16'
+ • 'operator + (matNxM<T>  ✗ , matNxM<T>  ✗ ) -> matNxM<T>' where:
+      ✗  'T' is 'abstract-float', 'f32' or 'f16'
+
+
+[90mstdout[2m | tests/conformance/01-control-flow.test.ts[2m > [22m[2mConformance: Control Flow[2m > [22m[2mshould execute Loop (Accumulate Index) [GPU]
+[22m[39m[Browser] [Source Code]
+   1| fn safe_f32_to_i32(v: f32) -> i32 {
+   2|   if (v >= 2147483648.0) { return bitcast<i32>(u32(v)); }
+   3|   return i32(v);
+   4| }
+   5| fn get_nan() -> f32 { var u = 0x7fc00000u; return bitcast<f32>(u); }
+   6| fn get_inf() -> f32 { var u = 0x7f800000u; return bitcast<f32>(u); }
+   7| fn get_neginf() -> f32 { var u = 0xff800000u; return bitcast<f32>(u); }
+   8| fn mat4_from_array_i32(arr: array<i32, 16>) -> mat4x4<f32> {
+   9|   return mat4x4<f32>(
+  10|     f32(arr[0]), f32(arr[1]), f32(arr[2]), f32(arr[3]),
+  11|     f32(arr[4]), f32(arr[5]), f32(arr[6]), f32(arr[7]),
+  12|     f32(arr[8]), f32(arr[9]), f32(arr[10]), f32(arr[11]),
+  13|     f32(arr[12]), f32(arr[13]), f32(arr[14]), f32(arr[15])
+  14|   );
+  15| }
+  16| fn mat3_inverse(m: mat3x3<f32>) -> mat3x3<f32> {
+  17|   let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2];
+  18|   let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2];
+  19|   let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2];
+  20|   let b01 = a22 * a11 - a12 * a21;
+  21|   let b11 = -a22 * a01 + a02 * a21;
+  22|   let b21 = a12 * a01 - a02 * a11;
+  23|   let det = a00 * b01 + a10 * b11 + a20 * b21;
+  24|   if (det == 0.0) { return mat3x3<f32>(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0); }
+  25|   let invDet = 1.0 / det;
+  26|   return mat3x3<f32>(
+  27|     b01 * invDet,
+  28|     (-a22 * a10 + a12 * a20) * invDet,
+  29|     (a21 * a10 - a11 * a20) * invDet,
+  30|     b11 * invDet,
+  31|     (a22 * a00 - a02 * a20) * invDet,
+  32|     (-a21 * a00 + a01 * a20) * invDet,
+  33|     b21 * invDet,
+  34|     (-a12 * a00 + a02 * a10) * invDet,
+  35|     (a11 * a00 - a01 * a10) * invDet
+  36|   );
+  37| }
+  38| 
+  39| fn mat4_inverse(m: mat4x4<f32>) -> mat4x4<f32> {
+  40|   let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2]; let a03 = m[0][3];
+  41|   let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2]; let a13 = m[1][3];
+  42|   let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2]; let a23 = m[2][3];
+  43|   let a30 = m[3][0]; let a31 = m[3][1]; let a32 = m[3][2]; let a33 = m[3][3];
+  44|   let b00 = a00 * a11 - a01 * a10; let b01 = a00 * a12 - a02 * a10;
+  45|   let b02 = a00 * a13 - a03 * a10; let b03 = a01 * a12 - a02 * a11;
+  46|   let b04 = a01 * a13 - a03 * a11; let b05 = a02 * a13 - a03 * a12;
+  47|   let b06 = a20 * a31 - a21 * a30; let b07 = a20 * a32 - a22 * a30;
+  48|   let b08 = a20 * a33 - a23 * a30; let b09 = a21 * a32 - a22 * a31;
+  49|   let b10 = a21 * a33 - a23 * a31; let b11 = a22 * a33 - a23 * a32;
+  50|   let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  51|   if (det == 0.0) { return mat4x4<f32>(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0); }
+  52|   let invDet = 1.0 / det;
+  53|   return mat4x4<f32>(
+  54|     (a11 * b11 - a12 * b10 + a13 * b09) * invDet,
+  55|     (a02 * b10 - a01 * b11 - a03 * b09) * invDet,
+  56|     (a31 * b05 - a32 * b04 + a33 * b03) * invDet,
+  57|     (a22 * b04 - a21 * b05 - a23 * b03) * invDet,
+  58|     (a12 * b08 - a10 * b11 - a13 * b07) * invDet,
+  59|     (a00 * b11 - a02 * b08 + a03 * b07) * invDet,
+  60|     (a32 * b02 - a30 * b05 - a33 * b01) * invDet,
+  61|     (a20 * b05 - a22 * b02 + a23 * b01) * invDet,
+  62|     (a10 * b10 - a11 * b08 + a13 * b06) * invDet,
+  63|     (a01 * b08 - a00 * b10 - a03 * b06) * invDet,
+  64|     (a30 * b04 - a31 * b02 + a33 * b00) * invDet,
+  65|     (a21 * b02 - a20 * b04 - a23 * b00) * invDet,
+  66|     (a11 * b07 - a10 * b09 - a12 * b06) * invDet,
+  67|     (a00 * b09 - a01 * b07 + a02 * b06) * invDet,
+  68|     (a31 * b01 - a30 * b03 - a32 * b00) * invDet,
+  69|     (a20 * b03 - a21 * b01 + a22 * b00) * invDet
+  70|   );
+  71| }
+  72| fn is_nan(v: f32) -> bool {
+  73|   return (bitcast<u32>(v) & 0x7fffffffu) > 0x7f800000u;
+  74| }
+  75| fn is_inf(v: f32) -> bool {
+  76|   return (bitcast<u32>(v) & 0x7fffffffu) == 0x7f800000u;
+  77| }
+  78| fn is_finite(v: f32) -> bool {
+  79|   return (bitcast<u32>(v) & 0x7fffffffu) < 0x7f800000u;
+  80| }
+  81| fn is_nan_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) > vec2<u32>(0x7f800000u); }
+  82| fn is_nan_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) > vec3<u32>(0x7f800000u); }
+  83| fn is_nan_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) > vec4<u32>(0x7f800000u); }
+  84| 
+  85| fn is_inf_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) == vec2<u32>(0x7f800000u); }
+  86| fn is_inf_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) == vec3<u32>(0x7f800000u); }
+  87| fn is_inf_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) == vec4<u32>(0x7f800000u); }
+  88| 
+  89| fn is_finite_vec2(v: vec2<f32>) -> vec2<bool> { return (bitcast<vec2<u32>>(v) & vec2<u32>(0x7fffffffu)) < vec2<u32>(0x7f800000u); }
+  90| fn is_finite_vec3(v: vec3<f32>) -> vec3<bool> { return (bitcast<vec3<u32>>(v) & vec3<u32>(0x7fffffffu)) < vec3<u32>(0x7f800000u); }
+  91| fn is_finite_vec4(v: vec4<f32>) -> vec4<bool> { return (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) < vec4<u32>(0x7f800000u); }
+  92| 
+  93| fn flush_subnormal(v: f32) -> f32 {
+  94|   let u = bitcast<u32>(v);
+  95|   if ((u & 0x7f800000u) == 0u && (u & 0x007fffffu) != 0u) {
+  96|     return 0.0;
+  97|   }
+  98|   return v;
+  99| }
+ 100| fn get_mantissa(v: f32) -> f32 {
+ 101|   return frexp(v).fract;
+ 102| }
+ 103| fn get_exponent(v: f32) -> f32 {
+ 104|   return f32(frexp(v).exp);
+ 105| }
+ 106| 
+ 107| fn quat_from_axis_angle(axis: vec3<f32>, angle: f32) -> vec4<f32> {
+ 108|   let half_angle = angle * 0.5;
+ 109|   let s = sin(half_angle);
+ 110|   let c = cos(half_angle);
+ 111|   return vec4<f32>(axis * s, c);
+ 112| }
+ 113| fn quat_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+ 114|   return vec4<f32>(
+ 115|     a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+ 116|     a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+ 117|     a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+ 118|     a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+ 119|   );
+ 120| }
+ 121| fn quat_slerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
+ 122|   let cos_half_theta = dot(a, b);
+ 123|   if (abs(cos_half_theta) >= 1.0) { return a; }
+ 124|   let sin_half_theta = sqrt(1.0 - cos_half_theta * cos_half_theta);
+ 125|   if (abs(sin_half_theta) < 0.001) { return vec4<f32>((1.0 - t) * a + t * b); }
+ 126|   let half_theta = acos(cos_half_theta);
+ 127|   let ratio_a = sin((1.0 - t) * half_theta) / sin_half_theta;
+ 128|   let ratio_b = sin(t * half_theta) / sin_half_theta;
+ 129|   return ratio_a * a + ratio_b * b;
+ 130| }
+ 131| fn quat_rotate(v: vec3<f32>, q: vec4<f32>) -> vec3<f32> {
+ 132|   let t = 2.0 * cross(q.xyz, v);
+ 133|   return v + q.w * t + cross(q.xyz, t);
+ 134| }
+ 135| fn quat_to_mat4(q: vec4<f32>) -> mat4x4<f32> {
+ 136|   let x2 = q.x + q.x; let y2 = q.y + q.y; let z2 = q.z + q.z;
+ 137|   let xx = q.x * x2; let xy = q.x * y2; let xz = q.x * z2;
+ 138|   let yy = q.y * y2; let yz = q.y * z2; let zz = q.z * z2;
+ 139|   let wx = q.w * x2; let wy = q.w * y2; let wz = q.w * z2;
+ 140|   return mat4x4<f32>(
+ 141|     1.0 - (yy + zz), xy + wz, xz - wy, 0.0,
+ 142|     xy - wz, 1.0 - (xx + zz), yz + wx, 0.0,
+ 143|     xz + wy, yz - wx, 1.0 - (xx + yy), 0.0,
+ 144|     0.0, 0.0, 0.0, 1.0
+ 145|   );
+ 146| }
+ 147| fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+ 148|   let outA = src.a + dst.a * (1.0 - src.a);
+ 149|   if (outA < 1e-6) { return vec4<f32>(0.0); }
+ 150|   return vec4<f32>((src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / outA, outA);
+ 151| }
+ 152| 
+ 153| 
+ 154| struct Globals { data: array<f32> }
+ 155| @group(0) @binding(0) var<storage, read_write> b_globals : Globals;
+ 156| 
+ 157| struct Inputs {
+ 158|   u_dispatch_size : vec3<u32>,
+ 159| }
+ 160| @group(0) @binding(1) var<storage, read> b_inputs : Inputs;
+ 161| 
+ 162| struct Buffer_b_result { data: array<f32> }
+ 163| @group(0) @binding(2) var<storage, read_write> b_result : Buffer_b_result;
+ 164| 
+ 165| @compute @workgroup_size(16, 16, 1)
+ 166| fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+ 167|   _ = &b_result.data;
+ 168|   if (any(gid >= b_inputs.u_dispatch_size)) { return; }
+ 169|   var l_acc : i32 = 0;
+ 170|   for (var i_loop = 0; i_loop < 5; i_loop++) {
+ 171|   b_globals.data[0] = f32((b_globals.data[0] + i_loop));
+ 172|   }
+ 173|   b_result.data[u32(0)] = f32(b_globals.data[0]);
+ 174| }
+ 175| 
+
+[90mstdout[2m | tests/conformance/01-control-flow.test.ts[2m > [22m[2mConformance: Control Flow[2m > [22m[2mshould execute Loop (Accumulate Index) [GPU]
+[22m[39m[Browser] [Bridge] Error running backend: [Invalid ShaderModule (unlabeled)] is invalid.
+ - While validating compute stage ([Invalid ShaderModule (unlabeled)], entryPoint: main).
+ Error: [Invalid ShaderModule (unlabeled)] is invalid.
+ - While validating compute stage ([Invalid ShaderModule (unlabeled)], entryPoint: main).
+
+
+ [31m❯[39m tests/conformance/01-control-flow.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 590[2mms[22m[39m
+     [33m[2m✓[22m[39m should execute Branch (True path) [GPU] [33m 571[2mms[22m[39m
+     [32m✓[39m should execute Branch (False path) [GPU][32m 10[2mms[22m[39m
+[31m     [31m×[31m should execute Loop (Accumulate Index) [GPU][39m[32m 9[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/conformance/01-control-flow.test.ts[2m > [22mConformance: Control Flow[2m > [22mshould execute Loop (Accumulate Index) [GPU]
+[31m[1mGPUPipelineError[22m: [Invalid ShaderModule (unlabeled)] is invalid.
+ - While validating compute stage ([Invalid ShaderModule (unlabeled)], entryPoint: main).
+[39m
+[90m [2m❯[22m ExecutionContext.#evaluate ../node_modules/puppeteer-core/lib/esm/puppeteer/cdp/ExecutionContext.js:[2m383:19[22m[39m
+[90m [2m❯[22m ExecutionContext.evaluate ../node_modules/puppeteer-core/lib/esm/puppeteer/cdp/ExecutionContext.js:[2m270:16[22m[39m
+[90m [2m❯[22m IsolatedWorld.evaluate ../node_modules/puppeteer-core/lib/esm/puppeteer/cdp/IsolatedWorld.js:[2m96:16[22m[39m
+[90m [2m❯[22m CdpFrame.evaluate ../node_modules/puppeteer-core/lib/esm/puppeteer/api/Frame.js:[2m335:20[22m[39m
+[90m [2m❯[22m CdpPage.evaluate ../node_modules/puppeteer-core/lib/esm/puppeteer/api/Page.js:[2m799:20[22m[39m
+[36m [2m❯[22m runImplementation tests/conformance/puppeteer-backend.ts:[2m74:19[22m[39m
+    [90m 72| [39m  [90m// Run the test in the browser[39m
+    [90m 73| [39m  [35mconst[39m backendName [33m=[39m subBackend[33m;[39m
+    [90m 74| [39m  [35mconst[39m results [33m=[39m [35mawait[39m page[33m.[39m[34mevaluate[39m(
+    [90m   | [39m                  [31m^[39m
+    [90m 75| [39m    [35masync[39m (ir[33m,[39m ep[33m,[39m inputs[33m,[39m resources[33m,[39m bName) [33m=>[39m {
+    [90m 76| [39m      const res = await (window as any).runGpuTest(ir, ep, inputs, res…
+[90m [2m❯[22m Object.execute tests/conformance/puppeteer-backend.ts:[2m167:5[22m[39m
+[90m [2m❯[22m tests/conformance/test-runner.ts:[2m195:19[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m2 passed[39m[22m[90m (3)[39m
+[2m   Start at [22m 22:04:09
+[2m   Duration [22m 1.98s[2m (transform 381ms, setup 53ms, import 528ms, tests 590ms, environment 649ms)[22m
+

@@ -1425,12 +1425,37 @@ export class WgslGenerator {
 
     // Determine types
     const getType = (k: string) => {
-      const val = node[k];
+      // 1. Check for incoming edge
+      const edge = edges.find(e => e.to === node.id && e.portIn === k);
+      let val: any;
+
+      if (edge) {
+        val = edge.from; // The ID of the source node
+      } else {
+        val = node[k];
+      }
+
       if (typeof val === 'number') return Number.isInteger(val) ? 'int' : 'float';
       if (typeof val === 'boolean') return 'bool';
       // Look up type from var or node
       let t: string | undefined;
       if (typeof val === 'string') {
+        // Special case for 'varMap' overrides (ForceOntoGPU backend hack)
+        // If a var_get refers to a var in varMap, it is promoted to global storage (float)
+        if (options.varMap) {
+          const n = func.nodes.find(n => n.id === val);
+          if (n && n.op === 'var_get') {
+            const vId = n['var'];
+            if (options.varMap.has(vId)) {
+              // We could check varTypes, but ForceOntoGPU usually promotes to float storage
+              // If varTypes says float/floatN, return it. Default float.
+              const vt = options.varTypes?.get(vId) || 'float';
+              // Map vec2<f32> to float2 etc if needed, but 'float' is safe for scalar
+              return vt;
+            }
+          }
+        }
+
         t = options.nodeTypes?.get(val);
         // Fallback: check input types or var types if not in nodeTypes
         if (!t) {
@@ -1441,6 +1466,15 @@ export class WgslGenerator {
           const v = func.localVars.find(v => v.id === val);
           if (v) t = v.type;
         }
+        // Fallback: Check node op if reachable
+        if (!t) {
+          const n = func.nodes.find(n => n.id === val);
+          if (n) {
+            if (n.op === 'loop_index') t = 'int';
+            if (n.op === 'array_length') t = 'int';
+            if (n.op === 'resource_get_format') t = 'int';
+          }
+        }
       }
       return t || 'float';
     };
@@ -1448,8 +1482,9 @@ export class WgslGenerator {
     const argTypes = keys.map(getType);
 
     // Apply unification/casting
+    let result = rawArgs;
     if (mode === 'float') {
-      return rawArgs.map((arg, i) => {
+      result = rawArgs.map((arg, i) => {
         const t = argTypes[i];
         if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool') {
           return `f32(${arg})`;
@@ -1459,7 +1494,7 @@ export class WgslGenerator {
     } else if (mode === 'unify') {
       const hasFloat = argTypes.some(t => t.includes('float') || t.includes('vec') || t.includes('mat') || t === 'f32');
       if (hasFloat) {
-        return rawArgs.map((arg, i) => {
+        result = rawArgs.map((arg, i) => {
           const t = argTypes[i];
           if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool') {
             return `f32(${arg})`;
@@ -1469,7 +1504,7 @@ export class WgslGenerator {
       }
     }
 
-    return rawArgs;
+    return result;
   }
 
   private formatLiteral(val: any, type: string | DataType): string {

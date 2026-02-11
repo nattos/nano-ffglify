@@ -39,13 +39,13 @@ describe('Conformance: Structs and Arrays', () => {
   ]);
 
   runParametricTest('should Construct and Manipulate Fixed-Size Arrays', [
-    // 1. Create Array[3] filled with 0
-    { id: 'mk_arr', op: 'array_construct', length: 3, fill: 0 },
+    // 1. Create Array[3] filled with 0.0
+    { id: 'mk_arr', op: 'array_construct', length: 3, fill: 0.0 },
     { id: 'set_var', op: 'var_set', var: 'arr', val: 'mk_arr' },
 
-    // 2. Set arr[1] = 100
+    // 2. Set arr[1] = 100.0
     { id: 'get_arr', op: 'var_get', var: 'arr' }, // Dependency for set
-    { id: 'set_elem', op: 'array_set', array: 'get_arr', index: 1, value: 100 },
+    { id: 'set_elem', op: 'array_set', array: 'get_arr', index: 1, value: 100.0 },
 
     // 3. Get arr[1]
     { id: 'read_arr', op: 'var_get', var: 'arr' },
@@ -62,7 +62,7 @@ describe('Conformance: Structs and Arrays', () => {
     { from: 'extract', portOut: 'val', to: 'store', portIn: 'value', type: 'data' },
     { from: 'set_var', portOut: 'exec_out', to: 'set_elem', portIn: 'exec_in', type: 'execution' },
     { from: 'set_elem', portOut: 'exec_out', to: 'store', portIn: 'exec_in', type: 'execution' }
-  ], [{ id: 'arr', type: 'array<i32, 3>' }]);
+  ], [{ id: 'arr', type: 'array<f32, 3>' }]);
 
   runParametricTest('should Construct and Extract Nested Structs', [
     // 1. Create inner structs

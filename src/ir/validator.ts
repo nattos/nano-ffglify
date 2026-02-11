@@ -327,10 +327,80 @@ const resolveNodeType = (
     if (node.op === 'buffer_load') {
       const resId = node['buffer'];
       const resDef = doc.resources?.find(r => r.id === resId);
+
       const type = resDef?.dataType || 'float';
-      const vType = type === 'f32' ? 'float' : (type === 'i32' || type === 'int' ? 'int' : type as ValidationType);
+      // Normalize 'vecN<f32>' or 'floatN' to internal ValidationType
+      let vType: ValidationType = 'float';
+      if (type === 'f32' || type === 'float') vType = 'float';
+      else if (type === 'i32' || type === 'int') vType = 'int';
+      else if (type === 'u32' || type === 'uint') vType = 'uint';
+      else if (type === 'bool' || type === 'boolean') vType = 'boolean';
+      else if (type === 'vec2<f32>' || type === 'float2') vType = 'float2';
+      else if (type === 'vec3<f32>' || type === 'float3') vType = 'float3';
+      else if (type === 'vec4<f32>' || type === 'float4') vType = 'float4';
+      else if (type === 'mat3x3<f32>' || type === 'float3x3') vType = 'float3x3';
+      else if (type === 'mat4x4<f32>' || type === 'float4x4') vType = 'float4x4';
+
       cache.set(nodeId, vType);
       return vType;
+    }
+
+    if (node.op === 'array_extract') {
+      const arrayType = inputTypes['array'];
+      if (!arrayType || arrayType === 'any') {
+        cache.set(nodeId, 'any');
+        return 'any';
+      }
+
+      // Handle array<Type, N> or array<Type>
+      if (arrayType.startsWith('array<')) {
+        // format: array<scalarType, length> or array<scalarType>
+        const match = arrayType.match(/^array<(\w+)(?:,\s*\d+)?>/);
+        if (match) {
+          const sType = match[1];
+          // Map back to ValidationType
+          if (sType === 'f32') { cache.set(nodeId, 'float'); return 'float'; }
+          if (sType === 'i32') { cache.set(nodeId, 'int'); return 'int'; }
+          if (sType === 'u32') { cache.set(nodeId, 'uint'); return 'uint'; }
+          if (sType === 'bool') { cache.set(nodeId, 'boolean'); return 'boolean'; }
+          // If it is a struct name or other type
+          cache.set(nodeId, sType as ValidationType);
+          return sType as ValidationType;
+        }
+      }
+
+      // Handle vectors (e.g. float4 -> float)
+      if (arrayType === 'float2' || arrayType === 'float3' || arrayType === 'float4') {
+        cache.set(nodeId, 'float'); return 'float';
+      }
+
+      cache.set(nodeId, 'any');
+      return 'any';
+    }
+
+    if (node.op === 'struct_extract') {
+      const structType = inputTypes['struct']; // 'any' or struct ID
+      if (!structType || structType === 'any') {
+        cache.set(nodeId, 'any');
+        return 'any';
+      }
+      // If structType is a struct ID, look up struct definition
+      const structDef = doc.structs?.find(s => s.id === structType);
+      if (structDef) {
+        const field = node['field'];
+        const member = structDef.members.find(m => m.name === field);
+        if (member) {
+          let mType = member.type as ValidationType;
+          if (mType === 'f32') mType = 'float';
+          else if (mType === 'i32' || mType === 'int') mType = 'int';
+          else if (mType === 'u32' || mType === 'uint') mType = 'uint';
+
+          cache.set(nodeId, mType);
+          return mType;
+        }
+      }
+      cache.set(nodeId, 'any');
+      return 'any';
     }
 
     // Vec Swizzle Logic
