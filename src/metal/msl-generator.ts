@@ -1621,7 +1621,7 @@ export class MslGenerator {
   private irTypeToMsl(irType: string | undefined): string {
     if (!irType) return 'float';
     switch (irType) {
-      case 'float': return 'float';
+      case 'float': case 'f32': return 'float';
       case 'int': case 'i32': return 'int';
       case 'uint': case 'u32': return 'uint';
       case 'bool': return 'bool';

@@ -305,7 +305,7 @@ export class CppGenerator {
    */
   private irTypeToCpp(irType: string): string {
     switch (irType) {
-      case 'float': return 'float';
+      case 'float': case 'f32': return 'float';
       case 'int': case 'i32': return 'int';
       case 'uint': case 'u32': return 'unsigned int';
       case 'bool': return 'bool';
@@ -1174,18 +1174,39 @@ export class CppGenerator {
         const length = node['length'] || 0;
         const fill = node['fill'];
         let fillExpr: string;
-        let elemType: string;
+        let elemType: string | undefined;
+
+        if (inferredTypes) {
+          const nodeType = inferredTypes.get(node.id);
+          if (nodeType) {
+            if (nodeType === 'float2' || nodeType === 'float3' || nodeType === 'float4') {
+              elemType = 'float';
+            } else {
+              const match = nodeType.match(/array<([^,]+),/);
+              if (match) {
+                elemType = this.irTypeToCpp(match[1]);
+              }
+            }
+          }
+        }
 
         if (fill === undefined) {
           fillExpr = '0.0f';
-          elemType = 'float';
+          if (!elemType) elemType = 'float';
         } else if (typeof fill === 'number') {
-          if (Number.isInteger(fill)) {
-            fillExpr = String(fill);
-            elemType = 'int';
-          } else {
+          if (elemType === 'float') {
             fillExpr = this.formatFloat(fill);
-            elemType = 'float';
+          } else if (elemType === 'int') {
+            fillExpr = String(Math.floor(fill));
+          } else {
+            // Fallback if no elemType inferred
+            if (Number.isInteger(fill)) {
+              fillExpr = String(fill);
+              elemType = 'int';
+            } else {
+              fillExpr = this.formatFloat(fill);
+              elemType = 'float';
+            }
           }
         } else if (typeof fill === 'string') {
           // Could be a node reference
@@ -1193,17 +1214,17 @@ export class CppGenerator {
           if (refNode) {
             emitPure(fill);
             fillExpr = this.nodeResId(fill);
-            elemType = `decltype(${fillExpr})`;
+            if (!elemType) elemType = `decltype(${fillExpr})`;
           } else if (func.localVars.some(v => v.id === fill)) {
             fillExpr = this.sanitizeId(fill, 'var');
-            elemType = `decltype(${fillExpr})`;
+            if (!elemType) elemType = `decltype(${fillExpr})`;
           } else {
             fillExpr = fill;
-            elemType = 'float';
+            if (!elemType) elemType = 'float';
           }
         } else {
           fillExpr = String(fill);
-          elemType = 'float';
+          if (!elemType) elemType = 'float';
         }
 
         return `({auto _arr = std::array<${elemType}, ${length}>{}; for(auto& _e : _arr) _e = ${fillExpr}; _arr;})`;

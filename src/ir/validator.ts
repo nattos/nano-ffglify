@@ -289,8 +289,33 @@ const resolveNodeType = (
       }
     }
 
+    if (node.op === 'struct_construct') {
+      const type = node['type'];
+      if (type) {
+        cache.set(nodeId, type as ValidationType);
+        return type as ValidationType;
+      }
+    }
+
     if (node.op === 'array_construct') {
-      const type = node['type'] || 'float';
+      let type = node['type'];
+      if (!type) {
+        const fillType = inputTypes['fill'];
+        if (fillType && fillType !== 'any') {
+          type = fillType;
+        } else if (Array.isArray(node['values']) && node['values'].length > 0) {
+          const firstVal = node['values'][0];
+          if (typeof firstVal === 'string' && func.nodes.some(n => n.id === firstVal)) {
+            type = resolveNodeType(firstVal, func, doc, cache, resourceIds, errors, edges);
+          } else if (typeof firstVal === 'number') {
+            type = 'float';
+          } else if (typeof firstVal === 'boolean') {
+            type = 'boolean';
+          }
+        }
+      }
+      if (!type) type = 'float';
+
       let len = 0;
       if (Array.isArray(node['values'])) len = node['values'].length;
       else if (typeof node['length'] === 'number') len = node['length'];
