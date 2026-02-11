@@ -1,7 +1,8 @@
 /// <reference types="@webgpu/types" />
 import { IRDocument, DataType, ResourceDef } from '../../ir/types';
-import { validateIR, inferFunctionTypes } from '../../ir/validator';
+import { inferFunctionTypes, validateIR } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
+import { InterpretedExecutor } from '../../interpreter/executor';
 import { gpuSemaphore } from './gpu-singleton';
 import { TestBackend } from './types';
 import { WebGpuBackend } from './webgpu-backend';
@@ -290,7 +291,6 @@ export const ForceOntoGPUTestBackend: TestBackend = {
         });
 
         const code = WgslGenerator.resolveImports(compilation);
-        console.log("--- GENERATED WGSL ---\n", code, "\n---------------------");
 
         device.pushErrorScope('validation');
         const pipeline = await GpuCache.getComputePipeline(device, code);
@@ -329,6 +329,26 @@ export const ForceOntoGPUTestBackend: TestBackend = {
             inputValues[k] = v;
           });
 
+          // Also include arguments from the dispatch node, evaluated by the interpreter
+          if (dispNode && dispNode['args']) {
+            const args = dispNode['args'] as Record<string, any>;
+            const subCtx = new EvaluationContext(ir, ctx.inputs);
+            subCtx.resources = ctx.resources;
+            const subExec = new InterpretedExecutor(subCtx);
+            subCtx.pushFrame(func.id);
+            subExec.executeFunction(func);
+
+            for (const [argName, nodeId] of Object.entries(args)) {
+              let val = subCtx.getVar(nodeId);
+              if (val === undefined && subCtx.stack.length > 0) {
+                val = subCtx.currentFrame.nodeResults.get(nodeId);
+              }
+              if (val !== undefined) {
+                inputValues[argName] = val;
+              }
+            }
+            subCtx.popFrame();
+          }
 
           const packed = packBuffer(layout, inputValues, new ShaderLayout(ir.structs || []), 'std430');
 

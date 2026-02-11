@@ -264,7 +264,8 @@ export class WgslGenerator {
     });
 
     // Merge everything
-    const finalCodeLines = [...finalLines, ...lines, ...functionLines];
+    // Put custom user structs (lines) before Inputs/Globals (finalLines) as they may reference them
+    const finalCodeLines = [...lines, ...finalLines, ...functionLines];
     const code = finalCodeLines.join('\n');
 
 

@@ -1668,12 +1668,8 @@ export class MslGenerator {
 
   private getTypeSize(type: string | undefined): number {
     if (!type) return 1;
-    if (type === 'float2') return 2;
-    if (type === 'float3') return 3;
-    if (type === 'float4' || type === 'quat') return 4;
-    if (type === 'float3x3') return 9;
-    if (type === 'float4x4') return 16;
-    return 1;
+    // Use getTypeFlatSize to correctly account for structs and arrays
+    return this.getTypeFlatSize(type);
   }
 
   private buildFuncParams(func: FunctionDef): string {

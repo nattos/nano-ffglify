@@ -10,8 +10,10 @@ import * as os from 'os';
 import { IRDocument, ResourceDef } from '../../ir/types';
 import { validateIR } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
+import { InterpretedExecutor } from '../../interpreter/executor';
 import { TestBackend } from './types';
 import { MslGenerator } from '../../metal/msl-generator';
+import { WebGpuBackend } from './webgpu-backend';
 
 // Build directory for Metal GPU tests
 function getMetalBuildDir(): string {
@@ -140,27 +142,92 @@ export const MetalBackend: TestBackend = {
       }
     }
 
-    // 4. Build initial globals buffer data for inputs
+    // 4. Build initial globals buffer data for inputs (Globals + Shader-specific inputs)
     const globalsSize = result.metadata.globalBufferSize;
     const varMap = result.metadata.varMap;
     const initialGlobals = new Float32Array(globalsSize / 4);
 
-    // Fill globals with inputs
-    for (const input of ir.inputs || []) {
-      const val = ctx.inputs.get(input.id);
-      const offset = varMap.get(input.id);
-      if (val !== undefined && offset !== undefined) {
-        if (typeof val === 'number') {
-          initialGlobals[offset] = val;
-        } else if (typeof val === 'boolean') {
-          initialGlobals[offset] = val ? 1 : 0;
-        } else if (Array.isArray(val)) {
-          // Flatten nesting if any (e.g. for vectors/matrices)
-          const flat = val.flat(Infinity);
-          for (let i = 0; i < flat.length; i++) {
-            if (offset + i < initialGlobals.length) {
-              initialGlobals[offset + i] = Number(flat[i]);
+    // Helper to recursively flatten structured data (structs/arrays)
+    const flattenValue = (val: any, type: string, out: number[], structDefs: any[]) => {
+      const t = type.toLowerCase();
+      if (typeof val === 'number') {
+        out.push(val);
+      } else if (typeof val === 'boolean') {
+        out.push(val ? 1 : 0);
+      } else if (Array.isArray(val)) {
+        if (t.includes('vec') || (t.startsWith('float') && !t.includes('x') && !t.includes('['))) {
+          // Vector
+          const count = t.includes('2') ? 2 : t.includes('3') ? 3 : 4;
+          for (let i = 0; i < count; i++) out.push(Number(val[i] || 0));
+        } else if (t.includes('mat') || t.includes('x')) {
+          // Matrix
+          const dim = (t.includes('3x3') || t.includes('3')) ? 3 : 4;
+          for (let c = 0; c < dim; c++) {
+            for (let r = 0; r < dim; r++) {
+              out.push(Number(val[c * dim + r] || 0));
             }
+          }
+        } else {
+          // Array
+          let inner = 'float';
+          if (t.includes('array<')) inner = t.split('<')[1].split(',')[0].trim();
+          else inner = t.split('[')[0].trim();
+          for (let i = 0; i < val.length; i++) {
+            flattenValue(val[i], inner, out, structDefs);
+          }
+        }
+      } else if (typeof val === 'object' && val !== null) {
+        // Struct
+        const sDef = structDefs.find(s => s.id.toLowerCase() === t);
+        if (sDef) {
+          for (const m of sDef.members) {
+            flattenValue(val[m.name], m.type, out, structDefs);
+          }
+        }
+      }
+    };
+
+    // Fill globals with inputs (both global and shader-specific)
+    // For shader-specific inputs, we need to get them from the dispatch node or current context
+    const allInputs = new Map(ctx.inputs);
+    if (entryFunc?.type === 'cpu') {
+      const dispatchNode = entryFunc.nodes.find(n => n.op === 'cmd_dispatch');
+      if (dispatchNode && dispatchNode['args']) {
+        const args = dispatchNode['args'] as Record<string, any>;
+
+        // Run interpreter on the CPU function to get the values of local nodes
+        const subCtx = new EvaluationContext(ir, ctx.inputs);
+        subCtx.resources = ctx.resources;
+        const subExec = new InterpretedExecutor(subCtx);
+        subCtx.pushFrame(entryFunc.id);
+        subExec.executeFunction(entryFunc);
+
+        for (const [argName, nodeId] of Object.entries(args)) {
+          let val = subCtx.getVar(nodeId);
+          if (val === undefined && subCtx.stack.length > 0) {
+            val = subCtx.currentFrame.nodeResults.get(nodeId);
+          }
+          if (val !== undefined) {
+            allInputs.set(argName, val);
+          }
+        }
+        subCtx.popFrame();
+      }
+    }
+
+    // Include shader function inputs in our iteration
+    const shaderFunc = ir.functions.find(f => f.id === mslEntryPoint);
+    const combinedInputDefs = [...(ir.inputs || []), ...(shaderFunc?.inputs || [])];
+
+    for (const inputDef of combinedInputDefs) {
+      const val = allInputs.get(inputDef.id);
+      const offset = varMap.get(inputDef.id);
+      if (val !== undefined && offset !== undefined) {
+        const flat: number[] = [];
+        flattenValue(val, inputDef.type, flat, ir.structs || []);
+        for (let i = 0; i < flat.length; i++) {
+          if (offset + i < initialGlobals.length) {
+            initialGlobals[offset + i] = flat[i];
           }
         }
       }
