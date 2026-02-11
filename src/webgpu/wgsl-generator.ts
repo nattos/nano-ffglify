@@ -529,7 +529,7 @@ export class WgslGenerator {
       lines.push(`fn ${func.id}(${args})${retType === 'void' ? '' : ' -> ' + retType} {`);
     }
 
-    const edges = reconstructEdges(func);
+    const edges = reconstructEdges(func, options.fullIr);
     this.emitLocalVars(func, lines);
     this.emitBody(func, lines, options, new Set(), ir, edges);
     lines.push(`}`);
@@ -1033,8 +1033,12 @@ export class WgslGenerator {
         const targetVar = func.localVars.find(v => v.id === targetId);
 
 
-        // Also check nodeTypes for intermediate nodes
-        const rawType = options.nodeTypes?.get(targetId) || targetIn?.type || targetVar?.type || '';
+        // Also check nodeTypes and varTypes for intermediate nodes or global inputs
+        const getV = (m: Map<string, string> | undefined, id: string) => {
+          const v = m?.get(id);
+          return (v && v !== 'any') ? v : null;
+        };
+        const rawType = getV(options.nodeTypes as any, targetId) || getV(options.varTypes as any, targetId) || targetIn?.type || targetVar?.type || '';
         let t = rawType.toLowerCase();
 
         // Fallback: Check target node op if type is unknown or 'any' (default map val)

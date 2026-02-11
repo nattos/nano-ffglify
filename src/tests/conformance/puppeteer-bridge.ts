@@ -20,6 +20,7 @@ import { validateIR } from '../../ir/validator';
 (window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any, resourcesObj: any, backendName: string) => {
   // console.log(`[Bridge] runGpuTest called with backend: ${backendName}`, { entryPoint, inputsObj });
 
+
   // Convert plain object inputs back to Map
   const inputsMap = new Map<string, any>();
   if (inputsObj) {

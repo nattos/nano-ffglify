@@ -210,11 +210,11 @@ export const ForceOntoGPUTestBackend: TestBackend = {
               if (val !== undefined) {
                 const type = varTypes.get(name) || 'float';
                 const count = getComponentCount(type);
-                if (count === 1 && typeof val === 'number') {
-                  initialData[idx] = val;
+                if (count === 1 && (typeof val === 'number' || typeof val === 'boolean')) {
+                  initialData[idx] = typeof val === 'boolean' ? (val ? 1 : 0) : val;
                 } else if (Array.isArray(val)) {
                   for (let i = 0; i < Math.min(val.length, count); i++) {
-                    initialData[idx + i] = val[i] as number;
+                    initialData[idx + i] = Number(val[i]);
                   }
                 }
               }
@@ -285,7 +285,8 @@ export const ForceOntoGPUTestBackend: TestBackend = {
           nodeTypes: nodeTypes as any,
           resourceBindings: genResourceBindings,
           samplerBindings: genSamplerBindings,
-          resourceDefs: resourceDefs
+          resourceDefs: resourceDefs,
+          fullIr: ir
         });
 
         const code = WgslGenerator.resolveImports(compilation);
