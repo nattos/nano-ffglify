@@ -27,6 +27,7 @@ import { appController } from './state/controller';
 import { chatHandler } from './llm/chat-handler';
 import { AUTO_PLAY_SCRIPT_LINES } from './constants';
 import { DEMO_SCRIPT } from './domain/mock-responses';
+import { ALL_EXAMPLES } from './domain/example-ir';
 import { runScriptDebug } from './debug/script-runner';
 import { LLMLogEntry } from './domain/types';
 import { ZipFileSystem } from './metal/virtual-fs';
@@ -323,6 +324,12 @@ export class App extends MobxLitElement {
     }
   }
 
+  loadExample(ir: typeof appState.database.ir) {
+    appController.mutate('Load Example', 'user', (draft) => {
+      draft.ir = JSON.parse(JSON.stringify(ir));
+    }, { needsCompile: true });
+  }
+
   async handleSend() {
     const text = appState.local.draftChat;
     if (!text.trim()) return;
@@ -449,6 +456,15 @@ export class App extends MobxLitElement {
 
         ${local.settings.activeTab === 'script' ? html`
           <div class="debug-panel">
+            <h3>Examples</h3>
+            <div class="examples-list" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 2rem;">
+              ${Object.entries(ALL_EXAMPLES).map(([key, example]) => html`
+                <ui-button @click=${() => this.loadExample(example)}>
+                  ${example.meta.name || key}
+                </ui-button>
+              `)}
+            </div>
+
             <h3>Demo Script Debugger</h3>
             <p>Run script step-by-step in an isolated environment. Pre-requisite steps are always mocked. Target step uses current "Mock LLM" toggle.</p>
 

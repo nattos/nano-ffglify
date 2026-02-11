@@ -16,7 +16,7 @@ export const NOISE_SHADER: IRDocument = {
       id: 'output_tex',
       type: 'texture2d',
       format: TextureFormat.RGBA8,
-      size: { mode: 'fixed', value: [256, 256] },
+      size: { mode: 'viewport' },
       isOutput: true,
       comment: `Primary display output. Note that mode: 'fixed' means it has own dimensions, 'viewport' means it follows the display. isOutput: true marks the texture resource as the primary output, usually the one that will be displayed.`,
       persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: true }
