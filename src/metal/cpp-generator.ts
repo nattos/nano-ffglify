@@ -7,6 +7,14 @@ import { IRDocument, FunctionDef, Node, Edge } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
 import { inferFunctionTypes, InferredTypes } from '../ir/validator';
 
+const isCppDebugEnabled = () => {
+  try {
+    return typeof process !== 'undefined' && process.env && process.env.CPP_DEBUG;
+  } catch (e) {
+    return false;
+  }
+};
+
 export interface ShaderFunctionInfo {
   id: string;
   inputs: { id: string; type: string }[];
@@ -768,7 +776,7 @@ export class CppGenerator {
       return typeof argId === 'string' ? inferredTypes.get(argId) || 'float' : 'float';
     });
 
-    if (process.env.CPP_DEBUG) {
+    if (isCppDebugEnabled()) {
       console.log(`[CPP] resolveCoercedArgs op=${node.op} keys=${keys} types=${argTypes} mode=${mode}`);
     }
 

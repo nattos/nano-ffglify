@@ -7,6 +7,14 @@ import { IRDocument, FunctionDef, Node, Edge, StructDef } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
 import { inferFunctionTypes, InferredTypes } from '../ir/validator';
 
+const isMslDebugEnabled = () => {
+  try {
+    return typeof process !== 'undefined' && process.env && process.env.MSL_DEBUG;
+  } catch (e) {
+    return false;
+  }
+};
+
 export interface MslOptions {
   globalBufferBinding?: number;
   varMap?: Map<string, number>;
@@ -1045,7 +1053,7 @@ export class MslGenerator {
       return typeof argId === 'string' ? inferredTypes.get(argId) || 'float' : 'float';
     });
 
-    if (process.env.MSL_DEBUG) {
+    if (isMslDebugEnabled()) {
       console.log(`[MSL] resolveCoercedArgs op=${node.op} keys=${keys} types=${argTypes} mode=${mode}`);
     }
 
