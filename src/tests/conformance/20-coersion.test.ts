@@ -106,11 +106,70 @@ describe('20-coersion', () => {
   const sinFuncWithStore = withBufferStore(sinFunc, 'res_val');
   const mixFuncWithStore = withBufferStore(mixFunc, 'res_val');
 
+  // Test case 5: Struct Array Coersion
+  const structArrFunc: FunctionDef = {
+    id: 'struct_arr_test',
+    type: 'cpu',
+    inputs: [],
+    outputs: [],
+    localVars: [],
+    nodes: [
+      { id: 'p1', op: 'struct_construct', type: 'Point', values: { x: 1.0, y: 2.0 } },
+      { id: 'p2', op: 'struct_construct', type: 'Point', values: { x: 3.0, y: 4.0 } },
+      { id: 'arr', op: 'array_construct', values: ['p1', 'p2'] },
+      { id: 'disp', op: 'cmd_dispatch', func: 'shader_struct_arr', dispatch: [1, 1, 1], args: { data: 'arr' } }
+    ]
+  };
+
+  const shaderStructArr: FunctionDef = {
+    id: 'shader_struct_arr',
+    type: 'shader',
+    inputs: [{ id: 'data', type: 'array<Point, 2>' }],
+    outputs: [],
+    localVars: [],
+    nodes: [
+      { id: 'p', op: 'array_extract', array: 'data', index: 1 },
+      { id: 'val', op: 'struct_extract', struct: 'p', field: 'y' },
+      { id: 'store', op: 'buffer_store', buffer: 'out_buf', index: 0, value: 'val' }
+    ]
+  };
+
+  // Test case 6: Float Array Literal (ambiguous 0.0)
+  const floatArrFunc: FunctionDef = {
+    id: 'float_arr_test',
+    type: 'cpu',
+    inputs: [],
+    outputs: [],
+    localVars: [],
+    nodes: [
+      { id: 'arr', op: 'array_construct', length: 2, fill: 0.0 }, // No type property
+      { id: 'disp', op: 'cmd_dispatch', func: 'shader_float_arr', dispatch: [1, 1, 1], args: { data: 'arr' } }
+    ]
+  };
+
+  const shaderFloatArr: FunctionDef = {
+    id: 'shader_float_arr',
+    type: 'shader',
+    inputs: [{ id: 'data', type: 'array<f32, 2>' }],
+    outputs: [],
+    localVars: [],
+    nodes: [
+      { id: 'v', op: 'array_extract', array: 'data', index: 0 },
+      { id: 'store', op: 'buffer_store', buffer: 'out_buf', index: 0, value: 'v' }
+    ]
+  };
+
   const doc: IRDocument = {
     version: '1.0.0',
     meta: { name: 'CoersionTest', author: 'Test' },
     entryPoint: mainId,
-    functions: [clampFuncWithStore, clampFuncCpu, addFuncWithStore, sinFuncWithStore, mixFuncWithStore],
+    structs: [
+      { id: 'Point', members: [{ name: 'x', type: 'float' }, { name: 'y', type: 'float' }] }
+    ],
+    functions: [
+      clampFuncWithStore, clampFuncCpu, addFuncWithStore, sinFuncWithStore, mixFuncWithStore,
+      structArrFunc, shaderStructArr, floatArrFunc, shaderFloatArr
+    ],
     resources: [outBuffer],
     inputs: []
   };
@@ -159,6 +218,16 @@ describe('20-coersion', () => {
   runFullGraphTest('Mix Int Coersion', { ...doc, entryPoint: 'mix_test' }, async (ctx) => {
     const val = verifyBuffer(ctx, 5.0);
     if (Math.abs(val - 5.0) > 0.0001) throw new Error(`Mix: Expected 5.0, got ${val}`);
+  }, backends);
+
+  runFullGraphTest('Struct Array Coersion', { ...doc, entryPoint: 'struct_arr_test' }, async (ctx) => {
+    const val = verifyBuffer(ctx, 4.0);
+    if (Math.abs(val - 4.0) > 0.0001) throw new Error(`Struct Array: Expected 4.0, got ${val}`);
+  }, backends);
+
+  runFullGraphTest('Float Array Literal Coersion', { ...doc, entryPoint: 'float_arr_test' }, async (ctx) => {
+    const val = verifyBuffer(ctx, 0.0);
+    if (Math.abs(val) > 0.0001) throw new Error(`Float Array Literal: Expected 0.0, got ${val}`);
   }, backends);
 
 });

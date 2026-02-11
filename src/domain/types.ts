@@ -177,7 +177,7 @@ export const IRSchema = defineSchema<IRDocument>({
               description: 'Member',
               properties: {
                 name: { type: 'string', description: 'Member name', required: true },
-                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                type: { type: 'string', description: 'Data type', required: true },
                 comment: { type: 'string', description: 'Description', required: false },
                 builtin: { type: 'string', description: 'Builtin annotation', required: false, enum: BuiltinNameSchema.options as string[] },
                 location: { type: 'number', description: 'Location index', required: false }
@@ -211,7 +211,7 @@ export const IRSchema = defineSchema<IRDocument>({
               description: 'Member',
               properties: {
                 name: { type: 'string', description: 'Member name', required: true },
-                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                type: { type: 'string', description: 'Data type', required: true },
                 comment: { type: 'string', description: 'Description', required: false },
                 builtin: { type: 'string', description: 'Builtin annotation', required: false, enum: BuiltinNameSchema.options as string[] },
                 location: { type: 'number', description: 'Location index', required: false }
@@ -239,7 +239,7 @@ export const IRSchema = defineSchema<IRDocument>({
               description: 'Port',
               properties: {
                 id: { type: 'string', description: 'Unique ID', required: true },
-                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                type: { type: 'string', description: 'Data type', required: true },
                 comment: { type: 'string', description: 'Description', required: false },
                 builtin: { type: 'string', description: 'Builtin annotation', required: false, enum: BuiltinNameSchema.options as string[] },
                 location: { type: 'number', description: 'Location index', required: false }
@@ -252,7 +252,7 @@ export const IRSchema = defineSchema<IRDocument>({
               description: 'Port',
               properties: {
                 id: { type: 'string', description: 'Unique ID', required: true },
-                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                type: { type: 'string', description: 'Data type', required: true },
                 comment: { type: 'string', description: 'Description', required: false },
                 builtin: { type: 'string', description: 'Builtin annotation', required: false, enum: BuiltinNameSchema.options as string[] },
                 location: { type: 'number', description: 'Location index', required: false }
@@ -265,7 +265,7 @@ export const IRSchema = defineSchema<IRDocument>({
               description: 'Variable',
               properties: {
                 id: { type: 'string', description: 'Unique ID', required: true },
-                type: { type: 'string', description: 'Data type', required: true, enum: [...PRIMITIVE_TYPES] as string[] },
+                type: { type: 'string', description: 'Data type', required: true },
                 initialValue: { type: 'any_value', description: 'Initial value', required: false },
                 comment: { type: 'string', description: 'Description', required: false }
               }

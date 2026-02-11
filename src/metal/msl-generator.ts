@@ -1793,8 +1793,33 @@ export class MslGenerator {
           const len = parseInt(arrayMatch[2]);
           const mslElemType = this.irTypeToMsl(elemType);
           const elemSize = this.getTypeFlatSize(elemType);
-          const indices = Array.from({ length: len }, (_, i) => `inputs[${offset + i * elemSize}]`);
-          lines.push(`    ${mslElemType} ${varName}[${len}] = {${indices.join(', ')}};`);
+
+          const structDef = this.ir?.structs?.find(s => s.id === elemType);
+          if (structDef) {
+            lines.push(`    ${mslElemType} ${varName}[${len}];`);
+            for (let i = 0; i < len; i++) {
+              let memberOff = 0;
+              for (const m of structDef.members) {
+                const fieldName = this.sanitizeId(m.name, 'field');
+                const mt = m.type;
+                if (mt === 'float2') {
+                  lines.push(`    ${varName}[${i}].${fieldName} = float2(inputs[${offset + i * elemSize + memberOff}], inputs[${offset + i * elemSize + memberOff + 1}]);`);
+                } else if (mt === 'float3') {
+                  lines.push(`    ${varName}[${i}].${fieldName} = float3(inputs[${offset + i * elemSize + memberOff}], inputs[${offset + i * elemSize + memberOff + 1}], inputs[${offset + i * elemSize + memberOff + 2}]);`);
+                } else if (mt === 'float4') {
+                  lines.push(`    ${varName}[${i}].${fieldName} = float4(inputs[${offset + i * elemSize + memberOff}], inputs[${offset + i * elemSize + memberOff + 1}], inputs[${offset + i * elemSize + memberOff + 2}], inputs[${offset + i * elemSize + memberOff + 3}]);`);
+                } else if (mt === 'int' || mt === 'i32') {
+                  lines.push(`    ${varName}[${i}].${fieldName} = int(inputs[${offset + i * elemSize + memberOff}]);`);
+                } else {
+                  lines.push(`    ${varName}[${i}].${fieldName} = inputs[${offset + i * elemSize + memberOff}];`);
+                }
+                memberOff += this.getTypeFlatSize(mt);
+              }
+            }
+          } else {
+            const indices = Array.from({ length: len }, (_, i) => `inputs[${offset + i * elemSize}]`);
+            lines.push(`    ${mslElemType} ${varName}[${len}] = {${indices.join(', ')}};`);
+          }
           return offset + len * elemSize;
         }
 

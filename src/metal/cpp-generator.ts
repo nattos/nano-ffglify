@@ -1171,9 +1171,9 @@ export class CppGenerator {
 
       // Array ops
       case 'array_construct': {
-        const length = node['length'] || 0;
+        const values = node['values'];
+        const length = Array.isArray(values) ? values.length : (node['length'] || 0);
         const fill = node['fill'];
-        let fillExpr: string;
         let elemType: string | undefined;
 
         if (inferredTypes) {
@@ -1190,6 +1190,30 @@ export class CppGenerator {
           }
         }
 
+        if (Array.isArray(values)) {
+          const items = values.map((val, i) => {
+            if (typeof val === 'number') {
+              if (elemType === 'float' || !elemType) {
+                if (!elemType) elemType = 'float';
+                return this.formatFloat(val);
+              }
+              if (elemType === 'int') return String(Math.floor(val));
+              return String(val);
+            }
+            if (typeof val === 'string') {
+              // Node reference
+              emitPure(val);
+              const resId = this.nodeResId(val);
+              if (!elemType) elemType = `decltype(${resId})`;
+              return resId;
+            }
+            return String(val);
+          });
+          if (!elemType) elemType = 'float';
+          return `std::array<${elemType}, ${length}>{${items.join(', ')}}`;
+        }
+
+        let fillExpr: string;
         if (fill === undefined) {
           fillExpr = '0.0f';
           if (!elemType) elemType = 'float';

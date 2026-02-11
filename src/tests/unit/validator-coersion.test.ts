@@ -5,7 +5,7 @@ import { IRDocument, FunctionDef } from '../../ir/types';
 
 describe('Validator Coercion Rules', () => {
 
-  const createIR = (nodes: any[]): IRDocument => ({
+  const createIR = (nodes: any[], structs?: any[]): IRDocument => ({
     entryPoint: 'main',
     functions: [{
       id: 'main',
@@ -21,7 +21,7 @@ describe('Validator Coercion Rules', () => {
     }],
     resources: [],
     inputs: [],
-    structs: []
+    structs: structs || []
   });
 
   const getFunction = (doc: IRDocument) => doc.functions[0];
@@ -151,6 +151,61 @@ describe('Validator Coercion Rules', () => {
     // Or "Missing required argument" if it falls through
     // But here we expect mismatched type for 'value' input
     expect(hasMismatch).toBe(true);
+  });
+
+  describe('Struct and Array Inference', () => {
+    it('should infer struct_construct type from its type property', () => {
+      const ir = createIR([
+        { id: 'v2', op: 'float2', x: 1, y: 2 },
+        { id: 's', op: 'struct_construct', type: 'Point', values: { x: 1, y: 'v2' } }
+      ], [
+        { id: 'Point', members: [{ name: 'x', type: 'float' }, { name: 'y', type: 'float2' }] }
+      ]);
+
+      const errors = validateIR(ir);
+      expect(errors).toHaveLength(0);
+      // We can't easily check the cache from here without exposing it,
+      // but if it validates, it means it didn't return 'any'.
+    });
+
+    it('should infer array_construct element type from fill (float)', () => {
+      const ir = createIR([
+        { id: 'arr', op: 'array_construct', length: 3, fill: 0.0 }
+      ]);
+      const errors = validateIR(ir);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should infer array_construct element type from fill (struct reference)', () => {
+      const ir = createIR([
+        { id: 'p', op: 'struct_construct', type: 'Point', values: { val: 1 } },
+        { id: 'arr', op: 'array_construct', length: 2, fill: 'p' }
+      ], [
+        { id: 'Point', members: [{ name: 'val', type: 'float' }] }
+      ]);
+      const errors = validateIR(ir);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should infer array_construct element type from values array', () => {
+      const ir = createIR([
+        { id: 'arr', op: 'array_construct', values: [1.1, 2.2, 3.3] }
+      ]);
+      const errors = validateIR(ir);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should handle nested struct array inference', () => {
+      const ir = createIR([
+        { id: 'p1', op: 'struct_construct', type: 'Point', values: { v: 1 } },
+        { id: 'p2', op: 'struct_construct', type: 'Point', values: { v: 2 } },
+        { id: 'arr', op: 'array_construct', values: ['p1', 'p2'] }
+      ], [
+        { id: 'Point', members: [{ name: 'v', type: 'float' }] }
+      ]);
+      const errors = validateIR(ir);
+      expect(errors).toHaveLength(0);
+    });
   });
 
 });

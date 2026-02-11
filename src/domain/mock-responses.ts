@@ -427,31 +427,49 @@ export const NOTES_MOCKS2: Record<string, LLMResponse | LLMResponse[]> = {
         }
       }]
   },
-  "fix the noise shader": {
-    text: "I'll apply a series of patches to fix the property naming and formatting issues in the noise shader IR...",
+  "show me struct array coersion": {
+    text: "Here is a graph demonstrating struct array coersion...",
     tool_calls: [
       {
-        name: "patchIR",
+        name: "replaceIR",
         arguments: {
-          patches: [
-            { op: "add", path: "/resources/0/format", value: "rgba8" },
-            { op: "move", from: "/functions/0/nodes/1/shader", path: "/functions/0/nodes/1/func" },
-            { op: "remove", path: "/functions/0/nodes/1/per_pixel" },
-            { op: "remove", path: "/functions/0/nodes/1/resource" },
-            { op: "add", path: "/functions/0/nodes/1/dispatch", value: "tex_size" },
-            { op: "move", from: "/functions/1/nodes/1/src", path: "/functions/1/nodes/1/vec" },
-            { op: "move", from: "/functions/1/nodes/1/swizzle", path: "/functions/1/nodes/1/channels" },
-            { op: "move", from: "/functions/1/nodes/4/id_var", path: "/functions/1/nodes/4/var" },
-            { op: "move", from: "/functions/1/nodes/6/id_var", path: "/functions/1/nodes/6/var" }
+          id: "struct-coersion",
+          version: "1.0.0",
+          meta: { name: "Struct Array Coersion", author: "Antigravity" },
+          entryPoint: "main",
+          inputs: [],
+          resources: [],
+          structs: [{ id: "Point", members: [{ name: "x", type: "float" }, { name: "y", type: "float" }] }],
+          functions: [
+            {
+              id: "main",
+              type: "cpu",
+              inputs: [],
+              outputs: [],
+              localVars: [],
+              nodes: [
+                { id: "p1", op: "struct_construct", type: "Point", values: { x: 1, y: 2 } },
+                { id: "p2", op: "struct_construct", type: "Point", values: { x: 3, y: 4 } },
+                { id: "arr", op: "array_construct", values: ["p1", "p2"] },
+                { id: "disp", op: "cmd_dispatch", func: "shader", dispatch: [1, 1, 1], args: { data: "arr" } }
+              ]
+            },
+            {
+              id: "shader",
+              type: "shader",
+              inputs: [{ id: "data", type: "array<Point, 2>" }],
+              outputs: [],
+              localVars: [],
+              nodes: [
+                { id: "p", op: "array_extract", array: "data", index: 1 },
+                { id: "y", op: "struct_extract", struct: "p", field: "y" }
+              ]
+            }
           ]
         }
-      },
-      {
-        name: "final_response",
-        arguments: { text: "The noise shader IR has been fixed and is now strictly valid according to the updated schemas." }
       }
     ]
-  },
+  }
 };
 
 export const DEMO_SCRIPT = Object.keys(NOTES_MOCKS);
