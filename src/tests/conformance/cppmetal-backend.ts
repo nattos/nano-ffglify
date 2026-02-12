@@ -97,7 +97,7 @@ export const CppMetalBackend: TestBackend = {
     // 6. Prepare resource specs as arguments
     const resourceSpecs = ir.resources.map((r, idx) => {
       if (r.type === 'texture2d') {
-        const size = r.size && typeof r.size === 'object' && 'value' in r.size ? r.size.value : [1, 1];
+        const size = r.size && typeof r.size === 'object' && 'value' in r.size ? r.size.value : [256, 256];
         const [w, h] = Array.isArray(size) ? size : [size, 1];
         const sampler = (r as any).sampler;
         const wrap = sampler?.wrap === 'clamp' ? 1 : 0;

@@ -267,8 +267,15 @@ export class MslGenerator {
 
     const globalBufferSize = Math.max(varOffset * 4, 16);
 
+    const code = lines.join('\n');
+    if (code.includes('kernel void fn_ray_gpu') || code.includes('fn_ray_gpu')) {
+      console.log('--- GENERATED MSL (LIBRARY) ---');
+      console.log(code);
+      console.log('-------------------------------');
+    }
+
     return {
-      code: lines.join('\n'),
+      code,
       metadata: {
         resourceBindings,
         globalBufferSize,
@@ -649,39 +656,7 @@ export class MslGenerator {
     this.emitBody(func, lines, allFunctions, varMap, resourceBindings, edges, true, inferredTypes?.get(func.id));
 
     // Kernel epilogue: write all local vars to b_globals for readback
-    // (func_return paths do their own writeback and return early)
-    if (!hasShaderInputs) {
-      lines.push('    // Write local vars to globals for readback');
-      for (const v of func.localVars || []) {
-        const offset = varMap.get(v.id);
-        if (offset === undefined) continue;
-        const varName = this.sanitizeId(v.id, 'var');
-        const varType = v.type || 'float';
-        // Skip array types — they can't be written to a flat float buffer directly
-        if (varType.startsWith('array<') || varType.includes('[')) continue;
-        const typeSize = this.getTypeSize(varType);
-        if (typeSize === 1) {
-          lines.push(`    b_globals[${offset}] = ${varName};`);
-        } else if (varType === 'float3x3') {
-          for (let col = 0; col < 3; col++) {
-            for (let row = 0; row < 3; row++) {
-              lines.push(`    b_globals[${offset + col * 3 + row}] = ${varName}[${col}][${row}];`);
-            }
-          }
-        } else if (varType === 'float4x4') {
-          for (let col = 0; col < 4; col++) {
-            for (let row = 0; row < 4; row++) {
-              lines.push(`    b_globals[${offset + col * 4 + row}] = ${varName}[${col}][${row}];`);
-            }
-          }
-        } else {
-          for (let i = 0; i < typeSize; i++) {
-            lines.push(`    b_globals[${offset + i}] = ${varName}[${i}];`);
-          }
-        }
-      }
-    }
-
+    this.emitReadbackEpilogue(func, lines, varMap, '    ');
     lines.push('}');
   }
 
@@ -695,47 +670,67 @@ export class MslGenerator {
     isKernel: boolean = false,
     inferredTypes?: InferredTypes
   ) {
-    // Declare local variables with initial values
-    for (const v of func.localVars || []) {
-      const type = this.irTypeToMsl(v.type || 'float');
-      lines.push(`    ${this.formatLocalVarDecl(v.id, type, v.initialValue as number | undefined)};`);
-    }
-    if ((func.localVars || []).length > 0) lines.push('');
-
-    // Track emitted pure nodes
-    const emittedPure = new Set<string>();
-    const emitPure = (nodeId: string) => {
-      if (emittedPure.has(nodeId)) return;
-      const node = func.nodes.find(n => n.id === nodeId);
-      if (node && this.hasResult(node.op) && !this.isExecutable(node.op)) {
-        // Emit dependencies first
-        for (const edge of edges) {
-          if (edge.to === nodeId && edge.type === 'data') {
-            emitPure(edge.from);
-          }
-        }
-        const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
-        if (node.op === 'array_construct') {
-          let len = node['length'] as number || 1;
-          if (Array.isArray(node['values'])) {
-            len = node['values'].length;
-          }
-          lines.push(`    float ${this.nodeResId(node.id)}[${len}] = ${expr};`);
-        } else {
-          lines.push(`    auto ${this.nodeResId(node.id)} = ${expr};`);
-        }
-        emittedPure.add(nodeId);
+    if ((func.localVars || []).length > 0) {
+      for (const v of func.localVars!) {
+        lines.push(`    ${this.formatLocalVarDecl(v.id, this.irTypeToMsl(v.type), v.initialValue)};`);
       }
-    };
+      lines.push('');
+    }
+
+    // Global emittedPure set for top-level scope
+    const emittedPure = new Set<string>();
+    const emitPure = (id: string) => this.emitPureNode(id, emittedPure, func, lines, allFunctions, varMap, resourceBindings, edges, inferredTypes);
 
     // Find entry nodes and emit execution chain
     const entryNodes = func.nodes.filter(n =>
       n.op.startsWith('cmd_') ||
-      this.isExecutable(n.op) && !edges.some(e => e.to === n.id && e.type === 'execution')
+      (this.isExecutable(n.op) && !edges.some(e => e.to === n.id && e.type === 'execution'))
     );
 
     for (const entry of entryNodes) {
       this.emitChain(entry, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, undefined, undefined, inferredTypes);
+    }
+  }
+
+  private emitPureNode(
+    nodeId: string,
+    emittedPure: Set<string>,
+    func: FunctionDef,
+    lines: string[],
+    allFunctions: FunctionDef[],
+    varMap: Map<string, number>,
+    resourceBindings: Map<string, number>,
+    edges: Edge[],
+    inferredTypes?: InferredTypes
+  ) {
+    if (emittedPure.has(nodeId)) return;
+    const node = func.nodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    // Check if node is executable (either by op type OR by being an anchor in the chain)
+    const isNodeExecutable = this.isExecutable(node.op) || edges.some(e => e.from === node.id && e.type === 'execution');
+
+    if (this.hasResult(node.op) && !isNodeExecutable) {
+      // Define a callback that uses THIS scope's set
+      const emitPure = (id: string) => this.emitPureNode(id, emittedPure, func, lines, allFunctions, varMap, resourceBindings, edges, inferredTypes);
+
+      // Emit dependencies first
+      for (const edge of edges) {
+        if (edge.to === nodeId && edge.type === 'data') {
+          emitPure(edge.from);
+        }
+      }
+      const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      if (node.op === 'array_construct') {
+        let len = (node as any)['length'] as number || 1;
+        if (Array.isArray((node as any)['values'])) {
+          len = (node as any)['values'].length;
+        }
+        lines.push(`    float ${this.nodeResId(node.id)}[${len}] = ${expr};`);
+      } else {
+        lines.push(`    auto ${this.nodeResId(node.id)} = ${expr};`);
+      }
+      emittedPure.add(nodeId);
     }
   }
 
@@ -769,9 +764,11 @@ export class MslGenerator {
       }
       // Also emit inline references
       for (const k in curr) {
-        if (['id', 'op', 'metadata', 'func', 'args', 'dispatch'].includes(k)) continue;
+        if (['id', 'op', 'metadata', 'func', 'args', 'dispatch', 'in_gid'].includes(k)) continue;
         const val = (curr as any)[k];
-        if (typeof val === 'string' && func.nodes.some(n => n.id === val)) emitPure(val);
+        if (typeof val === 'string' && func.nodes.some(n => n.id === val)) {
+          emitPure(val);
+        }
       }
 
       // Handle control flow
@@ -784,48 +781,19 @@ export class MslGenerator {
       } else if (curr.op === 'func_return') {
         const val = this.resolveArg(curr, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         if (isKernel) {
-          // Kernel functions are void — write return value to globals buffer for readback
-          const retVarId = curr['val'];
-          if (typeof retVarId === 'string' && varMap.has(retVarId)) {
-            const offset = varMap.get(retVarId)!;
-            const localVar = func.localVars?.find(v => v.id === retVarId);
-            const varType = localVar?.type || 'float';
-            const typeSize = localVar ? this.getTypeSize(varType) : 1;
-            if (typeSize === 1) {
-              lines.push(`${indent}b_globals[${offset}] = ${val};`);
-            } else if (varType === 'float3x3') {
-              // Matrix: val[col][row]
-              for (let col = 0; col < 3; col++) {
-                for (let row = 0; row < 3; row++) {
-                  lines.push(`${indent}b_globals[${offset + col * 3 + row}] = ${val}[${col}][${row}];`);
-                }
-              }
-            } else if (varType === 'float4x4') {
-              for (let col = 0; col < 4; col++) {
-                for (let row = 0; row < 4; row++) {
-                  lines.push(`${indent}b_globals[${offset + col * 4 + row}] = ${val}[${col}][${row}];`);
-                }
-              }
-            } else {
-              // Vector: write each component
-              for (let i = 0; i < typeSize; i++) {
-                lines.push(`${indent}b_globals[${offset + i}] = ${val}[${i}];`);
-              }
-            }
-          }
+          this.emitReadbackEpilogue(func, lines, varMap, indent);
           lines.push(`${indent}return;`);
         } else {
           lines.push(`${indent}return ${val};`);
         }
         return;
       } else {
-        // Emit this node
-        this.emitNode(curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, indent, isKernel, inferredTypes);
+        this.emitNode(indent, curr, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       }
 
-      // Follow execution edges
-      const nextEdge = edges.find(e => e.from === curr!.id && e.type === 'execution' && e.portOut === 'exec_out');
-      curr = nextEdge ? func.nodes.find(n => n.id === nextEdge.to) : undefined;
+      // Follow execution flow
+      const outEdge = edges.find(e => e.from === curr!.id && e.portOut === 'exec_out' && e.type === 'execution');
+      curr = outEdge ? func.nodes.find(n => n.id === outEdge.to) : undefined;
     }
   }
 
@@ -844,14 +812,24 @@ export class MslGenerator {
     inferredTypes?: InferredTypes
   ) {
     const cond = this.resolveArg(node, 'cond', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+
     lines.push(`${indent}if (${cond}) {`);
     const trueEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_true' && e.type === 'execution');
     const trueNode = trueEdge ? func.nodes.find(n => n.id === trueEdge.to) : undefined;
-    if (trueNode) this.emitChain(trueNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ', inferredTypes);
+    if (trueNode) {
+      // Create a fresh callback for the nested scope
+      const nestedSet = new Set<string>(); // Or copy if we want to inherit? Re-shadowing is safer.
+      const nestedEmitPure = (id: string) => this.emitPureNode(id, nestedSet, func, lines, allFunctions, varMap, resourceBindings, edges, inferredTypes);
+      this.emitChain(trueNode, func, lines, allFunctions, varMap, resourceBindings, nestedEmitPure, edges, isKernel, visited, indent + '    ', inferredTypes);
+    }
     lines.push(`${indent}} else {`);
     const falseEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_false' && e.type === 'execution');
     const falseNode = falseEdge ? func.nodes.find(n => n.id === falseEdge.to) : undefined;
-    if (falseNode) this.emitChain(falseNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ', inferredTypes);
+    if (falseNode) {
+      const nestedSet = new Set<string>();
+      const nestedEmitPure = (id: string) => this.emitPureNode(id, nestedSet, func, lines, allFunctions, varMap, resourceBindings, edges, inferredTypes);
+      this.emitChain(falseNode, func, lines, allFunctions, varMap, resourceBindings, nestedEmitPure, edges, isKernel, visited, indent + '    ', inferredTypes);
+    }
     lines.push(`${indent}}`);
   }
 
@@ -869,15 +847,6 @@ export class MslGenerator {
     visited: Set<string>,
     inferredTypes?: InferredTypes
   ) {
-    // Pre-load dependencies for the completion path (exec_completed)
-    // This ensures that any pure nodes used AFTER the loop are emitted BEFORE the loop scope opens.
-    // Otherwise, if they are first encountered inside the loop (e.g. if the loop body also uses them),
-    // they would be scoped inside the loop and invisible to the completion path.
-    const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
-    if (compEdge) {
-      this.preloadDependencies(compEdge.to, func, edges, emitPure);
-    }
-
     const start = this.resolveArg(node, 'start', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     const end = this.resolveArg(node, 'end', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     const loopVar = `loop_${this.sanitizeId(node.id, 'var')}`;
@@ -885,9 +854,16 @@ export class MslGenerator {
 
     const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
     const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;
-    if (bodyNode) this.emitChain(bodyNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, new Set(visited), indent + '  ', inferredTypes);
+    if (bodyNode) {
+      // Loop body gets a fresh set to ensure re-emission of potentially loop-variant pure nodes
+      const bodySet = new Set<string>();
+      const bodyEmitPure = (id: string) => this.emitPureNode(id, bodySet, func, lines, allFunctions, varMap, resourceBindings, edges, inferredTypes);
+      this.emitChain(bodyNode, func, lines, allFunctions, varMap, resourceBindings, bodyEmitPure, edges, isKernel, visited, indent + '    ', inferredTypes);
+    }
+
     lines.push(`${indent}}`);
 
+    const compEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_completed' && e.type === 'execution');
     const nextNode = compEdge ? func.nodes.find(n => n.id === compEdge.to) : undefined;
     if (nextNode) this.emitChain(nextNode, func, lines, allFunctions, varMap, resourceBindings, emitPure, edges, isKernel, visited, indent, inferredTypes);
   }
@@ -946,6 +922,7 @@ export class MslGenerator {
   }
 
   private emitNode(
+    indent: string,
     node: Node,
     func: FunctionDef,
     lines: string[],
@@ -954,8 +931,6 @@ export class MslGenerator {
     resourceBindings: Map<string, number>,
     emitPure: (id: string) => void,
     edges: Edge[],
-    indent: string = '    ',
-    isKernel: boolean = false,
     inferredTypes?: InferredTypes
   ) {
     if (node.op === 'var_set') {
@@ -969,17 +944,14 @@ export class MslGenerator {
         const length = valNode['length'] as number || 1;
         const fill = valNode['fill'];
         const fillVal = fill !== undefined ? String(fill) : '0';
-        // Emit loop-based initialization
         lines.push(`${indent}for (int _i = 0; _i < ${length}; _i++) ${varExpr}[_i] = ${fillVal};`);
       } else {
         const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         lines.push(`${indent}${varExpr} = ${val};`);
       }
     } else if (node.op === 'array_set') {
-      const arrayNodeRef = node['array'];
       const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
-      // Get the array expression - could be a var_get reference
       const arrExpr = this.resolveArg(node, 'array', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       lines.push(`${indent}${arrExpr}[int(${idx})] = ${val};`);
     } else if (node.op === 'buffer_store') {
@@ -993,42 +965,12 @@ export class MslGenerator {
       const coords = this.resolveArg(node, 'coords', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       lines.push(`${indent}${this.sanitizeId(texId)}_tex.write(${val}, uint2(${coords}));`);
-    } else if (node.op === 'func_return') {
-      const val = this.resolveArg(node, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
-      if (isKernel) {
-        const retVarId = node['val'];
-        if (typeof retVarId === 'string' && varMap.has(retVarId)) {
-          const offset = varMap.get(retVarId)!;
-          const localVar = func.localVars?.find(v => v.id === retVarId);
-          const varType = localVar?.type || 'float';
-          const typeSize = localVar ? this.getTypeSize(varType) : 1;
-          if (typeSize === 1) {
-            lines.push(`${indent}b_globals[${offset}] = ${val};`);
-          } else if (varType === 'float3x3') {
-            for (let col = 0; col < 3; col++) {
-              for (let row = 0; row < 3; row++) {
-                lines.push(`${indent}b_globals[${offset + col * 3 + row}] = ${val}[${col}][${row}];`);
-              }
-            }
-          } else if (varType === 'float4x4') {
-            for (let col = 0; col < 4; col++) {
-              for (let row = 0; row < 4; row++) {
-                lines.push(`${indent}b_globals[${offset + col * 4 + row}] = ${val}[${col}][${row}];`);
-              }
-            }
-          } else {
-            for (let i = 0; i < typeSize; i++) {
-              lines.push(`${indent}b_globals[${offset + i}] = ${val}[${i}];`);
-            }
-          }
-        }
-        lines.push(`${indent}return;`);
-      } else {
-        lines.push(`${indent}return ${val};`);
-      }
     } else if (this.hasResult(node.op)) {
       const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
-      lines.push(`    auto ${this.nodeResId(node.id)} = ${expr};`);
+      lines.push(`${indent}auto ${this.nodeResId(node.id)} = ${expr};`);
+    } else if (this.isExecutable(node.op)) {
+      const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      lines.push(`${indent}${expr};`);
     }
   }
 
@@ -1080,6 +1022,7 @@ export class MslGenerator {
     return rawArgs;
   }
 
+
   private compileExpression(
     node: Node,
     func: FunctionDef,
@@ -1090,6 +1033,10 @@ export class MslGenerator {
     edges: Edge[],
     inferredTypes?: InferredTypes
   ): string {
+    const op = node.op;
+
+    // Helper to resolve ref/value
+    const r = (key: string) => this.resolveArg(node, key, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     const a = (key = 'a') => this.resolveArg(node, key, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     const b = () => this.resolveArg(node, 'b', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
 
@@ -1103,6 +1050,7 @@ export class MslGenerator {
       const [arg] = this.resolveCoercedArgs(node, [key], mode, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       return `${op}(${arg})`;
     };
+
 
     switch (node.op) {
       case 'literal':
@@ -1698,6 +1646,37 @@ export class MslGenerator {
           return parseInt(arrayMatch[2]) * this.getTypeFlatSize(arrayMatch[1].trim());
         }
         return 1;
+      }
+    }
+  }
+
+  private emitReadbackEpilogue(func: FunctionDef, lines: string[], varMap: Map<string, number>, indent: string): void {
+    for (const v of func.localVars || []) {
+      const offset = varMap.get(v.id);
+      if (offset === undefined) continue;
+      const varName = this.sanitizeId(v.id, 'var');
+      const varType = v.type || 'float';
+      // Skip array types — they can't be written to a flat float buffer directly
+      if (varType.startsWith('array<') || varType.includes('[')) continue;
+      const typeSize = this.getTypeSize(varType);
+      if (typeSize === 1) {
+        lines.push(`${indent}b_globals[${offset}] = ${varName};`);
+      } else if (varType === 'float3x3') {
+        for (let col = 0; col < 3; col++) {
+          for (let row = 0; row < 3; row++) {
+            lines.push(`${indent}b_globals[${offset + col * 3 + row}] = ${varName}[${col}][${row}];`);
+          }
+        }
+      } else if (varType === 'float4x4') {
+        for (let col = 0; col < 4; col++) {
+          for (let row = 0; row < 4; row++) {
+            lines.push(`${indent}b_globals[${offset + col * 4 + row}] = ${varName}[${col}][${row}];`);
+          }
+        }
+      } else {
+        for (let i = 0; i < typeSize; i++) {
+          lines.push(`${indent}b_globals[${offset + i}] = ${varName}[${i}];`);
+        }
       }
     }
   }
