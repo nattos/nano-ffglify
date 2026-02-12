@@ -82,7 +82,6 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
             entryPoint: 'fn_main_cpu',
             inputs: [
               { id: 't_input', type: 'texture2d', format: 'rgba8', comment: 'Source image for blur' },
-              { id: 't_overlay', type: 'texture2d', format: 'rgba8', comment: 'Optional overlay texture' },
               { id: 'u_kernel_size', type: 'int', default: 16, ui: { min: 1, max: 64, widget: 'slider' }, comment: 'Size of the blur kernel' },
               { id: 'u_brightness', type: 'float', default: 1.0, ui: { min: 0.0, max: 2.0, widget: 'slider' }, comment: 'Brightness multiplier' },
               { id: 'u_invert', type: 'bool', default: false, comment: 'Invert colors' },
