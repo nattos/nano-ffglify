@@ -513,6 +513,32 @@ export const ArrayExtractDef = defineOp<ArrayExtractArgs>({
 
 // --- Logic & Control ---
 
+export const BUILTIN_TYPES: Record<string, string> = {
+  'position': 'float4',
+  'vertex_index': 'int',
+  'instance_index': 'int',
+  'global_invocation_id': 'float3',
+  'local_invocation_id': 'float3',
+  'workgroup_id': 'float3',
+  'local_invocation_index': 'int',
+  'num_workgroups': 'float3',
+  'frag_coord': 'float4',
+  'front_facing': 'boolean',
+  'sample_index': 'int',
+  'sample_mask': 'int',
+  'subgroup_invocation_id': 'int',
+  'subgroup_size': 'int',
+  'time': 'float',
+  'delta_time': 'float',
+  'bpm': 'float',
+  'beat_number': 'float',
+  'beat_delta': 'float'
+};
+
+export const BUILTIN_CPU_ALLOWED = [
+  'time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'
+];
+
 export const BuiltinNameSchema = z.enum([
   'position',
   'vertex_index',
@@ -527,7 +553,12 @@ export const BuiltinNameSchema = z.enum([
   'sample_index',
   'sample_mask',
   'subgroup_invocation_id',
-  'subgroup_size'
+  'subgroup_size',
+  'time',
+  'delta_time',
+  'bpm',
+  'beat_number',
+  'beat_delta'
 ]);
 
 export interface BuiltinGetArgs { name: string;[key: string]: any; }

@@ -1,6 +1,13 @@
+/**
+ * IR Logic Validator
+ *
+ * IMPORTANT: Avoid putting large inline lists of operation names or categories
+ * directly in this file. Move such metadata to src/ir/builtin-schemas.ts or
+ * src/ir/signatures.ts instead.
+ */
 import { IRDocument, FunctionDef, BuiltinOp, BLITTABLE_TYPES } from './types';
 import { OpSignatures, OpSignature, ValidationType } from './signatures';
-import { OpSchemas, OpDefs } from './builtin-schemas';
+import { OpSchemas, OpDefs, BUILTIN_TYPES, BUILTIN_CPU_ALLOWED } from './builtin-schemas';
 import { verifyLiteralsOrRefsExist } from './schema-verifier';
 
 import { TextureFormat, Edge, PRIMITIVE_TYPES } from './types';
@@ -261,6 +268,15 @@ const resolveNodeType = (
     if (node.op === 'var_set' && inputTypes['val'] && inputTypes['val'] !== 'any') {
       cache.set(nodeId, inputTypes['val']);
       return inputTypes['val'];
+    }
+
+    if (node.op === 'builtin_get') {
+      const name = node['name'];
+      const type = BUILTIN_TYPES[name];
+      if (type) {
+        cache.set(nodeId, type as ValidationType);
+        return type as ValidationType;
+      }
     }
 
     if (node.op === 'literal') {
@@ -684,12 +700,16 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
     resolveNodeType(node.id, func, doc, cache, resourceIds, errors, edges);
 
     if (node.op === 'builtin_get' && func.type === 'cpu') {
-      errors.push({
-        nodeId: node.id,
-        functionId: func.id,
-        message: `GPU Built-in '${node['name']}' is not available in CPU context`,
-        severity: 'error'
-      });
+      const name = node['name'];
+      const isCpuAllowed = BUILTIN_CPU_ALLOWED.includes(name);
+      if (!isCpuAllowed) {
+        errors.push({
+          nodeId: node.id,
+          functionId: func.id,
+          message: `GPU Built-in '${name}' is not available in CPU context`,
+          severity: 'error'
+        });
+      }
     }
 
     if (node.op === 'const_get') {

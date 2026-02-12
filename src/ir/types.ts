@@ -167,7 +167,12 @@ export type BuiltinName =
   | 'sample_index'
   | 'sample_mask'
   | 'subgroup_invocation_id'
-  | 'subgroup_size';
+  | 'subgroup_size'
+  | 'time'
+  | 'delta_time'
+  | 'bpm'
+  | 'beat_number'
+  | 'beat_delta';
 
 export interface StructMember {
   name: string;

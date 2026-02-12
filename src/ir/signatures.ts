@@ -1,4 +1,5 @@
 import { BuiltinOp } from './types';
+import { BUILTIN_TYPES } from './builtin-schemas';
 
 export type ValidationType =
   | 'float'  // Generic scalar (float)
@@ -307,12 +308,10 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   'var_set': [{ inputs: { var: 'string', val: 'any' }, output: 'any' }],
   'var_get': [{ inputs: { var: 'string' }, output: 'any' }],
   'loop_index': [{ inputs: { loop: 'string' }, output: 'int' }],
-  'builtin_get': [
-    { inputs: { name: 'string' }, output: 'float3' }, // global_invocation_id, local_invocation_id, workgroup_id, num_workgroups
-    { inputs: { name: 'string' }, output: 'int' },    // local_invocation_index, vertex_index, instance_index
-    { inputs: { name: 'string' }, output: 'float4' }, // frag_coord
-    { inputs: { name: 'string' }, output: 'boolean' } // front_facing
-  ],
+  'builtin_get': Object.entries(BUILTIN_TYPES).map(([name, type]) => ({
+    inputs: { name: 'string' }, // We still use generic 'string' for inference, but resolveNodeType will use name
+    output: type as ValidationType
+  })),
 
   // Structs & Arrays
   'struct_construct': [

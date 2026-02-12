@@ -59,7 +59,7 @@ export const NOISE_SHADER: IRDocument = {
           id: 'in_gid',
           op: 'builtin_get',
           name: 'global_invocation_id',
-          comment: 'BUILT-INS: global_invocation_id is a vec3<u32>. Always swizzle to \'xy\' and cast to float if doing math.'
+          comment: 'BUILT-INS: global_invocation_id is a float3. Always swizzle to \'xy\' and cast to float if doing math.'
         },
         {
           id: 'pixel_coords',
