@@ -861,6 +861,11 @@ require('./intrinsics.js');
       case 'quat_slerp': return `_quat_slerp(${a()}, ${b()}, ${this.resolveArg(node, 't', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)})`;
       case 'quat_to_float4x4': return `_quat_to_mat4(${this.resolveArg(node, 'q', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)})`;
 
+      case 'builtin_get': {
+        const name = node['name'];
+        return `ctx.builtins['${name}']`;
+      }
+
       default: return '0';
     }
   }

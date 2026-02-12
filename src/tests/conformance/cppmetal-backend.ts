@@ -28,8 +28,12 @@ function getCppMetalBuildDir(): string {
 export const CppMetalBackend: TestBackend = {
   name: 'CppMetal',
 
-  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
-    return new EvaluationContext(ir, inputs);
+  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = new EvaluationContext(ir, inputs);
+    if (builtins) {
+      builtins.forEach((v, k) => ctx.builtins.set(k, v));
+    }
+    return ctx;
   },
 
   run: async (ctx: EvaluationContext, entryPoint: string) => {
@@ -264,8 +268,8 @@ export const CppMetalBackend: TestBackend = {
     }
   },
 
-  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    const ctx = await CppMetalBackend.createContext(ir, inputs);
+  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = await CppMetalBackend.createContext(ir, inputs, builtins);
     await CppMetalBackend.run(ctx, entryPoint);
     return ctx;
   },

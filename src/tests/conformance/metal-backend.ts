@@ -58,7 +58,7 @@ function getMetalHarness(): string {
 export const MetalBackend: TestBackend = {
   name: 'Metal',
 
-  createContext: async (ir: IRDocument, inputs?: Map<string, RuntimeValue>) => {
+  createContext: async (ir: IRDocument, inputs?: Map<string, RuntimeValue>, builtins?: Map<string, RuntimeValue>) => {
     // Validate IR
     const errors = validateIR(ir);
     const criticalErrors = errors.filter(e => e.severity === 'error');
@@ -67,6 +67,9 @@ export const MetalBackend: TestBackend = {
     }
 
     const ctx = new EvaluationContext(ir, inputs || new Map());
+    if (builtins) {
+      builtins.forEach((v, k) => ctx.builtins.set(k, v));
+    }
 
     // Store IR reference for later use
     (ctx as any)._ir = ir;
@@ -339,8 +342,8 @@ export const MetalBackend: TestBackend = {
     }
   },
 
-  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    const ctx = await MetalBackend.createContext(ir, inputs);
+  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = await MetalBackend.createContext(ir, inputs, builtins);
     await MetalBackend.run(ctx, entryPoint);
     return ctx;
   },

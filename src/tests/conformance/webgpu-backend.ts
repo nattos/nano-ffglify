@@ -18,9 +18,12 @@ import { CpuJitCompiler } from '../../webgpu/cpu-jit';
 export const WebGpuBackend: TestBackend = {
   name: 'WebGPU',
 
-  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
+  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
     // 1. Create Context
     const ctx = new EvaluationContext(ir, inputs);
+    if (builtins) {
+      builtins.forEach((v, k) => ctx.builtins.set(k, v));
+    }
 
     // 2. Initialize GPU
     const device = await getSharedDevice();
@@ -63,6 +66,12 @@ export const WebGpuBackend: TestBackend = {
           compiledCode: compiled,
           host: webGpuHost
         });
+
+        // Pass builtins from EvaluationContext to WebGpuHostExecutor
+        const builtins: any = {};
+        ctx.builtins.forEach((val, key) => { builtins[key] = val; });
+        hostExec.setBuiltins(builtins);
+
         ctx.result = await hostExec.execute(ctx.inputs);
 
         // Readback, for tests!
@@ -80,8 +89,8 @@ export const WebGpuBackend: TestBackend = {
     }
   },
 
-  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    const ctx = await WebGpuBackend.createContext(ir, inputs);
+  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = await WebGpuBackend.createContext(ir, inputs, builtins);
     await WebGpuBackend.run(ctx, entryPoint);
     return ctx;
   }

@@ -59,6 +59,12 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
     inputsObj[key] = val;
   });
 
+  // Convert builtins Map to plain object for serialization
+  const builtinsObj: Record<string, any> = {};
+  ctx.builtins.forEach((val, key) => {
+    builtinsObj[key] = val;
+  });
+
   // Serialize resources
   const resourcesObj: Record<string, any> = {};
   ctx.resources.forEach((state, key) => {
@@ -86,8 +92,8 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
   // Run the test in the browser
   const backendName = subBackend;
   const results = await page.evaluate(
-    async (ir, ep, inputs, resources, bName) => {
-      const res = await (window as any).runGpuTest(ir, ep, inputs, resources, bName);
+    async (ir, ep, inputs, resources, bName, builtins) => {
+      const res = await (window as any).runGpuTest(ir, ep, inputs, resources, bName, builtins);
       // Serialize special float values to avoid JSON.stringify converting to null
       if (res && res.vars) {
         for (const k in res.vars) {
@@ -105,7 +111,8 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
     entryPoint,
     inputsObj,
     resourcesObj,
-    backendName
+    backendName,
+    builtinsObj
   ) as any;
 
   // Populate context with results
@@ -151,14 +158,18 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
  */
 export const BrowserCpuBackend: TestBackend = {
   name: 'CPU',
-  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
-    return new EvaluationContext(ir, inputs);
+  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = new EvaluationContext(ir, inputs);
+    if (builtins) {
+      builtins.forEach((v, k) => ctx.builtins.set(k, v));
+    }
+    return ctx;
   },
   run: async (ctx: EvaluationContext, entryPoint: string) => {
     await runImplementation(ctx, entryPoint, 'WebGPU');
   },
-  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    const ctx = new EvaluationContext(ir, inputs);
+  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = await BrowserCpuBackend.createContext(ir, inputs, builtins);
     await runImplementation(ctx, entryPoint, 'WebGPU');
     return ctx;
   }
@@ -170,14 +181,18 @@ export const BrowserCpuBackend: TestBackend = {
  */
 export const BrowserGpuBackend: TestBackend = {
   name: 'GPU',
-  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
-    return new EvaluationContext(ir, inputs);
+  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = new EvaluationContext(ir, inputs);
+    if (builtins) {
+      builtins.forEach((v, k) => ctx.builtins.set(k, v));
+    }
+    return ctx;
   },
   run: async (ctx: EvaluationContext, entryPoint: string) => {
     await runImplementation(ctx, entryPoint, 'ForceOntoGPU');
   },
-  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    const ctx = new EvaluationContext(ir, inputs);
+  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = await BrowserGpuBackend.createContext(ir, inputs, builtins);
     await runImplementation(ctx, entryPoint, 'ForceOntoGPU');
     return ctx;
   }

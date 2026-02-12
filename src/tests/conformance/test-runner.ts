@@ -89,7 +89,8 @@ export const runGraphTest = (
   nodes: any[],
   varToCheck: string,
   expectedVal: any,
-  backends: TestBackend[] = availableBackends
+  backends: TestBackend[] = availableBackends,
+  builtins: Map<string, any> = new Map()
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
@@ -123,7 +124,7 @@ export const runGraphTest = (
       const inputsMap = new Map<string, any>();
       inputsMap.set('u_dummy', 0.0);
 
-      const ctx = await backend.execute(ir, 'main', inputsMap);
+      const ctx = await backend.execute(ir, 'main', inputsMap, builtins);
       try {
         const result = ctx.result !== undefined ? ctx.result : ctx.getVar(varToCheck);
 
@@ -159,14 +160,15 @@ export const runGraphErrorTest = (
   resources: any[] = [],
   structs: any[] = [],
   localVars: any[] = [{ id: 'res', type: 'float' }],
-  backends: TestBackend[] = availableBackends
+  backends: TestBackend[] = availableBackends,
+  builtins: Map<string, any> = new Map()
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}] - Expect Error`, async () => {
       const ir = buildSimpleIR(name, nodes, resources, [], localVars, structs);
       let ctx: EvaluationContext | undefined;
       try {
-        ctx = await backend.execute(ir, 'main');
+        ctx = await backend.execute(ir, 'main', undefined, builtins);
         throw new Error('Expected execution to throw error, but it succeeded');
       } catch (e: any) {
         if (e.message === 'Expected execution to throw error, but it succeeded') throw e;
@@ -187,12 +189,13 @@ export const runParametricTest = (
   extraEdges: any[] = [],
   localVars: any[] = [{ id: 'res', type: 'float' }],
   structs: any[] = [],
-  backends: TestBackend[] = availableBackends
+  backends: TestBackend[] = availableBackends,
+  builtins: Map<string, any> = new Map()
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
       const ir = buildSimpleIR(name, nodes, resources, extraEdges, localVars, structs);
-      const ctx = await backend.execute(ir, 'main');
+      const ctx = await backend.execute(ir, 'main', undefined, builtins);
       try {
         await verify(ctx);
       } finally {
@@ -207,11 +210,12 @@ export const runFullGraphTest = (
   ir: IRDocument,
   verify: (ctx: EvaluationContext) => void | Promise<void>,
   backends: TestBackend[] = availableBackends,
-  timeout?: number
+  timeout?: number,
+  builtins: Map<string, any> = new Map()
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}]`, async () => {
-      const ctx = await backend.execute(ir, ir.entryPoint);
+      const ctx = await backend.execute(ir, ir.entryPoint, undefined, builtins);
       try {
         await verify(ctx);
       } finally {
@@ -225,13 +229,14 @@ export const runFullGraphErrorTest = (
   name: string,
   ir: IRDocument,
   expectedError: string | RegExp,
-  backends: TestBackend[] = availableBackends
+  backends: TestBackend[] = availableBackends,
+  builtins: Map<string, any> = new Map()
 ) => {
   backends.forEach(backend => {
     it(`${name} [${backend.name}] - Expect Error`, async () => {
       let ctx: EvaluationContext | undefined;
       try {
-        ctx = await backend.execute(ir, ir.entryPoint);
+        ctx = await backend.execute(ir, ir.entryPoint, undefined, builtins);
         throw new Error('Expected execution to throw error, but it succeeded');
       } catch (e: any) {
         if (e.message === 'Expected execution to throw error, but it succeeded') throw e;

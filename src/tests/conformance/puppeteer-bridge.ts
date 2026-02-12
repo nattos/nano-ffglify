@@ -17,7 +17,7 @@ import { validateIR } from '../../ir/validator';
   throw new Error(message);
 };
 
-(window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any, resourcesObj: any, backendName: string) => {
+(window as any).runGpuTest = async (ir: any, entryPoint: string, inputsObj: any, resourcesObj: any, backendName: string, builtinsObj?: any) => {
   // console.log(`[Bridge] runGpuTest called with backend: ${backendName}`, { entryPoint, inputsObj });
 
 
@@ -26,6 +26,13 @@ import { validateIR } from '../../ir/validator';
   if (inputsObj) {
     for (const [key, val] of Object.entries(inputsObj)) {
       inputsMap.set(key, val);
+    }
+  }
+
+  const builtinsMap = new Map<string, any>();
+  if (builtinsObj) {
+    for (const [key, val] of Object.entries(builtinsObj)) {
+      builtinsMap.set(key, val);
     }
   }
 
@@ -41,7 +48,7 @@ import { validateIR } from '../../ir/validator';
     throw new Error(msg);
   }
 
-  const ctx = await backend.createContext(ir, inputsMap);
+  const ctx = await backend.createContext(ir, inputsMap, builtinsMap);
 
   // Hydrate resources
   try {

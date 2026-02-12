@@ -5,8 +5,12 @@ import { TestBackend } from './types';
 
 export const InterpreterBackend: TestBackend = {
   name: 'Interpreter',
-  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map()) => {
-    return new EvaluationContext(ir, inputs);
+  createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = new EvaluationContext(ir, inputs);
+    if (builtins) {
+      builtins.forEach((v, k) => ctx.builtins.set(k, v));
+    }
+    return ctx;
   },
   run: async (ctx: EvaluationContext, entryPoint: string) => {
     // Initialize viewport resources to default size (e.g. 64x64)
@@ -39,8 +43,8 @@ export const InterpreterBackend: TestBackend = {
       exec.executeFunction(func);
     }
   },
-  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    const ctx = await InterpreterBackend.createContext(ir, inputs);
+  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = await InterpreterBackend.createContext(ir, inputs, builtins);
     await InterpreterBackend.run(ctx, entryPoint);
     return ctx;
   }
