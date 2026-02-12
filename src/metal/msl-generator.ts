@@ -683,8 +683,7 @@ export class MslGenerator {
 
     // Find entry nodes and emit execution chain
     const entryNodes = func.nodes.filter(n =>
-      n.op.startsWith('cmd_') ||
-      (this.isExecutable(n.op) && !edges.some(e => e.to === n.id && e.type === 'execution'))
+      this.isExecutable(n.op, edges, n.id) && !edges.some(e => e.to === n.id && e.type === 'execution')
     );
 
     for (const entry of entryNodes) {
@@ -708,7 +707,7 @@ export class MslGenerator {
     if (!node) return;
 
     // Check if node is executable (either by op type OR by being an anchor in the chain)
-    const isNodeExecutable = this.isExecutable(node.op) || edges.some(e => e.from === node.id && e.type === 'execution');
+    const isNodeExecutable = this.isExecutable(node.op, edges, node.id);
 
     if (this.hasResult(node.op) && !isNodeExecutable) {
       // Define a callback that uses THIS scope's set
@@ -968,7 +967,7 @@ export class MslGenerator {
     } else if (this.hasResult(node.op)) {
       const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       lines.push(`${indent}auto ${this.nodeResId(node.id)} = ${expr};`);
-    } else if (this.isExecutable(node.op)) {
+    } else if (this.isExecutable(node.op, edges, node.id)) {
       const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       lines.push(`${indent}${expr};`);
     }
@@ -1540,9 +1539,15 @@ export class MslGenerator {
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
 
-  private isExecutable(op: string): boolean {
-    return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
+  private isExecutable(op: string, edges: Edge[], nodeId: string): boolean {
+    const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
       op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set';
+
+    if (isSideEffecting) return true;
+
+    // A node is also considered "executable" if it has an outgoing execution edge,
+    // meaning the user explicitly wants it to be part of the control flow.
+    return edges.some(e => e.from === nodeId && e.type === 'execution');
   }
 
   private formatFloat(val: number): string {

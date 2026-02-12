@@ -550,12 +550,18 @@ export class WgslGenerator {
   }
 
   private emitBody(func: FunctionDef, lines: string[], options: WgslOptions, visited: Set<string>, ir: IRDocument, edges: Edge[]) {
-    const entryNodes = func.nodes.filter(n => !edges.some(e => e.to === n.id && e.type === 'execution') && this.isExecutable(n.op));
+    const entryNodes = func.nodes.filter(n => !edges.some(e => e.to === n.id && e.type === 'execution') && this.isExecutable(n.op, edges, n.id));
     for (const entry of entryNodes) this.emitChain(entry, func, lines, options, visited, ir, edges);
   }
 
-  private isExecutable(op: string) {
-    return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' || op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' || op === 'vec_set_element';
+  private isExecutable(op: string, edges: Edge[], nodeId: string) {
+    const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' || op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' || op === 'vec_set_element';
+
+    if (isSideEffecting) return true;
+
+    // A node is also considered "executable" if it has an outgoing execution edge,
+    // meaning the user explicitly wants it to be part of the control flow.
+    return edges.some(e => e.from === nodeId && e.type === 'execution');
   }
 
   private emitChain(startNode: Node, func: FunctionDef, lines: string[], options: WgslOptions, visited: Set<string>, ir: IRDocument, edges: Edge[]) {

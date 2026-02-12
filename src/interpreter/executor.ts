@@ -36,7 +36,7 @@ export class InterpretedExecutor {
     // 2. Find entry nodes
     const entryNodes = func.nodes.filter(n => {
       const hasExecIn = edges.some(e => e.to === n.id && e.type === 'execution');
-      return !hasExecIn && this.isExecutableNode(n);
+      return !hasExecIn && this.isExecutableNode(n, edges);
     });
 
     const executionQueue: Node[] = [...entryNodes];
@@ -61,8 +61,8 @@ export class InterpretedExecutor {
     }
   }
 
-  private isExecutableNode(node: Node): boolean {
-    return node.op.startsWith('cmd_') ||
+  private isExecutableNode(node: Node, edges: Edge[]): boolean {
+    const isSideEffecting = node.op.startsWith('cmd_') ||
       node.op.startsWith('flow_') ||
       node.op.startsWith('var_set') ||
       node.op.startsWith('array_set') ||
@@ -70,6 +70,12 @@ export class InterpretedExecutor {
       node.op.startsWith('texture_store') ||
       node.op === 'call_func' ||
       node.op === 'func_return';
+
+    if (isSideEffecting) return true;
+
+    // A node is also considered "executable" if it has an outgoing execution edge,
+    // meaning the user explicitly wants it to be part of the control flow.
+    return edges.some(e => e.from === node.id && e.type === 'execution');
   }
 
   protected executeNode(node: Node, func: FunctionDef, edges: Edge[]): RuntimeValue | void {
@@ -276,7 +282,7 @@ export class InterpretedExecutor {
     }
 
     // Special Handling for Executable Nodes that return values (like call_func)
-    if (this.isExecutableNode(node)) {
+    if (this.isExecutableNode(node, edges)) {
       const res = this.executeNode(node, func, edges);
       return (res !== undefined) ? res : 0;
     }

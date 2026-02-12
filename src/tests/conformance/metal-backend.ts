@@ -98,6 +98,11 @@ export const MetalBackend: TestBackend = {
     const result = generator.compile(ir, mslEntryPoint);
     const mslCode = result.code;
 
+    if (process.env.MSL_DEBUG) {
+      console.log('--- Generated MSL ---');
+      console.log(mslCode);
+    }
+
     // 2. Write .metal source file
     const sourceFile = path.join(buildDir, 'generated.metal');
     fs.writeFileSync(sourceFile, mslCode);

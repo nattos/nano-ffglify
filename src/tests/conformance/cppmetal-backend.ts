@@ -43,6 +43,10 @@ export const CppMetalBackend: TestBackend = {
     // 2. Write generated C++ code
     const generatedCodePath = path.join(buildDir, 'generated_code.cpp');
     fs.writeFileSync(generatedCodePath, code);
+    if (process.env.CPP_DEBUG === '1') {
+      console.log('--- Generated C++ Code ---');
+      console.log(code);
+    }
 
     // 3. Generate MSL for shader functions if any exist
     let metallibPath = '';
@@ -55,12 +59,24 @@ export const CppMetalBackend: TestBackend = {
         if (f.stage) stages.set(f.id, f.stage);
       });
 
-      // Generate MSL for all shader functions in one go
-      const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map(s => s.id), { stages });
+      // Construct bindings map based on the resource order determined by CppGenerator
+      // Index 0 in Metal is reserved for shader arguments (inputs buffer)
+      // Standard resources start at binding 1
+      const bindings = new Map<string, number>();
+      resourceIds.forEach((resId, idx) => {
+        bindings.set(resId, idx + 1);
+      });
+
+      // Generate MSL with explicit bindings
+      const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map(s => s.id), { stages, bindings });
 
       // Write MSL source
       const mslPath = path.join(buildDir, 'shaders.metal');
       fs.writeFileSync(mslPath, mslCode);
+      if (process.env.MSL_DEBUG === '1') {
+        console.log('--- Generated MSL Code ---');
+        console.log(mslCode);
+      }
 
       // Compile to .metallib
       metallibPath = path.join(buildDir, 'shaders.metallib');
@@ -94,17 +110,19 @@ export const CppMetalBackend: TestBackend = {
       throw new Error(`C++ compilation failed: ${e.stderr || e.message}`);
     }
 
-    // 6. Prepare resource specs as arguments
-    const resourceSpecs = ir.resources.map((r, idx) => {
+    // 6. Prepare resource specs as arguments (must match CppGenerator order)
+    const resourceSpecs = resourceIds.map((resId) => {
+      const r = ir.resources.find(res => res.id === resId) || ir.inputs.find(inp => inp.id === resId);
+      if (!r) return '0';
       if (r.type === 'texture2d') {
-        const size = r.size && typeof r.size === 'object' && 'value' in r.size ? r.size.value : [256, 256];
+        const size = r['size'] && typeof r['size'] === 'object' && 'value' in r['size'] ? r['size'].value : [256, 256];
         const [w, h] = Array.isArray(size) ? size : [size, 1];
         const sampler = (r as any).sampler;
         const wrap = sampler?.wrap === 'clamp' ? 1 : 0;
         return `T:${w}:${h}:${wrap}`;
       }
       if (r.type === 'buffer') {
-        const size = r.size && typeof r.size === 'object' && 'value' in r.size ? r.size.value : 100;
+        const size = r['size'] && typeof r['size'] === 'object' && 'value' in r['size'] ? r['size'].value : 100;
         const dt = (r as any).dataType;
         const stride = dt === 'float4' ? 4 : dt === 'float3' ? 3 : dt === 'float2' ? 2 : 1;
         return `B:${size}:${stride}`;
@@ -112,12 +130,12 @@ export const CppMetalBackend: TestBackend = {
       return '0';
     });
 
-    // 6b. Write pre-populated resource data to a data file
+    // 6b. Write pre-populated resource data (must match resourceIds order)
     const resourceData: { [idx: number]: number[] } = {};
-    ir.resources.forEach((r, idx) => {
-      const state = ctx.resources.get(r.id);
+    resourceIds.forEach((resId, idx) => {
+      const state = ctx.resources.get(resId);
       if (state && state.data && state.data.length > 0) {
-        // Flatten nested arrays (e.g. [[1,0,0,1], [0,1,0,1]] → [1,0,0,1,0,1,0,1])
+        // Flatten nested arrays
         const flat: number[] = [];
         for (const elem of state.data) {
           if (Array.isArray(elem)) {
@@ -190,8 +208,7 @@ export const CppMetalBackend: TestBackend = {
 
     // 10. Update EvaluationContext with results
     result.resources.forEach((res: { type?: string; width?: number; height?: number; data: number[] }, i: number) => {
-      const resDef = ir.resources[i];
-      const resId = resDef?.id;
+      const resId = resourceIds[i];
       if (resId) {
         const state = ctx.resources.get(resId);
         if (state) {
@@ -199,7 +216,7 @@ export const CppMetalBackend: TestBackend = {
           if (res.width !== undefined) state.width = res.width;
           if (res.height !== undefined) state.height = res.height;
 
-          if (res.type === 'texture' || resDef.type === 'texture2d') {
+          if (res.type === 'texture' || (resId && ir.resources.find(r => r.id === resId)?.type === 'texture2d')) {
             // Texture data: flat RGBA floats → restructure into [[r,g,b,a], ...] nested arrays
             const chunks: number[][] = [];
             for (let j = 0; j < res.data.length; j += 4) {
@@ -208,6 +225,7 @@ export const CppMetalBackend: TestBackend = {
             state.data = chunks as any;
           } else {
             // For typed buffers (float2/3/4), restructure flat data into nested arrays
+            const resDef = ir.resources.find(r => r.id === resId);
             const dataType = resDef?.dataType;
             if (dataType === 'float4' || dataType === 'float3' || dataType === 'float2') {
               const stride = dataType === 'float4' ? 4 : dataType === 'float3' ? 3 : 2;

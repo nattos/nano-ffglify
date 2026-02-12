@@ -141,8 +141,8 @@ export class CppGenerator {
     }
     lines.push('');
 
-    // Collect resource IDs for the harness
-    const resourceIds = ir.resources.map(r => r.id);
+    // Collect resource IDs for the harness in the correct order
+    const resourceIds = this.getAllResources().map(r => r.id);
 
     // Emit all required functions (reverse order so dependencies come first)
     const funcList = Array.from(requiredFuncs).reverse();
@@ -371,7 +371,7 @@ export class CppGenerator {
         throw new Error('FunctionDef invalid in emitPure');
       }
       const node = f.nodes.find(n => n.id === nodeId);
-      if (!node || this.isExecutable(node.op)) return;
+      if (!node || this.isExecutable(node.op, edges, nodeId)) return;
 
       emittedPure.add(nodeId);
 
@@ -388,7 +388,7 @@ export class CppGenerator {
     // Find entry nodes (executable nodes with no incoming execution edges)
     const entryNodes = f.nodes.filter(n => {
       const hasExecIn = edges.some(e => e.to === n.id && e.type === 'execution');
-      return !hasExecIn && this.isExecutable(n.op);
+      return !hasExecIn && this.isExecutable(n.op, edges, n.id);
     });
 
     for (const entry of entryNodes) {
@@ -416,9 +416,15 @@ export class CppGenerator {
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
 
-  private isExecutable(op: string): boolean {
-    return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
+  private isExecutable(op: string, edges: Edge[], nodeId: string): boolean {
+    const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
       op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set';
+
+    if (isSideEffecting) return true;
+
+    // A node is also considered "executable" if it has an outgoing execution edge,
+    // meaning the user explicitly wants it to be part of the control flow.
+    return edges.some(e => e.from === nodeId && e.type === 'execution');
   }
 
   private inferCppType(node: Node): string {

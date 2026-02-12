@@ -274,7 +274,7 @@ require('./intrinsics.js');
     const emitPure = (nodeId: string) => {
       if (emittedPure.has(nodeId)) return;
       const node = f.nodes.find(n => n.id === nodeId);
-      if (!node || this.isExecutable(node.op)) return;
+      if (!node || this.isExecutable(node.op, edges, node.id)) return;
 
       // Mark as emitted to prevent recursion during dependency emission
       emittedPure.add(nodeId);
@@ -293,7 +293,7 @@ require('./intrinsics.js');
     // Execution Chain
     const entryNodes = f.nodes.filter(n => {
       const hasExecIn = edges.some(e => e.to === n.id && e.type === 'execution');
-      return !hasExecIn && this.isExecutable(n.op);
+      return !hasExecIn && this.isExecutable(n.op, edges, n.id);
     });
 
     for (const entry of entryNodes) {
@@ -304,10 +304,16 @@ require('./intrinsics.js');
     lines.push(`}`);
   }
 
-  private isExecutable(op: string) {
-    return op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
+  private isExecutable(op: string, edges: Edge[], nodeId: string) {
+    const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
       op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' ||
       op === 'cmd_resize_resource' || op === 'cmd_draw' || op === 'cmd_dispatch';
+
+    if (isSideEffecting) return true;
+
+    // A node is also considered "executable" if it has an outgoing execution edge,
+    // meaning the user explicitly wants it to be part of the control flow.
+    return edges.some(e => e.from === nodeId && e.type === 'execution');
   }
 
   private emitChain(indent: string, startNode: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]) {
