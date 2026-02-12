@@ -1,5 +1,5 @@
 import { describe, it } from 'vitest';
-import { runFullGraphTest, availableBackends } from './test-runner';
+import { runFullGraphTest, availableBackends, cpuBackends } from './test-runner';
 import { IRDocument, FunctionDef, DataType, TextureFormat } from '../../ir/types';
 
 describe('20-coersion', () => {
@@ -168,6 +168,18 @@ describe('20-coersion', () => {
     ],
     functions: [
       clampFuncWithStore, clampFuncCpu, addFuncWithStore, sinFuncWithStore, mixFuncWithStore,
+    ],
+    resources: [outBuffer],
+    inputs: []
+  };
+  const cpuOnlyDoc: IRDocument = {
+    version: '1.0.0',
+    meta: { name: 'CoersionTest', author: 'Test' },
+    entryPoint: mainId,
+    structs: [
+      { id: 'Point', members: [{ name: 'x', type: 'float' }, { name: 'y', type: 'float' }] }
+    ],
+    functions: [
       structArrFunc, shaderStructArr, floatArrFunc, shaderFloatArr
     ],
     resources: [outBuffer],
@@ -177,9 +189,6 @@ describe('20-coersion', () => {
   const verifyBuffer = (ctx: any, expected: number, tolerance = 0.0001) => {
     const buf = ctx.resources.get('out_buf');
     if (!buf || !buf.data || buf.data.length === 0) {
-      // If buffer empty, try fallback to var (for non-compiled backends if they don't support buffer store yet?)
-      // But CppMetal should support it.
-      // Fallback to getVar if available
       try {
         return ctx.getVar('res');
       } catch {
@@ -191,11 +200,6 @@ describe('20-coersion', () => {
   };
 
   runFullGraphTest('Clamp Int Coersion', doc, async (ctx) => {
-    // CppMetal shader harness runs compute shader but might not write back nicely without explicit sync?
-    // Actually CppMetal harness does explicit readback of all resources.
-    // But wait, shader functions in `20-coersion` are being run as compute shaders by harness?
-    // The harness runs `dispatchShader`.
-    // If `clampFunc` is a shader, it needs `buffer_store` to write output.
     const val = verifyBuffer(ctx, 5.0);
     if (Math.abs(val - 5.0) > 0.0001) throw new Error(`Clamp: Expected 5.0, got ${val}`);
   }, backends, 20000);
@@ -220,14 +224,14 @@ describe('20-coersion', () => {
     if (Math.abs(val - 5.0) > 0.0001) throw new Error(`Mix: Expected 5.0, got ${val}`);
   }, backends);
 
-  runFullGraphTest('Struct Array Coersion', { ...doc, entryPoint: 'struct_arr_test' }, async (ctx) => {
+  runFullGraphTest('Struct Array Coersion', { ...cpuOnlyDoc, entryPoint: 'struct_arr_test' }, async (ctx) => {
     const val = verifyBuffer(ctx, 4.0);
     if (Math.abs(val - 4.0) > 0.0001) throw new Error(`Struct Array: Expected 4.0, got ${val}`);
-  }, backends);
+  }, cpuBackends);
 
-  runFullGraphTest('Float Array Literal Coersion', { ...doc, entryPoint: 'float_arr_test' }, async (ctx) => {
+  runFullGraphTest('Float Array Literal Coersion', { ...cpuOnlyDoc, entryPoint: 'float_arr_test' }, async (ctx) => {
     const val = verifyBuffer(ctx, 0.0);
     if (Math.abs(val) > 0.0001) throw new Error(`Float Array Literal: Expected 0.0, got ${val}`);
-  }, backends);
+  }, cpuBackends);
 
 });

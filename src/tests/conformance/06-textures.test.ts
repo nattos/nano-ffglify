@@ -35,16 +35,6 @@ describe('Conformance: Texture Sampling', () => {
         outputs: [],
         localVars: [],
         nodes: [
-          { id: 'call', op: 'cmd_dispatch', func: 'fn_sample', dispatch: [1, 1, 1] }
-        ]
-      },
-      {
-        id: 'fn_sample',
-        type: 'shader',
-        inputs: [],
-        outputs: [],
-        localVars: [],
-        nodes: [
           { id: 'uv', op: 'float2', x: 0.0, y: 0.0 }, // Mutated in tests
           { id: 'sample', op: 'texture_sample', tex: 't_src', coords: 'uv' },
           { id: 'store', op: 'buffer_store', buffer: 'b_result', index: 0, value: 'sample' }
@@ -56,8 +46,8 @@ describe('Conformance: Texture Sampling', () => {
   const getIR = (wrap: 'repeat' | 'clamp', u: number, v: number): IRDocument => {
     const ir = JSON.parse(JSON.stringify(wrapModeIr)); // Clone
     ir.resources[0].sampler.wrap = wrap;
-    ir.functions[1].nodes[0].x = u;
-    ir.functions[1].nodes[0].y = v;
+    ir.functions[0].nodes[0].x = u;
+    ir.functions[0].nodes[0].y = v;
     ir.meta.name = `Sampler Test ${wrap}`;
     return ir;
   };

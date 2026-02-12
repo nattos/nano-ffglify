@@ -139,7 +139,9 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
 
   if (results.resources) {
     for (const [key, res] of Object.entries(results.resources)) {
-      const state = ctx.getResource(key);
+      const state = ctx.resources.get(key);
+      if (!state) continue; // Skip internal/unexpected resources from browser
+
       const r = res as any;
       state.width = r.width;
       state.height = r.height;

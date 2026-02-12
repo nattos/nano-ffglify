@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { IRDocument, DataType, ResourceDef } from '../../ir/types';
+import { IRDocument, DataType, ResourceDef, FunctionDef, Node as IRNode } from '../../ir/types';
 import { inferFunctionTypes, validateIR } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
 import { InterpretedExecutor } from '../../interpreter/executor';
@@ -59,7 +59,6 @@ export const ForceOntoGPUTestBackend: TestBackend = {
       throw new Error(`IR Validation Failed:\n${criticalErrors.map(e => e.message).join('\n')}`);
     }
 
-
     // Reuse WebGpuBackend's context creation (device init, resource alloc)
     const ctx = await WebGpuBackend.createContext(ir, inputs);
     (ctx as any)._ir = ir;
@@ -67,439 +66,166 @@ export const ForceOntoGPUTestBackend: TestBackend = {
   },
 
   run: async (ctx: EvaluationContext, entryPoint: string) => {
-    const ir = (ctx as any)._ir as IRDocument;
-    if (!ir) throw new Error('[ForceOntoGPUTestBackend] IR not found on context private _ir field');
+    const originalIr = (ctx as any)._ir as IRDocument || ctx.ir;
+    if (!originalIr) throw new Error('[ForceOntoGPUTestBackend] IR not found');
 
-    const func = ir.functions.find(f => f.id === entryPoint);
-    if (!func) throw new Error('Entry point not found');
+    const ir: IRDocument = JSON.parse(JSON.stringify(originalIr));
+    const originalEntryPointId = entryPoint;
+    const originalFunc = ir.functions.find(f => f.id === originalEntryPointId);
+    if (!originalFunc) throw new Error(`Entry point '${originalEntryPointId}' not found`);
 
-    // await gpuSemaphore.acquire();
+    const gpuKernelId = `_gpu_kernel_${originalEntryPointId}`;
+    const captureBufferId = 'b_force_gpu_capture';
 
-    await gpuSemaphore.acquire();
-    try {
-      const device = ctx.device;
+    // 1. Analyze and Transform GPU Kernel
+    const nodeTypes = inferFunctionTypes(originalFunc, ir);
+    const varCaptures = new Map<string, { offset: number, type: DataType }>();
+    let currentOffset = 0;
 
-      const resourceBuffers = new Map<string, GPUBuffer | GPUTexture | GPUSampler>();
-      const stagingBuffers: GPUBuffer[] = [];
-      let globalBuffer: GPUBuffer | undefined;
-
-      try {
-        // 2. Allocate & Prepare Resources
-        device.pushErrorScope('validation');
-        const resourceBindings = new Map<string, number>();
-        let bindingCounter = 2; // 0 is Globals, 1 is Inputs
-
-        for (const res of ir.resources) {
-          if (res.type === 'buffer') {
-            const state = ctx.getResource(res.id);
-            const elementSize = getElementSize(res.dataType);
-            const sizeBytes = state.width * elementSize;
-
-            const buffer = device.createBuffer({
-              size: sizeBytes,
-              usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_SRC | (globalThis as any).GPUBufferUsage.COPY_DST
-            });
-
-            if (state.data && state.data.length > 0) {
-              const f32Data = new Float32Array(state.data as number[]);
-              device.queue.writeBuffer(buffer, 0, f32Data);
-            }
-
-            resourceBuffers.set(res.id, buffer);
-            resourceBindings.set(res.id, bindingCounter++);
-          }
-          else if (res.type === 'texture2d') {
-            const state = ctx.getResource(res.id);
-            const width = state.width || 1;
-            const height = state.height || 1;
-            const formatStr = (res as any).format || 'rgba8';
-
-            let gpuFormat: GPUTextureFormat = 'rgba8unorm';
-            if (formatStr === 'r32f') gpuFormat = 'r32float';
-            else if (formatStr === 'rgba8') gpuFormat = 'rgba8unorm';
-            else if (formatStr === 'rgba32f') gpuFormat = 'rgba32float';
-
-            const texture = device.createTexture({
-              size: [width, height, 1],
-              format: gpuFormat,
-              usage: (globalThis as any).GPUTextureUsage.TEXTURE_BINDING | (globalThis as any).GPUTextureUsage.STORAGE_BINDING | (globalThis as any).GPUTextureUsage.COPY_DST | (globalThis as any).GPUTextureUsage.COPY_SRC
-            });
-
-            if (state.data && state.data.length > 0) {
-              if (gpuFormat === 'r32float' || gpuFormat === 'rgba32float' || gpuFormat === 'rgba8unorm') {
-                const flatFloats = (state.data as any).flat(2) as number[];
-                let srcBytes: Uint8Array;
-                let bytesPerPixel = 4;
-
-                if (gpuFormat === 'rgba8unorm') {
-                  bytesPerPixel = 4;
-                  srcBytes = new Uint8Array(flatFloats.map(v => Math.max(0, Math.min(255, Math.floor(v * 255)))));
-                } else {
-                  const float = new Float32Array(flatFloats);
-                  srcBytes = new Uint8Array(float.buffer);
-                  bytesPerPixel = gpuFormat === 'r32float' ? 4 : 16;
-                }
-
-                const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
-                const paddedSize = bytesPerRow * height;
-                const paddedData = new Uint8Array(paddedSize);
-                const validBytesPerRow = width * bytesPerPixel;
-
-                for (let y = 0; y < height; y++) {
-                  const srcStart = y * validBytesPerRow;
-                  const dstStart = y * bytesPerRow;
-                  paddedData.set(srcBytes.subarray(srcStart, srcStart + validBytesPerRow), dstStart);
-                }
-
-                device.queue.writeTexture({ texture }, paddedData, { bytesPerRow, rowsPerImage: height }, { width, height });
-              }
-            }
-
-            resourceBuffers.set(res.id, texture);
-            resourceBindings.set(res.id, bindingCounter++);
-          }
+    originalFunc.nodes.forEach(n => {
+      if (n.op === 'var_set') {
+        const varId = n['var'];
+        if (!varCaptures.has(varId)) {
+          const type = nodeTypes.get(n.id) || nodeTypes.get(n['val']) || 'float';
+          varCaptures.set(varId, { offset: currentOffset, type });
+          currentOffset += getComponentCount(type);
         }
-
-        const allocError = await device.popErrorScope();
-        if (allocError) {
-          console.error("Resource Allocation Error:", allocError.message);
-          throw new Error(`WebGPU Allocation Error: ${allocError.message}`);
-        }
-
-        const varMap = new Map<string, number>();
-        const varTypes = new Map<string, DataType>();
-        const resourceDefs = new Map<string, ResourceDef>();
-
-        let varCounter = 0;
-        ir.inputs?.forEach(input => {
-          varMap.set(input.id, varCounter);
-          varTypes.set(input.id, input.type);
-          varCounter += getComponentCount(input.type);
-        });
-
-        ir.resources.forEach(r => {
-          resourceDefs.set(r.id, r);
-        });
-
-        const nodeTypes = inferFunctionTypes(func, ir);
-
-        func.nodes.forEach(n => {
-          if (n.op === 'var_set') {
-            const v = n['var'];
-            // For conformance tests, we want to be able to read back even local variables
-            // that are results of operations.
-            if (!varMap.has(v)) {
-              varMap.set(v, varCounter);
-              const valType = nodeTypes.get(n.id) || nodeTypes.get(n['val']) || 'float';
-              varTypes.set(v, valType);
-              varCounter += getComponentCount(valType);
-            }
-          }
-        });
-
-        const globalsSizeBytes = Math.max(varCounter * 4, 16);
-        globalBuffer = device.createBuffer({
-          size: globalsSizeBytes,
-          usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_SRC | (globalThis as any).GPUBufferUsage.COPY_DST
-        });
-
-        if (varMap.size > 0) {
-          const initialData = new Float32Array(globalsSizeBytes / 4);
-          varMap.forEach((idx, name) => {
-            try {
-              const val = ctx.getInput(name);
-              if (val !== undefined) {
-                const type = varTypes.get(name) || 'float';
-                const count = getComponentCount(type);
-                if (count === 1 && (typeof val === 'number' || typeof val === 'boolean')) {
-                  initialData[idx] = typeof val === 'boolean' ? (val ? 1 : 0) : val;
-                } else if (Array.isArray(val)) {
-                  for (let i = 0; i < Math.min(val.length, count); i++) {
-                    initialData[idx + i] = Number(val[i]);
-                  }
-                }
-              }
-            } catch (e) { }
-          });
-          device.queue.writeBuffer(globalBuffer, 0, initialData);
-        }
-
-        const genResourceBindings = new Map<string, number>();
-        const genSamplerBindings = new Map<string, number>();
-        resourceBindings.forEach((binding, id) => {
-          if (id.endsWith('_sampler')) genSamplerBindings.set(id.replace('_sampler', ''), binding);
-          else genResourceBindings.set(id, binding);
-        });
-
-        // Handle cmd_dispatch redirection:
-        // If the entry function contains a 'cmd_dispatch', we should compile the dispatched function instead.
-        // This simulates a host dispatching a kernel.
-        let targetEntryPoint = entryPoint;
-        let dispatchSize = [1, 1, 1];
-
-        const dispNode = func.nodes.find(n => n.op === 'cmd_dispatch');
-        if (dispNode) {
-          if (typeof dispNode['func'] === 'string') {
-            targetEntryPoint = dispNode['func'];
-            const targetFunc = ir.functions.find(f => f.id === targetEntryPoint);
-            if (!targetFunc) throw new Error(`Dispatched function '${targetEntryPoint}' not found`);
-          }
-          let dims = dispNode['dispatch'];
-
-          // Resolve string reference (e.g. 'tex_size' from resource_get_size)
-          if (typeof dims === 'string') {
-            const refNode = func.nodes.find(n => n.id === dims);
-            if (refNode && refNode.op === 'resource_get_size') {
-              const resId = refNode['resource'] as string;
-              const res = ir.resources.find(r => r.id === resId);
-              if (res && res.size?.mode === 'fixed') {
-                const val = res.size.value;
-                if (Array.isArray(val)) {
-                  dims = [val[0], val[1], 1];
-                } else {
-                  dims = [val, 1, 1];
-                }
-              }
-            } else {
-              // Try to get from inputs
-              const inputVal = ctx.getVar(dims);
-              if (Array.isArray(inputVal)) dims = inputVal;
-            }
-          }
-
-          if (Array.isArray(dims)) {
-            dispatchSize = [
-              (dims[0] as number) || 1,
-              (dims[1] as number) || 1,
-              (dims[2] as number) || 1
-            ];
-          }
-        }
-
-
-        const compilation = new WgslGenerator().compile(ir, targetEntryPoint, {
-          stage: 'compute',
-          globalBufferBinding: 0,
-          inputBinding: 1,
-          varMap: varMap,
-          varTypes: varTypes,
-          nodeTypes: nodeTypes as any,
-          resourceBindings: genResourceBindings,
-          samplerBindings: genSamplerBindings,
-          resourceDefs: resourceDefs,
-          fullIr: ir
-        });
-
-        const code = WgslGenerator.resolveImports(compilation);
-
-        device.pushErrorScope('validation');
-        const pipeline = await GpuCache.getComputePipeline(device, code);
-
-        const error = await device.popErrorScope();
-        if (error) {
-          console.log("!!! WEBGPU ERROR !!!", error.message);
-          throw new Error(`WebGPU Error: ${error.message}`);
-        }
-
-
-        const bindGroupEntries: GPUBindGroupEntry[] = [];
-        if (code.includes('var<storage, read_write> b_globals') && globalBuffer) {
-          bindGroupEntries.push({ binding: 0, resource: { buffer: globalBuffer } });
-        }
-        const layout = compilation.metadata.inputLayout;
-        if (layout) {
-          const wgSize = compilation.metadata.workgroupSize || [16, 16, 1];
-          const totalThreads = [
-            dispatchSize[0],
-            dispatchSize[1],
-            dispatchSize[2]
-          ];
-          // Determine workgroups needed to cover totalThreads
-          const workgroups = [
-            Math.ceil(totalThreads[0] / wgSize[0]),
-            Math.ceil(totalThreads[1] / wgSize[1]),
-            Math.ceil(totalThreads[2] / wgSize[2])
-          ];
-
-
-          const inputValues: Record<string, RuntimeValue> = {
-            u_dispatch_size: totalThreads
-          };
-          ctx.inputs.forEach((v, k) => {
-            inputValues[k] = v;
-          });
-
-          // Also include arguments from the dispatch node, evaluated by the interpreter
-          if (dispNode && dispNode['args']) {
-            const args = dispNode['args'] as Record<string, any>;
-            const subCtx = new EvaluationContext(ir, ctx.inputs);
-            subCtx.resources = ctx.resources;
-            const subExec = new InterpretedExecutor(subCtx);
-            subCtx.pushFrame(func.id);
-            subExec.executeFunction(func);
-
-            for (const [argName, nodeId] of Object.entries(args)) {
-              let val = subCtx.getVar(nodeId);
-              if (val === undefined && subCtx.stack.length > 0) {
-                val = subCtx.currentFrame.nodeResults.get(nodeId);
-              }
-              if (val !== undefined) {
-                inputValues[argName] = val;
-              }
-            }
-            subCtx.popFrame();
-          }
-
-          const packed = packBuffer(layout, inputValues, new ShaderLayout(ir.structs || []), 'std430');
-
-
-          const buffer = device.createBuffer({
-            size: packed.byteLength,
-            usage: (globalThis as any).GPUBufferUsage.STORAGE | (globalThis as any).GPUBufferUsage.COPY_DST
-          });
-          device.queue.writeBuffer(buffer, 0, packed);
-          bindGroupEntries.push({ binding: 1, resource: { buffer } });
-          stagingBuffers.push(buffer); // Clean up later
-
-          // Use these for final dispatch
-          dispatchSize = workgroups;
-        }
-
-        resourceBindings.forEach((binding, id) => {
-          const res = resourceBuffers.get(id)!;
-          const bindingPattern = new RegExp(`@binding\\s*\\(\\s*${binding}\\s*\\)`);
-          if (bindingPattern.test(code)) {
-            if (res instanceof GPUBuffer) {
-              bindGroupEntries.push({ binding, resource: { buffer: res } });
-            } else if (res instanceof GPUTexture) {
-              bindGroupEntries.push({ binding, resource: res.createView() });
-            } else if (res instanceof GPUSampler) {
-              bindGroupEntries.push({ binding, resource: res });
-            }
-          }
-        });
-
-        const bindGroup = device.createBindGroup({
-          layout: pipeline.getBindGroupLayout(0),
-          entries: bindGroupEntries
-        });
-
-        const encoder = device.createCommandEncoder();
-        const pass = encoder.beginComputePass();
-        pass.setPipeline(pipeline);
-        pass.setBindGroup(0, bindGroup);
-
-        let dx = dispatchSize[0], dy = dispatchSize[1], dz = dispatchSize[2];
-        // If we didn't redirect (no cmd_dispatch), check if the function itself has dispatch metadata (unlikely for strict compute backend acting as host)
-        // But if we are running a pure compute shader entry point directly, we default to 1,1,1 unless specific metadata exists.
-
-        pass.dispatchWorkgroups(dx, dy, dz);
-        pass.end();
-
-        const copyToStaging = (src: GPUBuffer, size: number) => {
-          const staging = device.createBuffer({
-            size,
-            usage: (globalThis as any).GPUBufferUsage.MAP_READ | (globalThis as any).GPUBufferUsage.COPY_DST
-          });
-          stagingBuffers.push(staging);
-          encoder.copyBufferToBuffer(src, 0, staging, 0, size);
-          return staging;
-        };
-
-        const globalsStaging = globalBuffer ? copyToStaging(globalBuffer, globalsSizeBytes) : null;
-        const resStaging = new Map<string, GPUBuffer>();
-
-        resourceBuffers.forEach((buf, id) => {
-          if (buf instanceof GPUBuffer) {
-            const state = ctx.getResource(id);
-            const size = state.width * getElementSize(state.def.dataType);
-            resStaging.set(id, copyToStaging(buf, size));
-          } else if (buf instanceof GPUTexture) {
-            const state = ctx.getResource(id);
-            const width = state.width || 1;
-            const height = state.height || 1;
-            let bytesPerPixel = 4;
-            if (state.def.format === 'rgba32f') bytesPerPixel = 16;
-            if (state.def.format === 'r32f') bytesPerPixel = 4;
-
-            const bytesPerRow = Math.ceil((width * bytesPerPixel) / 256) * 256;
-            const bufferSize = bytesPerRow * height;
-            const staging = device.createBuffer({
-              size: bufferSize,
-              usage: (globalThis as any).GPUBufferUsage.MAP_READ | (globalThis as any).GPUBufferUsage.COPY_DST
-            });
-            stagingBuffers.push(staging);
-            encoder.copyTextureToBuffer(
-              { texture: buf },
-              { buffer: staging, bytesPerRow, rowsPerImage: height },
-              { width, height }
-            );
-            resStaging.set(id, staging);
-          }
-        });
-
-        device.queue.submit([encoder.finish()]);
-
-        await device.queue.onSubmittedWorkDone();
-        if (globalsStaging) {
-          await globalsStaging.mapAsync((globalThis as any).GPUMapMode.READ);
-          const globalsData = new Float32Array(globalsStaging.getMappedRange());
-          ctx.pushFrame(entryPoint);
-          varMap.forEach((idx, name) => {
-            const type = varTypes.get(name) || 'float';
-            const count = getComponentCount(type);
-            if (count === 1) ctx.setVar(name, globalsData[idx]);
-            else ctx.setVar(name, Array.from(globalsData.subarray(idx, idx + count)));
-          });
-          globalsStaging.unmap();
-        }
-
-        for (const [id, staging] of resStaging) {
-          await staging.mapAsync((globalThis as any).GPUMapMode.READ);
-          const state = ctx.getResource(id);
-
-          if (state.def.type === 'texture2d') {
-            const bytesPerPixel = 4; // Assuming RGBA8
-            const bytesPerRow = Math.ceil((state.width * bytesPerPixel) / 256) * 256;
-            const unpadded: any[] = [];
-            for (let y = 0; y < state.height; y++) {
-              const rowBytes = new Uint8Array(staging.getMappedRange(y * bytesPerRow, bytesPerRow));
-              for (let x = 0; x < state.width; x++) {
-                const r = rowBytes[x * 4] / 255.0;
-                const g = rowBytes[x * 4 + 1] / 255.0;
-                const b = rowBytes[x * 4 + 2] / 255.0;
-                const a = rowBytes[x * 4 + 3] / 255.0;
-                unpadded.push([r, g, b, a]);
-              }
-            }
-            state.data = unpadded;
-          } else { // Buffer resource
-            const data = new Float32Array(staging.getMappedRange());
-            const elFloats = getElementSize(state.def.dataType) / 4;
-            if (elFloats > 1) {
-              state.data = new Array(state.width);
-              for (let i = 0; i < state.width; i++) {
-                const slice = Array.from(data.subarray(i * elFloats, i * elFloats + elFloats));
-                state.data[i] = (state.def.dataType?.startsWith('vec3') || state.def.dataType === 'float3') ? slice.slice(0, 3) : slice;
-              }
-            } else {
-              state.data = Array.from(data);
-            }
-          }
-          staging.unmap();
-        }
-      } finally {
-        globalBuffer?.destroy();
-        for (const b of stagingBuffers) b.destroy();
-        for (const res of resourceBuffers.values()) {
-          if (res instanceof GPUBuffer || res instanceof GPUTexture) res.destroy();
-        }
-        // Note: we don't pop error scope here as it was already popped for specific operations
-        // But we should ensure popErrorScope matches pushErrorScope.
-        // I added push/pop around allocation and pipeline.
       }
-    } finally {
-      gpuSemaphore.release();
+    });
+
+    // 2. Prepare Resources
+    const captureDef: ResourceDef = {
+      id: captureBufferId,
+      type: 'buffer',
+      dataType: 'float',
+      size: { mode: 'fixed', value: Math.max(currentOffset, 1) },
+      persistence: { cpuAccess: true, retain: false, clearEveryFrame: false, clearOnResize: false }
+    };
+    ir.resources.push(captureDef);
+
+    // Manually add to context resources
+    ctx.resources.set(captureBufferId, {
+      def: captureDef as any,
+      width: Math.max(currentOffset, 1),
+      height: 1,
+      data: new Array(Math.max(currentOffset, 1)).fill(0)
+    } as any);
+
+    // 3. Transform the function into a shader and inject stores
+    originalFunc.id = gpuKernelId;
+    originalFunc.type = 'shader';
+
+    const newNodes: IRNode[] = [];
+    originalFunc.nodes.forEach(node => {
+      newNodes.push(node);
+      if (node.op === 'var_set') {
+        const varId = node['var'];
+        const capture = varCaptures.get(varId)!;
+        const count = getComponentCount(capture.type);
+
+        let lastNodeId = node.id;
+        const finalNext = (node as any).exec_out || (node as any).next || (node as any)._next;
+        delete (node as any).exec_out;
+        delete (node as any).next;
+        delete (node as any)._next;
+
+        if (count === 1) {
+          const storeId = `capture_${node.id}`;
+          newNodes.push({
+            id: storeId,
+            op: 'buffer_store',
+            buffer: captureBufferId,
+            index: capture.offset,
+            value: node.id,
+            exec_in: lastNodeId
+          });
+          lastNodeId = storeId;
+        } else {
+          for (let i = 0; i < count; i++) {
+            const swizzleId = `capture_swizzle_${node.id}_${i}`;
+            const storeId = `capture_store_${node.id}_${i}`;
+            const channels = ['x', 'y', 'z', 'w'];
+
+            newNodes.push({
+              id: swizzleId,
+              op: 'vec_swizzle',
+              vec: node.id,
+              channels: channels[i]
+            });
+            newNodes.push({
+              id: storeId,
+              op: 'buffer_store',
+              buffer: captureBufferId,
+              index: capture.offset + i,
+              value: swizzleId,
+              exec_in: lastNodeId
+            });
+            lastNodeId = storeId;
+          }
+        }
+
+        // Fix up the next node in the chain
+        const lastCreatedNode = newNodes[newNodes.length - 1];
+        if (finalNext) {
+          (lastCreatedNode as any).exec_out = finalNext;
+        }
+      }
+    });
+    originalFunc.nodes = newNodes;
+
+    // 4. Create CPU Trampoline
+    const trampolineId = `trampoline_${originalEntryPointId}`;
+    const trampolineFunc: FunctionDef = {
+      id: trampolineId,
+      type: 'cpu',
+      inputs: [...originalFunc.inputs],
+      outputs: [...originalFunc.outputs],
+      localVars: [],
+      nodes: [
+        {
+          id: 'dispatch',
+          op: 'cmd_dispatch',
+          func: gpuKernelId,
+          dispatch: [1, 1, 1], // Default to 1,1,1 for basic tests
+          args: Object.fromEntries(originalFunc.inputs.map(i => [i.id, i.id]))
+        },
+        {
+          id: 'sync',
+          op: 'cmd_sync_to_cpu',
+          resource: captureBufferId,
+          exec_in: 'dispatch'
+        },
+        {
+          id: 'wait',
+          op: 'cmd_wait_cpu_sync',
+          resource: captureBufferId,
+          exec_in: 'sync'
+        }
+      ]
+    };
+    ir.functions.push(trampolineFunc);
+    ir.entryPoint = trampolineId;
+
+    // 5. Build and execute via WebGpuBackend
+    ctx.ir = ir;
+    await WebGpuBackend.run(ctx, trampolineId);
+
+    // 6. Readback captured variables into context
+    const captureRes = ctx.getResource(captureBufferId);
+    if (captureRes && captureRes.data) {
+      // Ensure we have a frame to set variables in
+      if (ctx.stack.length === 0) {
+        ctx.pushFrame(originalEntryPointId);
+      }
+      varCaptures.forEach((cap, varId) => {
+        const count = getComponentCount(cap.type);
+        if (count === 1) {
+          ctx.setVar(varId, captureRes.data![cap.offset]);
+        } else {
+          const slice = captureRes.data!.slice(cap.offset, cap.offset + count);
+          ctx.setVar(varId, slice);
+        }
+      });
     }
   },
 

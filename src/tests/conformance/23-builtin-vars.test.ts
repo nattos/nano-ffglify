@@ -1,14 +1,8 @@
 
 import { describe } from 'vitest';
-import { runGraphTest, runGraphErrorTest, availableBackends } from './test-runner';
+import { runGraphTest, runGraphErrorTest, availableBackends, cpuBackends } from './test-runner';
 
 describe('Conformance: Built-in Variables', () => {
-
-  // Focus on CPU backends for built-ins
-  const cpuBackends = availableBackends.filter(b =>
-    b.name === 'Interpreter' || b.name === 'CPU' || b.name === 'CppMetal'
-  );
-
   const builtins = [
     { name: 'time', val: 123.45 },
     { name: 'delta_time', val: 0.016 },
@@ -20,7 +14,7 @@ describe('Conformance: Built-in Variables', () => {
   builtins.forEach(({ name, val }) => {
     runGraphTest(`should return ${name}`, [
       { id: 'res', op: 'builtin_get', name }
-    ], 'res', val, cpuBackends, new Map([[name, val]]));
+    ], 'res', val, availableBackends, new Map([[name, val]]));
   });
 
   describe('GPU-only Built-ins on CPU', () => {
