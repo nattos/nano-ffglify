@@ -9,6 +9,24 @@ export const InterpreterBackend: TestBackend = {
     return new EvaluationContext(ir, inputs);
   },
   run: async (ctx: EvaluationContext, entryPoint: string) => {
+    // Initialize viewport resources to default size (e.g. 64x64)
+    // This ensures raymarcher works even if no explicit resize command is called
+    ctx.resources.forEach((res, id) => {
+      if (res.def.size.mode === 'viewport') {
+        const width = 64;
+        const height = 64;
+        res.width = width;
+        res.height = height;
+        // Re-init data
+        const count = width * height;
+        if (res.def.persistence.clearValue !== undefined) {
+          res.data = new Array(count).fill(res.def.persistence.clearValue);
+        } else {
+          res.data = new Array(count).fill(0);
+        }
+      }
+    });
+
     const exec = new InterpretedExecutor(ctx);
     const func = ctx.ir.functions.find(f => f.id === entryPoint);
     if (!func) throw new Error(`Entry point '${entryPoint}' not found`);

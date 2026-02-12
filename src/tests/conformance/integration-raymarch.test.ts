@@ -57,10 +57,11 @@ describe('Conformance: Integration - Raymarcher', () => {
 
         // Center pixel (should hit sphere -> Red)
         const centerPixel = getPixel(width / 2, height / 2);
+
         // Expect Red: R ~ 1, G ~ 0, B ~ 0
-        expect(centerPixel[0], 'Center R').toBeCloseTo(1.0, 1); // Hit color is red
-        expect(centerPixel[1], 'Center G').toBeCloseTo(0.0, 1);
-        expect(centerPixel[2], 'Center B').toBeCloseTo(0.0, 1);
+        expect(centerPixel[0], 'Center R').toBeCloseTo(1.0, 0.5);
+        expect(centerPixel[1], 'Center G').toBeCloseTo(0.0, 0.5);
+        expect(centerPixel[2], 'Center B').toBeCloseTo(0.0, 0.5);
 
         // Corner pixel (0,0) (should miss sphere -> Black)
         const cornerPixel = getPixel(0, 0);

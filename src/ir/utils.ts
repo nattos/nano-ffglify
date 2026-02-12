@@ -97,12 +97,10 @@ export function reconstructEdges(func: FunctionDef, doc?: IRDocument): Edge[] {
     }
 
     // Outgoing flow: Default 'next' or 'exec_out' property to 'exec_in' port
-    // Only if THIS node is executable
-    if (isExecutableOp(node.op)) {
-      const nextId = node.next || node._next || node.exec_out;
-      if (isNodeId(nextId)) {
-        edges.push({ from: node.id, portOut: 'exec_out', to: nextId, portIn: 'exec_in', type: 'execution' });
-      }
+    // Trust explicit flow properties even on pure nodes (converts them to execution anchors)
+    const nextId = node.next || node._next || node.exec_out;
+    if (isNodeId(nextId)) {
+      edges.push({ from: node.id, portOut: 'exec_out', to: nextId, portIn: 'exec_in', type: 'execution' });
     }
   }
 

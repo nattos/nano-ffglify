@@ -62,6 +62,20 @@ const runImplementation = async (ctx: EvaluationContext, entryPoint: string, sub
   // Serialize resources
   const resourcesObj: Record<string, any> = {};
   ctx.resources.forEach((state, key) => {
+    // Enforce default viewport size for tests if 1x1
+    if (state.def.size?.mode === 'viewport') {
+      if (state.width === 1 && state.height === 1) {
+        state.width = 64;
+        state.height = 64;
+        const count = 64 * 64;
+        if (state.def.persistence.clearValue !== undefined) {
+          state.data = new Array(count).fill(state.def.persistence.clearValue);
+        } else {
+          state.data = new Array(count).fill(0);
+        }
+      }
+    }
+
     resourcesObj[key] = {
       width: state.width,
       height: state.height,
