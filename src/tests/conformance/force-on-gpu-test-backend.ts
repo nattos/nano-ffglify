@@ -2,37 +2,14 @@
 import { IRDocument, DataType, ResourceDef, FunctionDef, Node as IRNode } from '../../ir/types';
 import { inferFunctionTypes, validateIR } from '../../ir/validator';
 import { EvaluationContext, RuntimeValue } from '../../interpreter/context';
-import { InterpretedExecutor } from '../../interpreter/executor';
-import { gpuSemaphore } from './gpu-singleton';
 import { TestBackend } from './types';
 import { WebGpuBackend } from './webgpu-backend';
-import { WgslGenerator } from '../../webgpu/wgsl-generator';
-import { GpuCache } from '../../webgpu/gpu-cache';
-import { ShaderLayout, packBuffer } from '../../webgpu/shader-layout';
-
-// Helper: Calculate size per element
-const getElementSize = (type?: string) => {
-  if (!type) return 4;
-  if (type.startsWith('vec2') || type === 'float2') return 8;
-  if (type.startsWith('vec3') || type === 'float3') return 16; // WGSL vec3 alignment is 16 bytes.
-  if (type.startsWith('vec4') || type === 'float4') return 16;
-  if (type.startsWith('mat4') || type === 'float4x4') return 64;
-  return 4;
-};
 
 /**
  * ForceOntoGPUTestBackend
  *
  * A specialized backend that forces the Execution Graph (which is usually CPU logic in conformance tests)
  * to run as a Compute Shader on the GPU.
- *
- * Strategy:
- * 1. Analyze the Entry Point Function.
- * 2. Identify all 'var_set' and 'var_get' operations on globals.
- * 3. Allocate a 'Global Storage Buffer' to hold these values.
- * 4. Generate WGSL that treats 'fn_main' as a compute kernel, mapping global vars to storage buffer offsets.
- * 5. Dispatch (1, 1, 1).
- * 6. Read back the storage buffer and populate the EvaluationContext variables.
  */
 const getComponentCount = (type: string): number => {
   if (type === 'float2' || type === 'vec2<float>') return 2;
@@ -77,7 +54,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
     const gpuKernelId = `_gpu_kernel_${originalEntryPointId}`;
     const captureBufferId = 'b_force_gpu_capture';
 
-    // 1. Analyze and Transform GPU Kernel
+    // 1. Analyze for Variable Capture
     const nodeTypes = inferFunctionTypes(originalFunc, ir);
     const varCaptures = new Map<string, { offset: number, type: DataType }>();
     let currentOffset = 0;
@@ -87,8 +64,8 @@ export const ForceOntoGPUTestBackend: TestBackend = {
         const varId = n['var'];
         if (!varCaptures.has(varId)) {
           const type = nodeTypes.get(n.id) || nodeTypes.get(n['val']) || 'float';
-          varCaptures.set(varId, { offset: currentOffset, type });
-          currentOffset += getComponentCount(type);
+          varCaptures.set(varId, { offset: currentOffset, type: type as any });
+          currentOffset += getComponentCount(type as string);
         }
       }
     });
@@ -123,6 +100,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
         const capture = varCaptures.get(varId)!;
         const count = getComponentCount(capture.type);
 
+        const valId = node['val'];
         let lastNodeId = node.id;
         const finalNext = (node as any).exec_out || (node as any).next || (node as any)._next;
         delete (node as any).exec_out;
@@ -136,28 +114,36 @@ export const ForceOntoGPUTestBackend: TestBackend = {
             op: 'buffer_store',
             buffer: captureBufferId,
             index: capture.offset,
-            value: node.id,
+            value: valId,
             exec_in: lastNodeId
           });
           lastNodeId = storeId;
         } else {
           for (let i = 0; i < count; i++) {
-            const swizzleId = `capture_swizzle_${node.id}_${i}`;
+            const extractId = `capture_extract_${node.id}_${i}`;
             const storeId = `capture_store_${node.id}_${i}`;
-            const channels = ['x', 'y', 'z', 'w'];
+            const op = (capture.type as string).startsWith('array') ? 'array_extract' : 'vec_get_element';
 
-            newNodes.push({
-              id: swizzleId,
-              op: 'vec_swizzle',
-              vec: node.id,
-              channels: channels[i]
-            });
+            const extractNode: any = {
+              id: extractId,
+              op: op,
+              index: i
+            };
+
+            if (op === 'array_extract') {
+              extractNode.array = valId;
+            } else {
+              extractNode.vec = valId;
+            }
+
+            newNodes.push(extractNode);
+
             newNodes.push({
               id: storeId,
               op: 'buffer_store',
               buffer: captureBufferId,
               index: capture.offset + i,
-              value: swizzleId,
+              value: extractId,
               exec_in: lastNodeId
             });
             lastNodeId = storeId;
@@ -175,6 +161,24 @@ export const ForceOntoGPUTestBackend: TestBackend = {
 
     // 4. Create CPU Trampoline
     const trampolineId = `trampoline_${originalEntryPointId}`;
+    const syncNodes: IRNode[] = [];
+    ir.resources.forEach((res, idx) => {
+      const syncId = `sync_${res.id}`;
+      const waitId = `wait_${res.id}`;
+      syncNodes.push({
+        id: syncId,
+        op: 'cmd_sync_to_cpu',
+        resource: res.id,
+        exec_in: idx === 0 ? 'dispatch' : `wait_${ir.resources[idx - 1].id}`
+      });
+      syncNodes.push({
+        id: waitId,
+        op: 'cmd_wait_cpu_sync',
+        resource: res.id,
+        exec_in: syncId
+      });
+    });
+
     const trampolineFunc: FunctionDef = {
       id: trampolineId,
       type: 'cpu',
@@ -186,21 +190,10 @@ export const ForceOntoGPUTestBackend: TestBackend = {
           id: 'dispatch',
           op: 'cmd_dispatch',
           func: gpuKernelId,
-          dispatch: [1, 1, 1], // Default to 1,1,1 for basic tests
-          args: Object.fromEntries(originalFunc.inputs.map(i => [i.id, i.id]))
+          dispatch: [1, 1, 1],
+          args: Object.fromEntries([...originalFunc.inputs, ...(ir.inputs || [])].map(i => [i.id, i.id]))
         },
-        {
-          id: 'sync',
-          op: 'cmd_sync_to_cpu',
-          resource: captureBufferId,
-          exec_in: 'dispatch'
-        },
-        {
-          id: 'wait',
-          op: 'cmd_wait_cpu_sync',
-          resource: captureBufferId,
-          exec_in: 'sync'
-        }
+        ...syncNodes
       ]
     };
     ir.functions.push(trampolineFunc);
@@ -213,7 +206,6 @@ export const ForceOntoGPUTestBackend: TestBackend = {
     // 6. Readback captured variables into context
     const captureRes = ctx.getResource(captureBufferId);
     if (captureRes && captureRes.data) {
-      // Ensure we have a frame to set variables in
       if (ctx.stack.length === 0) {
         ctx.pushFrame(originalEntryPointId);
       }
@@ -223,10 +215,12 @@ export const ForceOntoGPUTestBackend: TestBackend = {
           ctx.setVar(varId, captureRes.data![cap.offset]);
         } else {
           const slice = captureRes.data!.slice(cap.offset, cap.offset + count);
-          ctx.setVar(varId, slice);
+          ctx.setVar(varId, Array.from(slice));
         }
       });
     }
+    // Clear result so test runner looks at variables
+    ctx.result = undefined;
   },
 
   execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {

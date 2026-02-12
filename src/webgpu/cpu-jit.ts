@@ -159,7 +159,12 @@ require('./intrinsics.js');
           const target = ir.functions.find(tf => tf.id === n['func']);
           if (target && target.type === 'shader') {
             if (!shaders.has(target.id)) {
-              const res = gen.compile(ir, target.id, { stage: 'compute', inputBinding: 1 });
+              const nodeTypes = inferFunctionTypes(target, ir);
+              const res = gen.compile(ir, target.id, {
+                stage: 'compute',
+                inputBinding: 1,
+                nodeTypes: nodeTypes as any
+              });
               shaders.set(target.id, { code: WgslGenerator.resolveImports(res), metadata: res.metadata });
             }
           }
@@ -168,8 +173,22 @@ require('./intrinsics.js');
           // For draw, we need unique pipeline keys
           const key = `${n['vertex']}|${n['fragment']}`;
           if (!renderPipelines.has(key)) {
-            const vsRes = gen.compile(ir, n['vertex'], { stage: 'vertex', inputBinding: 1 });
-            const fsRes = gen.compile(ir, n['fragment'], { stage: 'fragment', inputBinding: 1 });
+            const vsTarget = ir.functions.find(tf => tf.id === n['vertex']);
+            const fsTarget = ir.functions.find(tf => tf.id === n['fragment']);
+
+            const vsNodeTypes = vsTarget ? inferFunctionTypes(vsTarget, ir) : undefined;
+            const fsNodeTypes = fsTarget ? inferFunctionTypes(fsTarget, ir) : undefined;
+
+            const vsRes = gen.compile(ir, n['vertex'], {
+              stage: 'vertex',
+              inputBinding: 1,
+              nodeTypes: vsNodeTypes as any
+            });
+            const fsRes = gen.compile(ir, n['fragment'], {
+              stage: 'fragment',
+              inputBinding: 1,
+              nodeTypes: fsNodeTypes as any
+            });
             renderPipelines.set(key, {
               vsCode: WgslGenerator.resolveImports(vsRes),
               fsCode: WgslGenerator.resolveImports(fsRes),

@@ -187,6 +187,16 @@ export class WgslGenerator {
       // Inject dispatch size for bounds checking - now unconditional for compute
       docInputs.push({ id: 'u_dispatch_size', type: 'vec3<u32>' });
 
+      // Standard built-ins supported via uniform/storage buffer
+      const standardBuiltins = ['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'];
+      console.log(`[WgslGen] allUsedBuiltins:`, Array.from(this.allUsedBuiltins));
+      standardBuiltins.forEach(b => {
+        if (this.allUsedBuiltins.has(b)) {
+          console.log(`[WgslGen] Injecting standard builtin: ${b}`);
+          docInputs.push({ id: b, type: 'float' });
+        }
+      });
+
       // Use ShaderLayout to determine order (sort=true for efficient packing)
       // This guarantees the struct layout matches the buffer packing.
       // Use std430 for storage buffers (Inputs)
@@ -844,7 +854,10 @@ export class WgslGenerator {
       if (val !== undefined) {
         if (typeof val === 'string' && val.trim() !== '') {
           const tid = val.trim();
-          if (func.localVars.some(v => v.id === tid) || func.inputs.some(i => i.id === tid) || options.varMap?.has(tid)) {
+          if (func.localVars.some(v => v.id === tid) ||
+            func.inputs.some(i => i.id === tid) ||
+            options.fullIr?.inputs?.some(i => i.id === tid) ||
+            options.varMap?.has(tid)) {
             return this.getVariableExpr(tid, func, options);
           }
           const targetNode = func.nodes.find(n => n.id === tid);
@@ -934,12 +947,27 @@ export class WgslGenerator {
 
       let type = 'f32';
       const rawFill = node['fill'];
-      if (node['type']) type = node['type'];
-      else if (typeof rawFill === 'number' && Number.isInteger(rawFill)) type = 'i32';
-      else if (rawFill === true || rawFill === false) type = 'bool';
+      const inferredType = options.nodeTypes?.get(node.id);
+      if (inferredType && (inferredType.startsWith('array<') || inferredType.includes('['))) {
+        const match = inferredType.match(/array<([^,]+),/) || inferredType.match(/^([^\[]+)\[/);
+        if (match) type = match[1];
+      } else if (node['type']) {
+        type = node['type'];
+      } else if (typeof rawFill === 'number' && Number.isInteger(rawFill)) {
+        type = 'i32';
+      } else if (rawFill === true || rawFill === false) {
+        type = 'bool';
+      }
 
-      // Re-resolve fill with correct type to avoid 0.0 for ints
-      const fillExpr = this.resolveArg(node, 'fill', func, options, ir, type === 'i32' ? 'int' : (type === 'bool' ? 'bool' : 'float'), edges);
+      // Special case: if fill is 0.0 but type is int, we MUST use int literal
+      if (type === 'i32' || type === 'int') {
+        // Resolve as int regardless of literal format in IR
+        const fillExpr = this.resolveArg(node, 'fill', func, options, ir, 'int', edges);
+        const vals = new Array(len).fill(null).map(() => fillExpr);
+        return `array<i32, ${len}>(${vals.join(', ')})`;
+      }
+
+      const fillExpr = this.resolveArg(node, 'fill', func, options, ir, type === 'bool' ? 'bool' : 'float', edges);
       const vals = new Array(len).fill(null).map(() => fillExpr);
 
       return `array<${this.resolveType(type)}, ${len}>(${vals.join(', ')})`;
@@ -1045,7 +1073,12 @@ export class WgslGenerator {
           const v = m?.get(id);
           return (v && v !== 'any') ? v : null;
         };
-        const rawType = getV(options.nodeTypes as any, targetId) || getV(options.varTypes as any, targetId) || targetIn?.type || targetVar?.type || '';
+        const rawType = getV(options.nodeTypes as any, targetId) ||
+          getV(options.varTypes as any, targetId) ||
+          targetIn?.type ||
+          targetVar?.type ||
+          options.fullIr?.inputs?.find(i => i.id === targetId)?.type ||
+          '';
         let t = rawType.toLowerCase();
 
         // Fallback: Check target node op if type is unknown or 'any' (default map val)
@@ -1059,13 +1092,13 @@ export class WgslGenerator {
         }
 
         if (t === 'float3x3' || t === 'mat3x3<f32>') {
-          return `${vec}[u32(${idx} / 3)][u32(${idx} % 3)]`;
+          return `(${vec})[u32(${idx} / 3)][u32(${idx} % 3)]`;
         } else if (t === 'float4x4' || t === 'mat4x4<f32>') {
-          return `${vec}[u32(${idx} / 4)][u32(${idx} % 4)]`;
+          return `(${vec})[u32(${idx} / 4)][u32(${idx} % 4)]`;
         }
       }
 
-      return `${vec}[u32(${idx})]`;
+      return `(${vec})[u32(${idx})]`;
     }
     if (node.op === 'vec_set_element' || node.op === 'array_set') {
       const vec = this.resolveArg(node, 'vec' in node ? 'vec' : 'array', func, options, ir, 'any', edges);
@@ -1099,6 +1132,7 @@ export class WgslGenerator {
       else if (name === 'position') expr = 'Position';
       else if (name === 'vertex_index') expr = 'VertexIndex';
       else if (name === 'instance_index') expr = 'InstanceIndex';
+      else if (['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'].includes(name)) expr = `b_inputs.${name}`;
 
       // Built-ins in WGSL are often u32 or vecN<u32>.
       // Our IR often expects floats for generic math.
