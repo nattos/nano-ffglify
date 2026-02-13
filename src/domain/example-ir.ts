@@ -3,7 +3,7 @@ import { IRDocument, TextureFormat } from "../ir/types";
 export const NOISE_SHADER: IRDocument = {
   version: '1.0.0',
   meta: { name: 'Simple Noise Generator' },
-  comment: 'Demonstrates pitfalls like built-in swizzling, input inheritance, and isOutput flag.',
+  comment: 'Demonstrates input inheritance, builtin_get (global_invocation_id is int3), and isOutput flag.',
   entryPoint: 'fn_main_cpu',
 
   inputs: [
@@ -59,7 +59,7 @@ export const NOISE_SHADER: IRDocument = {
           id: 'in_gid',
           op: 'builtin_get',
           name: 'global_invocation_id',
-          comment: 'BUILT-INS: global_invocation_id is a float3. Always swizzle to \'xy\' and cast to float if doing math.'
+          comment: 'BUILT-INS: global_invocation_id is int3. Swizzle to xy for 2D coords; int->float coercion is automatic in math ops.'
         },
         {
           id: 'pixel_coords',
@@ -234,10 +234,11 @@ export const MIXER_SHADER: IRDocument = {
 
 export const RAYMARCH_SHADER: IRDocument = {
   version: '1.0.0',
-  meta: { name: 'Basic Raymarcher' },
+  meta: { name: 'Animated Raymarcher' },
+  comment: 'Animated SDF with smooth blending, Lambert+Blinn-Phong shading, checkerboard floor, and exponential fog. Uses runtime-provided time input for animation.',
   entryPoint: 'fn_main_cpu',
   inputs: [
-    { id: 'time', type: 'float', default: 0.0 }
+    { id: 'time', type: 'float', default: 0.0, comment: 'Elapsed time in seconds (set by runtime via first-order integration of delta_time, capped at 100ms per step).' }
   ],
   resources: [
     {
@@ -262,114 +263,206 @@ export const RAYMARCH_SHADER: IRDocument = {
       ]
     },
     {
-      id: 'fn_sdf',
-      type: 'shader',
-      comment: 'Signed Distance Function for a sphere',
-      inputs: [
-        { id: 'p', type: 'float3' }
-      ],
-      outputs: [
-        { id: 'dist', type: 'float' }
-      ],
-      localVars: [],
-      nodes: [
-        { id: 'radius', op: 'literal', val: 0.5 },
-        { id: 'len', op: 'vec_length', a: 'p' },
-        { id: 'd', op: 'math_sub', a: 'len', b: 'radius' },
-        { id: 'ret', op: 'func_return', val: 'd' }
-      ]
-    },
-    {
       id: 'fn_ray_gpu',
       type: 'shader',
+      comment: 'Raymarching kernel: orbiting sphere + ground plane, smin blending, shading, fog.',
       inputs: [],
       outputs: [],
       localVars: [
-        { id: 't', type: 'float', initialValue: 0.0 },
-        { id: 'hit', type: 'float', initialValue: 0.0 }, // Changed to float to avoid MSL bool issues
-        { id: 'p', type: 'float3', initialValue: [0, 0, -2] },
-        { id: 'i', type: 'int', initialValue: 0 }
+        { id: 't', type: 'float', initialValue: 0.01 },
+        { id: 'hit', type: 'float', initialValue: 0.0 }
       ],
       nodes: [
-        // Setup Rays
+        // ============================================================
+        // Setup: screen coords, UV, aspect ratio
+        // ============================================================
         { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
         { id: 'coords', op: 'vec_swizzle', vec: 'gid', channels: 'xy' },
         { id: 'size', op: 'resource_get_size', resource: 'output_ray' },
-        { id: 'uv', op: 'math_div', a: 'coords', b: 'size' },
+        { id: 'uv_raw', op: 'math_div', a: 'coords', b: 'size' },
+        { id: 'uv_2', op: 'math_mul', a: 'uv_raw', b: 2.0 },
+        { id: 'uv', op: 'math_sub', a: 'uv_2', b: 1.0 },
+        { id: 'size_x', op: 'vec_swizzle', vec: 'size', channels: 'x' },
+        { id: 'size_y', op: 'vec_swizzle', vec: 'size', channels: 'y' },
+        { id: 'aspect', op: 'math_div', a: 'size_x', b: 'size_y' },
 
-        // Remap UV to -1..1
-        { id: 'uv2', op: 'math_mul', a: 'uv', b: 2.0 },
-        { id: 'uv_centered', op: 'math_sub', a: 'uv2', b: 1.0 },
+        // ============================================================
+        // Camera: slightly elevated, looking down toward scene
+        // ============================================================
+        { id: 'ro', op: 'float3', x: 0.0, y: 1.0, z: -3.0 },
+        { id: 'uv_x', op: 'vec_swizzle', vec: 'uv', channels: 'x' },
+        { id: 'uv_y', op: 'vec_swizzle', vec: 'uv', channels: 'y' },
+        { id: 'rd_x', op: 'math_mul', a: 'uv_x', b: 'aspect' },
+        { id: 'rd_y', op: 'math_sub', a: 'uv_y', b: 0.3 },
+        { id: 'rd_raw', op: 'float3', x: 'rd_x', y: 'rd_y', z: 1.5 },
+        { id: 'rd', op: 'vec_normalize', a: 'rd_raw' },
 
-        // Ray Origin / Direction
-        { id: 'ro', op: 'float3', x: 0.0, y: 0.0, z: -2.0 },
-        { id: 'rd_x', op: 'vec_swizzle', vec: 'uv_centered', channels: 'x' },
-        { id: 'rd_y', op: 'vec_swizzle', vec: 'uv_centered', channels: 'y' },
-        { id: 'rd', op: 'float3', x: 'rd_x', y: 'rd_y', z: 1.0 },
-        { id: 'rd_norm', op: 'vec_normalize', a: 'rd' },
+        // ============================================================
+        // Animation: sphere orbits in xz plane, bobs vertically
+        // ============================================================
+        { id: 'val_time', op: 'var_get', var: 'time' },
+        { id: 't_orbit', op: 'math_mul', a: 'val_time', b: 0.7 },
+        { id: 'sin_orbit', op: 'math_sin', val: 't_orbit' },
+        { id: 'cos_orbit', op: 'math_cos', val: 't_orbit' },
+        { id: 'sc_x', op: 'math_mul', a: 'sin_orbit', b: 0.8 },
+        { id: 'sc_z', op: 'math_mul', a: 'cos_orbit', b: 0.8 },
+        { id: 't_bob', op: 'math_mul', a: 'val_time', b: 1.3 },
+        { id: 'sin_bob', op: 'math_sin', val: 't_bob' },
+        { id: 'sc_y_wave', op: 'math_mul', a: 'sin_bob', b: 0.1 },
+        { id: 'sc_y', op: 'math_add', a: 'sc_y_wave', b: 0.15 },
+        { id: 'sphere_center', op: 'float3', x: 'sc_x', y: 'sc_y', z: 'sc_z' },
+        { id: 'k_sm', op: 'literal', val: 0.4 },
 
-        // Init loop vars
-        { id: 't_init', op: 'var_set', var: 't', val: 0.0 },
-        { id: 'hit_init', op: 'var_set', var: 'hit', val: 0.0 },
-
-        // Raymarch Loop
+        // ============================================================
+        // Init loop variables and start march
+        // ============================================================
+        { id: 't_init', op: 'var_set', var: 't', val: 0.01, exec_out: 'hit_init' },
+        { id: 'hit_init', op: 'var_set', var: 'hit', val: 0.0, exec_out: 'march_loop' },
         {
           id: 'march_loop',
           op: 'flow_loop',
-          start: 0,
-          end: 32,
-          exec_body: 'dist_calc',
-          exec_completed: 'final_store' // Jump to store on completion
+          count: 80,
+          exec_body: 'body_anchor',
+          exec_completed: 'final_store'
         },
 
-        // BODY
+        // ============================================================
+        // Loop body: evaluate SDF (sphere + plane with smooth min)
+        // ============================================================
+        // Current point along ray
         { id: 'cur_t', op: 'var_get', var: 't' },
-        { id: 'cur_ray', op: 'math_mul', a: 'rd_norm', b: 'cur_t' },
+        { id: 'cur_ray', op: 'math_mul', a: 'rd', b: 'cur_t' },
         { id: 'cur_p', op: 'math_add', a: 'ro', b: 'cur_ray' },
 
-        // Inlined SDF (Sphere)
-        // d = length(p) - radius
-        { id: 'radius', op: 'literal', val: 0.5 },
-        { id: 'p_len', op: 'vec_length', a: 'cur_p' },
-        { id: 'dist_calc', op: 'math_sub', a: 'p_len', b: 'radius', exec_out: 'branch_hit' }, // Executable anchor
+        // Sphere SDF: length(p - center) - radius
+        { id: 'p_sub_c', op: 'math_sub', a: 'cur_p', b: 'sphere_center' },
+        { id: 'len_psc', op: 'vec_length', a: 'p_sub_c' },
+        { id: 'd_sphere', op: 'math_sub', a: 'len_psc', b: 0.4 },
 
-        // Check hit
-        { id: 'epsilon', op: 'literal', val: 0.001 },
-        { id: 'is_hit', op: 'math_lt', a: 'dist_calc', b: 'epsilon' },
+        // Ground plane SDF: p.y - (-0.5) = p.y + 0.5
+        { id: 'cur_py', op: 'vec_swizzle', vec: 'cur_p', channels: 'y' },
+        { id: 'd_plane', op: 'math_add', a: 'cur_py', b: 0.5 },
 
+        // Smooth min: smin(a, b, k) = mix(a,b,h) - k*h*(1-h)
+        //   where h = clamp(0.5 + 0.5*(a-b)/k, 0, 1)
+        { id: 'sm_diff', op: 'math_sub', a: 'd_sphere', b: 'd_plane' },
+        { id: 'sm_div', op: 'math_div', a: 'sm_diff', b: 'k_sm' },
+        { id: 'sm_half', op: 'math_mul', a: 'sm_div', b: 0.5 },
+        { id: 'sm_raw', op: 'math_add', a: 'sm_half', b: 0.5 },
+        { id: 'sm_h', op: 'math_clamp', val: 'sm_raw', min: 0.0, max: 1.0 },
+        { id: 'sm_lerp', op: 'math_mix', a: 'd_sphere', b: 'd_plane', t: 'sm_h' },
+        { id: 'sm_inv', op: 'math_sub', a: 1.0, b: 'sm_h' },
+        { id: 'sm_prod', op: 'math_mul', a: 'sm_h', b: 'sm_inv' },
+        { id: 'sm_corr', op: 'math_mul', a: 'k_sm', b: 'sm_prod' },
+
+        // total_d is the exec anchor for the loop body
+        { id: 'body_anchor', op: 'math_sub', a: 'sm_lerp', b: 'sm_corr', exec_out: 'branch_hit' },
+
+        // Hit check
+        { id: 'is_hit', op: 'math_lt', a: 'body_anchor', b: 0.001 },
         {
           id: 'branch_hit',
           op: 'flow_branch',
           cond: 'is_hit',
-          exec_true: 'hit_true',
-          exec_false: 't_update'
+          exec_true: 'set_hit',
+          exec_false: 'advance_t'
         },
+        { id: 'set_hit', op: 'var_set', var: 'hit', val: 1.0 },
 
-        { id: 'hit_true', op: 'var_set', var: 'hit', val: 1.0 },
+        // Miss: advance ray
+        { id: 'next_t', op: 'math_add', a: 'cur_t', b: 'body_anchor' },
+        { id: 'advance_t', op: 'var_set', var: 't', val: 'next_t' },
 
-        // Miss: t += dist
-        { id: 'next_t', op: 'math_add', a: 'cur_t', b: 'dist_calc' },
-        { id: 't_update', op: 'var_set', var: 't', val: 'next_t' },
+        // ============================================================
+        // Post-loop: compute hit point
+        // ============================================================
+        { id: 'final_t', op: 'var_get', var: 't' },
+        { id: 'hit_ray', op: 'math_mul', a: 'rd', b: 'final_t' },
+        { id: 'hit_p', op: 'math_add', a: 'ro', b: 'hit_ray' },
 
-        // COMPLETED
+        // Recompute individual distances at hit point for blend factor
+        { id: 'hp_sub_c', op: 'math_sub', a: 'hit_p', b: 'sphere_center' },
+        { id: 'hp_len', op: 'vec_length', a: 'hp_sub_c' },
+        { id: 'hp_d_sphere', op: 'math_sub', a: 'hp_len', b: 0.4 },
+        { id: 'hp_py', op: 'vec_swizzle', vec: 'hit_p', channels: 'y' },
+        { id: 'hp_d_plane', op: 'math_add', a: 'hp_py', b: 0.5 },
+
+        // Blend factor (same smin h formula) — 0 = sphere, 1 = plane
+        { id: 'bl_diff', op: 'math_sub', a: 'hp_d_sphere', b: 'hp_d_plane' },
+        { id: 'bl_div', op: 'math_div', a: 'bl_diff', b: 'k_sm' },
+        { id: 'bl_half', op: 'math_mul', a: 'bl_div', b: 0.5 },
+        { id: 'bl_raw', op: 'math_add', a: 'bl_half', b: 0.5 },
+        { id: 'blend_h', op: 'math_clamp', val: 'bl_raw', min: 0.0, max: 1.0 },
+
+        // ============================================================
+        // Normals: analytical blend (sphere normal + plane normal)
+        // ============================================================
+        { id: 'sphere_norm', op: 'vec_normalize', a: 'hp_sub_c' },
+        { id: 'plane_norm', op: 'float3', x: 0.0, y: 1.0, z: 0.0 },
+        { id: 'blended_norm', op: 'math_mix', a: 'sphere_norm', b: 'plane_norm', t: 'blend_h' },
+        { id: 'normal', op: 'vec_normalize', a: 'blended_norm' },
+
+        // ============================================================
+        // Surface color: warm sphere + checkerboard floor
+        // ============================================================
+        { id: 'sphere_col', op: 'float3', x: 0.9, y: 0.45, z: 0.2 },
+
+        // Checkerboard: fract((floor(x) + floor(z)) * 0.5) * 2 → 0 or 1
+        { id: 'hp_x', op: 'vec_swizzle', vec: 'hit_p', channels: 'x' },
+        { id: 'hp_z', op: 'vec_swizzle', vec: 'hit_p', channels: 'z' },
+        { id: 'floor_x', op: 'math_floor', val: 'hp_x' },
+        { id: 'floor_z', op: 'math_floor', val: 'hp_z' },
+        { id: 'floor_sum', op: 'math_add', a: 'floor_x', b: 'floor_z' },
+        { id: 'floor_half', op: 'math_mul', a: 'floor_sum', b: 0.5 },
+        { id: 'floor_frac', op: 'math_fract', val: 'floor_half' },
+        { id: 'checker', op: 'math_mul', a: 'floor_frac', b: 2.0 },
+        { id: 'floor_dark', op: 'float3', x: 0.35, y: 0.35, z: 0.4 },
+        { id: 'floor_light', op: 'float3', x: 0.55, y: 0.55, z: 0.6 },
+        { id: 'floor_col', op: 'math_mix', a: 'floor_dark', b: 'floor_light', t: 'checker' },
+
+        // Blend surface color by proximity
+        { id: 'surface_col', op: 'math_mix', a: 'sphere_col', b: 'floor_col', t: 'blend_h' },
+
+        // ============================================================
+        // Lighting: Lambert diffuse + Blinn-Phong specular
+        // ============================================================
+        { id: 'light_raw', op: 'float3', x: 0.6, y: 0.8, z: -0.4 },
+        { id: 'light_dir', op: 'vec_normalize', a: 'light_raw' },
+        { id: 'ndotl_raw', op: 'vec_dot', a: 'normal', b: 'light_dir' },
+        { id: 'ndotl', op: 'math_max', a: 'ndotl_raw', b: 0.05 },
+
+        // Specular: half-vector method
+        { id: 'neg_rd', op: 'math_mul', a: 'rd', b: -1.0 },
+        { id: 'half_raw', op: 'math_add', a: 'light_dir', b: 'neg_rd' },
+        { id: 'half_dir', op: 'vec_normalize', a: 'half_raw' },
+        { id: 'ndoth_raw', op: 'vec_dot', a: 'normal', b: 'half_dir' },
+        { id: 'ndoth', op: 'math_max', a: 'ndoth_raw', b: 0.0 },
+        { id: 'spec_pow', op: 'math_pow', a: 'ndoth', b: 32.0 },
+        { id: 'specular', op: 'math_mul', a: 'spec_pow', b: 0.4 },
+
+        // Combine diffuse and specular
+        { id: 'diff_contrib', op: 'math_mul', a: 'surface_col', b: 'ndotl' },
+        { id: 'spec_vec', op: 'float3', x: 'specular', y: 'specular', z: 'specular' },
+        { id: 'lit_color', op: 'math_add', a: 'diff_contrib', b: 'spec_vec' },
+
+        // ============================================================
+        // Fog: exponential distance fog
+        // ============================================================
+        { id: 'fog_neg', op: 'math_mul', a: 'final_t', b: -0.15 },
+        { id: 'fog_fac', op: 'math_exp', val: 'fog_neg' },
+        { id: 'fog_col', op: 'float3', x: 0.55, y: 0.62, z: 0.78 },
+        { id: 'fogged', op: 'math_mix', a: 'fog_col', b: 'lit_color', t: 'fog_fac' },
+
+        // ============================================================
+        // Final output: blend hit/miss, write to texture
+        // ============================================================
         { id: 'did_hit', op: 'var_get', var: 'hit' },
-
-        // Color based on hit
-        { id: 'col_hit', op: 'float4', x: 1.0, y: 0.0, z: 0.0, w: 1.0 },
-        { id: 'col_miss', op: 'float4', x: 0.0, y: 0.0, z: 0.0, w: 1.0 },
-
-        {
-          id: 'final_color',
-          op: 'math_mix',
-          a: 'col_miss',
-          b: 'col_hit',
-          t: 'did_hit'
-        },
-
-        // Re-fetch coords for store (to avoid scope issues if blocked in loop)
-        // Ideally we reuse 'coords', but if codegen places it in loop, we might need a fresh fetch or just risk it.
-        // Let's try reusing 'coords' first. If it fails on MSL, we duplicate.
-        { id: 'final_store', op: 'texture_store', tex: 'output_ray', coords: 'coords', value: 'final_color' }
+        { id: 'final_rgb', op: 'math_mix', a: 'fog_col', b: 'fogged', t: 'did_hit' },
+        { id: 'out_r', op: 'vec_swizzle', vec: 'final_rgb', channels: 'x' },
+        { id: 'out_g', op: 'vec_swizzle', vec: 'final_rgb', channels: 'y' },
+        { id: 'out_b', op: 'vec_swizzle', vec: 'final_rgb', channels: 'z' },
+        { id: 'out_rgba', op: 'float4', x: 'out_r', y: 'out_g', z: 'out_b', w: 1.0 },
+        { id: 'final_store', op: 'texture_store', tex: 'output_ray', coords: 'coords', value: 'out_rgba' }
       ]
     }
   ]

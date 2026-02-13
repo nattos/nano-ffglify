@@ -701,10 +701,15 @@ export class WgslGenerator {
       }
       lines.push(`${indent}}`);
     } else if (node.op === 'flow_loop') {
-      const start = this.resolveArg(node, 'start', func, options, ir, 'int', edges);
-      const end = this.resolveArg(node, 'end', func, options, ir, 'int', edges);
       const loopVar = `i_${node.id}`;
-      lines.push(`${indent}for (var ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
+      if (node['count'] !== undefined) {
+        const count = this.resolveArg(node, 'count', func, options, ir, 'int', edges);
+        lines.push(`${indent}for (var ${loopVar} = 0; ${loopVar} < ${count}; ${loopVar}++) {`);
+      } else {
+        const start = this.resolveArg(node, 'start', func, options, ir, 'int', edges);
+        const end = this.resolveArg(node, 'end', func, options, ir, 'int', edges);
+        lines.push(`${indent}for (var ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
+      }
       const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body');
       if (bodyEdge) {
         const bodyNode = func.nodes.find(n => n.id === bodyEdge.to);

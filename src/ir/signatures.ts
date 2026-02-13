@@ -366,7 +366,10 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: {}, output: 'any' }
   ],
   'flow_branch': [{ inputs: { cond: 'boolean' }, output: 'any' }],
-  'flow_loop': [{ inputs: { start: 'int', end: 'int' }, output: 'any' }],
+  'flow_loop': [
+    { inputs: { start: 'int', end: 'int' }, output: 'any' },
+    { inputs: { count: 'int' }, output: 'any' }
+  ],
 
   // Resources
   'resource_get_size': [{ inputs: { resource: 'string' }, output: 'float2' }],

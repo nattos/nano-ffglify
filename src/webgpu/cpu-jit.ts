@@ -413,10 +413,16 @@ require('./intrinsics.js');
   }
 
   private emitLoop(indent: string, node: Node, func: FunctionDef, lines: string[], visited: Set<string>, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]) {
-    const start = this.resolveArg(node, 'start', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
-    const end = this.resolveArg(node, 'end', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
     const loopVar = `loop_${node.id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-    lines.push(`${indent}for (let ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
+    // Support both start/end and count forms
+    if (node['count'] !== undefined) {
+      const count = this.resolveArg(node, 'count', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+      lines.push(`${indent}for (let ${loopVar} = 0; ${loopVar} < ${count}; ${loopVar}++) {`);
+    } else {
+      const start = this.resolveArg(node, 'start', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+      const end = this.resolveArg(node, 'end', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+      lines.push(`${indent}for (let ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
+    }
 
     const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
     const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;

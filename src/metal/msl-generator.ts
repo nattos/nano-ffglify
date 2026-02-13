@@ -887,10 +887,15 @@ export class MslGenerator {
     visited: Set<string>,
     inferredTypes?: InferredTypes
   ) {
-    const start = this.resolveArg(node, 'start', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
-    const end = this.resolveArg(node, 'end', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
     const loopVar = `loop_${this.sanitizeId(node.id, 'var')}`;
-    lines.push(`${indent}for (int ${loopVar} = int(${start}); ${loopVar} < int(${end}); ${loopVar}++) {`);
+    if (node['count'] !== undefined) {
+      const count = this.resolveArg(node, 'count', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      lines.push(`${indent}for (int ${loopVar} = 0; ${loopVar} < int(${count}); ${loopVar}++) {`);
+    } else {
+      const start = this.resolveArg(node, 'start', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      const end = this.resolveArg(node, 'end', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      lines.push(`${indent}for (int ${loopVar} = int(${start}); ${loopVar} < int(${end}); ${loopVar}++) {`);
+    }
 
     const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
     const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;

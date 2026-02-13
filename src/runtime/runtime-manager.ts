@@ -73,6 +73,7 @@ export class RuntimeManager {
   public inputEntries: Map<string, RuntimeInputEntry> = new Map();
 
   private lastFrameTime: number = 0;
+  private elapsedTime: number = 0;
   private frameId: number | null = null;
   private onFrameCallbacks: Set<(texture: GPUTexture) => void> = new Set();
 
@@ -231,6 +232,8 @@ export class RuntimeManager {
     this.pause();
     this.transportState = 'stopped';
     this.frameCount = 0;
+    this.elapsedTime = 0;
+    this.lastFrameTime = 0;
   }
 
   @action
@@ -250,6 +253,13 @@ export class RuntimeManager {
     if (!this.executor || !this.host) return;
 
     const startTime = performance.now();
+
+    // Time management: first-order integration with delta capped at 100ms
+    const rawDeltaMs = this.lastFrameTime > 0 ? (startTime - this.lastFrameTime) : 0;
+    const deltaTime = Math.min(rawDeltaMs / 1000, 0.1);
+    this.elapsedTime += deltaTime;
+    this.inputs.set('time', this.elapsedTime);
+    this.inputs.set('delta_time', deltaTime);
 
     try {
       // Sync dynamic inputs

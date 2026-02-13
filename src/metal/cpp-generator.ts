@@ -566,10 +566,15 @@ export class CppGenerator {
     edges: Edge[],
     inferredTypes?: InferredTypes
   ) {
-    const start = this.resolveArg(node, 'start', func, allFunctions, emitPure, edges, inferredTypes);
-    const end = this.resolveArg(node, 'end', func, allFunctions, emitPure, edges, inferredTypes);
     const loopVar = `loop_${node.id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-    lines.push(`${indent}for (int ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
+    if (node['count'] !== undefined) {
+      const count = this.resolveArg(node, 'count', func, allFunctions, emitPure, edges, inferredTypes);
+      lines.push(`${indent}for (int ${loopVar} = 0; ${loopVar} < ${count}; ${loopVar}++) {`);
+    } else {
+      const start = this.resolveArg(node, 'start', func, allFunctions, emitPure, edges, inferredTypes);
+      const end = this.resolveArg(node, 'end', func, allFunctions, emitPure, edges, inferredTypes);
+      lines.push(`${indent}for (int ${loopVar} = ${start}; ${loopVar} < ${end}; ${loopVar}++) {`);
+    }
 
     const bodyEdge = edges.find(e => e.from === node.id && e.portOut === 'exec_body' && e.type === 'execution');
     const bodyNode = bodyEdge ? func.nodes.find(n => n.id === bodyEdge.to) : undefined;
