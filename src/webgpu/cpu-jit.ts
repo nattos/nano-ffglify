@@ -6,7 +6,8 @@ import { reconstructEdges } from '../ir/utils';
 import { CompilationMetadata, WgslGenerator } from './wgsl-generator';
 import { CompiledTaskFunction, CompiledInitFunction } from './jit-types';
 import { precomputeShaderInfo, precomputeResourceLayout } from './precompute';
-import { inferFunctionTypes, InferredTypes } from '../ir/validator';
+import { inferFunctionTypes, InferredTypes, analyzeFunction, FunctionAnalysis } from '../ir/validator';
+import { BUILTIN_TYPES, BUILTIN_CPU_ALLOWED } from '../ir/builtin-schemas';
 
 export interface CompiledJitResult {
   initCode: string;
@@ -20,6 +21,7 @@ export interface CompiledJitResult {
  */
 export class CpuJitCompiler {
   private ir?: IRDocument;
+  private functionAnalysis = new Map<string, FunctionAnalysis>();
 
   compile(ir: IRDocument, entryPointId: string): CompiledJitResult {
     const rawBody = this.compileToSource(ir, entryPointId);
@@ -62,7 +64,13 @@ export class CpuJitCompiler {
 
   compileToSource(ir: IRDocument, entryPointId: string): string {
     this.ir = ir;
+    this.functionAnalysis.clear();
     const allFunctions = ir.functions;
+
+    allFunctions.forEach(f => {
+      this.functionAnalysis.set(f.id, analyzeFunction(f, ir));
+    });
+
     const func = allFunctions.find((f: any) => f.id === entryPointId);
     if (!func) throw new Error(`Entry point '${entryPointId}' not found`);
 
@@ -109,8 +117,8 @@ export class CpuJitCompiler {
     for (const fid of reachable) {
       const f = allFunctions.find((func: any) => func.id === fid);
       if (f) {
-        const inferredTypes = inferFunctionTypes(f, ir);
-        this.emitFunction(f, lines, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes);
+        const analysis = this.functionAnalysis.get(f.id)!;
+        this.emitFunction(f, lines, sanitizeId, nodeResId, funcName, allFunctions, analysis.inferredTypes);
         lines.push('');
       }
     }
@@ -957,6 +965,18 @@ require('./intrinsics.js');
       const valExpr = this.resolveArg(node, `args.${input.id}`, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       parts.push(`'${input.id}': ${valExpr}`);
     });
+
+    // Automatically inject used built-ins
+    const analysis = this.functionAnalysis.get(targetId);
+    if (analysis && targetFunc.type === 'shader') {
+      const standardBuiltins = ['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'];
+      analysis.usedBuiltins.forEach(b => {
+        if (standardBuiltins.includes(b)) {
+          parts.push(`'${b}': ctx.builtins['${b}']`);
+        }
+      });
+    }
+
     return `{ ${parts.join(', ')} }`;
   }
 }

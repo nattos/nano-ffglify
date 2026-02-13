@@ -54,18 +54,28 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
   return errors;
 };
 
+export interface FunctionAnalysis {
+  inferredTypes: InferredTypes;
+  usedBuiltins: Set<string>;
+}
+
 export const inferFunctionTypes = (func: FunctionDef, ir: IRDocument): InferredTypes => {
+  return analyzeFunction(func, ir).inferredTypes;
+};
+
+export const analyzeFunction = (func: FunctionDef, ir: IRDocument): FunctionAnalysis => {
   const resourceIds = new Set([
     ...(ir.resources || []).map(r => r.id),
     ...(ir.inputs || []).map(i => i.id)
   ]);
   const cache: InferredTypes = new Map();
+  const usedBuiltins = new Set<string>();
   const errors: LogicValidationError[] = [];
   const edges = reconstructEdges(func, ir);
   func.nodes.forEach(node => {
-    resolveNodeType(node.id, func, ir, cache, resourceIds, errors, edges);
+    resolveNodeType(node.id, func, ir, cache, resourceIds, errors, edges, usedBuiltins);
   });
-  return cache;
+  return { inferredTypes: cache, usedBuiltins };
 };
 
 export const validateIR = (doc: IRDocument): LogicValidationError[] => {
@@ -86,7 +96,8 @@ const resolveNodeType = (
   cache: TypeCache,
   resourceIds: Set<string>,
   errors: LogicValidationError[],
-  edges: Edge[]
+  edges: Edge[],
+  usedBuiltins: Set<string> = new Set()
 ): ValidationType => {
   const functionId = func.id;
   if (cache.has(nodeId)) return cache.get(nodeId)!;
@@ -118,7 +129,7 @@ const resolveNodeType = (
   // 1. Gather Input Types from Edges
   const incomingEdges = edges.filter(e => e.to === nodeId && e.type === 'data');
   incomingEdges.forEach(edge => {
-    const srcType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors, edges);
+    const srcType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors, edges, usedBuiltins);
     const port = edge.portIn;
     // Handle path resolution: if edge is to 'args.foo', update 'foo' in inputTypes
     if (port.startsWith('args.')) {
@@ -272,6 +283,7 @@ const resolveNodeType = (
 
     if (node.op === 'builtin_get') {
       const name = node['name'];
+      usedBuiltins.add(name);
       const type = BUILTIN_TYPES[name];
       if (type) {
         cache.set(nodeId, type as ValidationType);

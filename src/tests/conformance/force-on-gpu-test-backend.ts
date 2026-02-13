@@ -27,7 +27,7 @@ const getComponentCount = (type: string): number => {
 export const ForceOntoGPUTestBackend: TestBackend = {
   name: 'ForceOntoGPU',
 
-  createContext: async (ir: IRDocument, inputs?: Map<string, RuntimeValue>) => {
+  createContext: async (ir: IRDocument, inputs?: Map<string, RuntimeValue>, builtins?: Map<string, RuntimeValue>) => {
     // Validate IR
     const errors = validateIR(ir);
     const criticalErrors = errors.filter(e => e.severity === 'error');
@@ -37,7 +37,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
     }
 
     // Reuse WebGpuBackend's context creation (device init, resource alloc)
-    const ctx = await WebGpuBackend.createContext(ir, inputs);
+    const ctx = await WebGpuBackend.createContext(ir, inputs, builtins);
     (ctx as any)._ir = ir;
     return ctx;
   },
@@ -53,6 +53,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
 
     const gpuKernelId = `_gpu_kernel_${originalEntryPointId}`;
     const captureBufferId = 'b_force_gpu_capture';
+    const RETURN_CAPTURE_VAR = '__force_gpu_return';
 
     // 1. Analyze for Variable Capture
     const nodeTypes = inferFunctionTypes(originalFunc, ir);
@@ -60,10 +61,11 @@ export const ForceOntoGPUTestBackend: TestBackend = {
     let currentOffset = 0;
 
     originalFunc.nodes.forEach(n => {
-      if (n.op === 'var_set') {
-        const varId = n['var'];
+      if (n.op === 'var_set' || n.op === 'func_return') {
+        const varId = n.op === 'var_set' ? n['var'] : RETURN_CAPTURE_VAR;
         if (!varCaptures.has(varId)) {
-          const type = nodeTypes.get(n.id) || nodeTypes.get(n['val']) || 'float';
+          const valId = n['val'];
+          const type = nodeTypes.get(valId) || 'float';
           varCaptures.set(varId, { offset: currentOffset, type: type as any });
           currentOffset += getComponentCount(type as string);
         }
@@ -92,71 +94,59 @@ export const ForceOntoGPUTestBackend: TestBackend = {
     originalFunc.id = gpuKernelId;
     originalFunc.type = 'shader';
 
-    const newNodes: IRNode[] = [];
-    originalFunc.nodes.forEach(node => {
-      newNodes.push(node);
-      if (node.op === 'var_set') {
-        const varId = node['var'];
-        const capture = varCaptures.get(varId)!;
-        const count = getComponentCount(capture.type);
+    const injectCaptureNodes = (nodes: IRNode[], lastNodeId: string, offset: number, valId: string, type: any, count: number) => {
+      if (count === 1) {
+        const storeId = `capture_${lastNodeId}_${valId}`;
+        nodes.push({
+          id: storeId,
+          op: 'buffer_store',
+          buffer: captureBufferId,
+          index: offset,
+          value: valId,
+          exec_in: lastNodeId
+        });
+      } else {
+        for (let i = 0; i < count; i++) {
+          const extractId = `capture_extract_${lastNodeId}_${valId}_${i}`;
+          const storeId = `capture_store_${lastNodeId}_${valId}_${i}`;
+          const op = (type as string).startsWith('array') ? 'array_extract' : 'vec_get_element';
 
-        const valId = node['val'];
-        let lastNodeId = node.id;
-        const finalNext = (node as any).exec_out || (node as any).next || (node as any)._next;
-        delete (node as any).exec_out;
-        delete (node as any).next;
-        delete (node as any)._next;
+          const extractNode: any = { id: extractId, op: op, index: i };
+          if (op === 'array_extract') extractNode.array = valId;
+          else extractNode.vec = valId;
 
-        if (count === 1) {
-          const storeId = `capture_${node.id}`;
-          newNodes.push({
+          nodes.push(extractNode);
+          nodes.push({
             id: storeId,
             op: 'buffer_store',
             buffer: captureBufferId,
-            index: capture.offset,
-            value: valId,
-            exec_in: lastNodeId
+            index: offset + i,
+            value: extractId,
+            exec_in: i === 0 ? lastNodeId : `capture_store_${lastNodeId}_${valId}_${i - 1}`
           });
-          lastNodeId = storeId;
-        } else {
-          for (let i = 0; i < count; i++) {
-            const extractId = `capture_extract_${node.id}_${i}`;
-            const storeId = `capture_store_${node.id}_${i}`;
-            const op = (capture.type as string).startsWith('array') ? 'array_extract' : 'vec_get_element';
-
-            const extractNode: any = {
-              id: extractId,
-              op: op,
-              index: i
-            };
-
-            if (op === 'array_extract') {
-              extractNode.array = valId;
-            } else {
-              extractNode.vec = valId;
-            }
-
-            newNodes.push(extractNode);
-
-            newNodes.push({
-              id: storeId,
-              op: 'buffer_store',
-              buffer: captureBufferId,
-              index: capture.offset + i,
-              value: extractId,
-              exec_in: lastNodeId
-            });
-            lastNodeId = storeId;
-          }
-        }
-
-        // Fix up the next node in the chain
-        const lastCreatedNode = newNodes[newNodes.length - 1];
-        if (finalNext) {
-          (lastCreatedNode as any).exec_out = finalNext;
         }
       }
+    };
+
+    const newNodes: IRNode[] = [];
+    originalFunc.nodes.forEach(node => {
+      if (node.op === 'var_set') {
+        newNodes.push(node);
+        const varId = node['var'];
+        const capture = varCaptures.get(varId)!;
+        const count = getComponentCount(capture.type);
+        injectCaptureNodes(newNodes, node.id, capture.offset, node['val'], capture.type, count);
+      } else if (node.op === 'func_return') {
+        const capture = varCaptures.get(RETURN_CAPTURE_VAR)!;
+        const count = getComponentCount(capture.type);
+        // Inject prefix stores BEFORE the return
+        injectCaptureNodes(newNodes, (node as any).exec_in, capture.offset, node['val'], capture.type, count);
+        newNodes.push(node);
+      } else {
+        newNodes.push(node);
+      }
     });
+
     originalFunc.nodes = newNodes;
 
     // 4. Create CPU Trampoline
@@ -199,6 +189,12 @@ export const ForceOntoGPUTestBackend: TestBackend = {
     ir.functions.push(trampolineFunc);
     ir.entryPoint = trampolineId;
 
+    // Mark all resources reachable by GPU as gpuDirty so sync works
+    ir.resources.forEach(res => {
+      const runtimeRes = ctx.getResource(res.id);
+      if (runtimeRes) (runtimeRes as any).gpuDirty = true;
+    });
+
     // 5. Build and execute via WebGpuBackend
     ctx.ir = ir;
     await WebGpuBackend.run(ctx, trampolineId);
@@ -211,20 +207,25 @@ export const ForceOntoGPUTestBackend: TestBackend = {
       }
       varCaptures.forEach((cap, varId) => {
         const count = getComponentCount(cap.type);
+        let val: any;
         if (count === 1) {
-          ctx.setVar(varId, captureRes.data![cap.offset]);
+          val = captureRes.data![cap.offset];
         } else {
           const slice = captureRes.data!.slice(cap.offset, cap.offset + count);
-          ctx.setVar(varId, Array.from(slice));
+          val = Array.from(slice);
+        }
+
+        if (varId === RETURN_CAPTURE_VAR) {
+          ctx.result = val;
+        } else {
+          ctx.setVar(varId, val);
         }
       });
     }
-    // Clear result so test runner looks at variables
-    ctx.result = undefined;
   },
 
-  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map()) => {
-    const ctx = await ForceOntoGPUTestBackend.createContext(ir, inputs);
+  execute: async (ir: IRDocument, entryPoint: string, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    const ctx = await ForceOntoGPUTestBackend.createContext(ir, inputs, builtins);
     await ForceOntoGPUTestBackend.run(ctx, entryPoint);
     return ctx;
   }

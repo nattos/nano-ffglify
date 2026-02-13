@@ -1,6 +1,5 @@
-
 import { describe, it, expect } from 'vitest';
-import { validateIR, inferFunctionTypes } from '../../ir/validator';
+import { validateIR, inferFunctionTypes, analyzeFunction } from '../../ir/validator';
 import { IRDocument } from '../../ir/types';
 import { BUILTIN_TYPES, BUILTIN_CPU_ALLOWED } from '../../ir/builtin-schemas';
 
@@ -23,6 +22,20 @@ describe('Validator Basic Checks', () => {
     }],
     resources: [],
     inputs: []
+  });
+
+  describe('Function Analysis', () => {
+    it('should track used built-ins', () => {
+      const ir = createIR('shader', [
+        { id: 'b1', op: 'builtin_get', name: 'time' },
+        { id: 'b2', op: 'builtin_get', name: 'delta_time' },
+        { id: 'v1', op: 'literal', val: 1.0 }
+      ]);
+      const analysis = analyzeFunction(ir.functions[0], ir);
+      expect(analysis.usedBuiltins).toContain('time');
+      expect(analysis.usedBuiltins).toContain('delta_time');
+      expect(analysis.usedBuiltins.size).toBe(2);
+    });
   });
 
   describe('Built-in Availability & Types', () => {

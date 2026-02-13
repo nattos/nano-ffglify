@@ -28,6 +28,7 @@ export interface WgslOptions {
   storageResources?: Set<string>; // Pre-calculated resources used with texture_store
   sampledResources?: Set<string>; // Pre-calculated resources used with texture_sample/texture_load
   fullIr?: IRDocument; // Full IR document for global context
+  usedBuiltins?: Set<string>;
 }
 
 export interface CompilationMetadata {
@@ -62,7 +63,16 @@ export class WgslGenerator {
     if (!entryFunc) throw new Error(`Entry point function '${entryPointId}' not found`);
     options.entryPointId = entryPointId;
 
-    this.allUsedBuiltins.clear();
+    this.allUsedBuiltins = options.usedBuiltins || new Set<string>();
+
+    if (!options.usedBuiltins) {
+      // Fallback: manual scan built-ins across all potential functions
+      functions.forEach(f => {
+        f.nodes.forEach(n => {
+          if (n.op === 'builtin_get') this.allUsedBuiltins.add(n['name']);
+        });
+      });
+    }
 
     const fullIr: IRDocument = {
       version: '1.0',
@@ -74,13 +84,6 @@ export class WgslGenerator {
       ...ir,
       resources: Array.from(options.resourceDefs?.values() || ir?.resources || [])
     };
-
-    // 1. Map built-ins across all potential functions
-    functions.forEach(f => {
-      f.nodes.forEach(n => {
-        if (n.op === 'builtin_get') this.allUsedBuiltins.add(n['name']);
-      });
-    });
 
     const lines: string[] = []; // Top-level things: structs, samplers
     const functionLines: string[] = []; // Actual function code
@@ -189,10 +192,8 @@ export class WgslGenerator {
 
       // Standard built-ins supported via uniform/storage buffer
       const standardBuiltins = ['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'];
-      console.log(`[WgslGen] allUsedBuiltins:`, Array.from(this.allUsedBuiltins));
       standardBuiltins.forEach(b => {
         if (this.allUsedBuiltins.has(b)) {
-          console.log(`[WgslGen] Injecting standard builtin: ${b}`);
           docInputs.push({ id: b, type: 'float' });
         }
       });

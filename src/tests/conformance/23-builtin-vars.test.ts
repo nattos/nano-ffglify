@@ -17,24 +17,26 @@ describe('Conformance: Built-in Variables', () => {
     ], 'res', val, availableBackends, new Map([[name, val]]));
   });
 
-  describe('GPU-only Built-ins on CPU', () => {
-    const gpuBuiltins = [
-      { name: 'position', type: 'float4' },
-      { name: 'vertex_index', type: 'int' },
-      { name: 'instance_index', type: 'int' },
-      { name: 'global_invocation_id', type: 'float3' },
-      { name: 'local_invocation_id', type: 'float3' },
-      { name: 'workgroup_id', type: 'float3' },
-      { name: 'local_invocation_index', type: 'int' },
-      { name: 'num_workgroups', type: 'float3' },
-      { name: 'frag_coord', type: 'float4' },
-      { name: 'front_facing', type: 'bool' }, // Use 'bool' for local variable type
-    ];
+  if (cpuBackends.length > 0) {
+    describe('GPU-only Built-ins on CPU', () => {
+      const gpuBuiltins = [
+        { name: 'position', type: 'float4' },
+        { name: 'vertex_index', type: 'int' },
+        { name: 'instance_index', type: 'int' },
+        { name: 'global_invocation_id', type: 'float3' },
+        { name: 'local_invocation_id', type: 'float3' },
+        { name: 'workgroup_id', type: 'float3' },
+        { name: 'local_invocation_index', type: 'int' },
+        { name: 'num_workgroups', type: 'float3' },
+        { name: 'frag_coord', type: 'float4' },
+        { name: 'front_facing', type: 'bool' }, // Use 'bool' for local variable type
+      ];
 
-    gpuBuiltins.forEach(({ name, type }) => {
-      runGraphErrorTest(`should FAIL when ${name} is used on CPU`, [
-        { id: 'res', op: 'builtin_get', name }
-      ], new RegExp(`GPU Built-in '${name}' is not available in CPU context|not allowed in CPU context|Builtin '${name}' is not allowed`), [], [], [{ id: 'res', type }], cpuBackends);
+      gpuBuiltins.forEach(({ name, type }) => {
+        runGraphErrorTest(`should FAIL when ${name} is used on CPU`, [
+          { id: 'res', op: 'builtin_get', name }
+        ], new RegExp(`GPU Built-in '${name}' is not available in CPU context|not allowed in CPU context|Builtin '${name}' is not allowed`), [], [], [{ id: 'res', type }], cpuBackends);
+      });
     });
-  });
+  }
 });
