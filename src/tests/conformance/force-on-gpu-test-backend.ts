@@ -102,6 +102,14 @@ export const ForceOntoGPUTestBackend: TestBackend = {
     originalFunc.id = gpuKernelId;
     originalFunc.type = 'shader';
 
+    // Update recursive calls
+    originalFunc.nodes = originalFunc.nodes.map(n => {
+      if (n.op === 'call_func' && n['func'] === originalEntryPointId) {
+        return { ...n, func: gpuKernelId };
+      }
+      return n;
+    });
+
     const injectCaptureNodes = (nodes: IRNode[], lastNodeId: string, offset: number, valId: string, type: any, count: number) => {
       if (count === 1) {
         const storeId = `capture_${lastNodeId}_${valId}`;

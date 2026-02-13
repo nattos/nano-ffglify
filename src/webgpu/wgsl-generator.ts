@@ -889,12 +889,9 @@ export class WgslGenerator {
 
         // Detect if source is integer array to use helper
         if (node.op === 'float4x4') {
-          // Heuristic: check if resolved expression looks like integer array or look up source node
-          const srcNode = func.nodes.find(n => n.id === vals);
-          // If source is array_construct with int fill
-          if (srcNode && (srcNode.op === 'array_construct' || srcNode.op === 'struct_construct')) {
-            const fill = srcNode['fill'];
-            if (typeof fill === 'number' && Number.isInteger(fill)) return `mat4_from_array_i32(${val})`;
+          const srcType = options.nodeTypes?.get(vals);
+          if (srcType?.includes('int') || srcType?.includes('i32')) {
+            return `mat4_from_array_i32(${val})`;
           }
         }
 
