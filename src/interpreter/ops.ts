@@ -291,13 +291,12 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     if (typeof val === 'number') return val !== 0;
     return false;
   },
-  'static_cast_uint': (ctx, args) => {
-    const val = args.val;
-    if (typeof val === 'boolean') return val ? 1 : 0;
-    if (typeof val === 'number') return Math.max(0, val | 0);
-    return 0;
-  },
-
+  'static_cast_int2': (ctx, args) => (args.val as number[]).map(v => Math.trunc(v)) as VectorValue,
+  'static_cast_int3': (ctx, args) => (args.val as number[]).map(v => Math.trunc(v)) as VectorValue,
+  'static_cast_int4': (ctx, args) => (args.val as number[]).map(v => Math.trunc(v)) as VectorValue,
+  'static_cast_float2': (ctx, args) => (args.val as number[]).map(v => Number(v)) as VectorValue,
+  'static_cast_float3': (ctx, args) => (args.val as number[]).map(v => Number(v)) as VectorValue,
+  'static_cast_float4': (ctx, args) => (args.val as number[]).map(v => Number(v)) as VectorValue,
   'vec_get_element': (ctx, args) => {
     const vec = args.vec as any;
     const index = args.index as number;
@@ -393,9 +392,12 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     return [args.x, args.y, args.z, args.w] as VectorValue;
   },
 
+  'int2': (ctx, args) => [Math.trunc(args.x), Math.trunc(args.y)] as VectorValue,
+  'int3': (ctx, args) => [Math.trunc(args.x), Math.trunc(args.y), Math.trunc(args.z)] as VectorValue,
+  'int4': (ctx, args) => [Math.trunc(args.x), Math.trunc(args.y), Math.trunc(args.z), Math.trunc(args.w)] as VectorValue,
+
   'float': (ctx, args) => args.val,
   'int': (ctx, args) => args.val,
-  'uint': (ctx, args) => args.val,
   'bool': (ctx, args) => args.val,
   'string': (ctx, args) => args.val,
 

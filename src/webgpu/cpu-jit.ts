@@ -47,11 +47,14 @@ export class CpuJitCompiler {
   private hasResult(op: string): boolean {
     if (op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('mat_') || op.startsWith('quat_')) return true;
     const valueOps = [
-      'float', 'int', 'uint', 'bool', 'literal', 'loop_index',
+      'float', 'int', 'bool', 'literal', 'loop_index',
       'float2', 'float3', 'float4',
+      'int2', 'int3', 'int4',
       'float3x3', 'float4x4',
       'mat_mul', 'mat_extract',
-      'static_cast_float', 'static_cast_int', 'static_cast_uint', 'static_cast_bool',
+      'static_cast_float', 'static_cast_int', 'static_cast_bool',
+      'static_cast_int2', 'static_cast_int3', 'static_cast_int4',
+      'static_cast_float2', 'static_cast_float3', 'static_cast_float4',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length', 'array_set',
       'var_get', 'buffer_load', 'texture_load', 'texture_sample', 'call_func', 'vec_swizzle',
@@ -285,7 +288,20 @@ require('./intrinsics.js');
 
     // Local Variables
     for (const v of f.localVars) {
-      const init = v.initialValue !== undefined ? JSON.stringify(v.initialValue) : '0';
+      let init: string;
+      if (v.initialValue !== undefined) {
+        init = JSON.stringify(v.initialValue);
+      } else {
+        // Initialize vectors/matrices to proper zero arrays
+        const t = v.type?.toLowerCase() || 'float';
+        if (t === 'float2' || t === 'int2') init = '[0, 0]';
+        else if (t === 'float3' || t === 'int3') init = '[0, 0, 0]';
+        else if (t === 'float4' || t === 'int4') init = '[0, 0, 0, 0]';
+        else if (t === 'float3x3') init = '[0,0,0,0,0,0,0,0,0]';
+        else if (t === 'float4x4') init = '[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]';
+        else if (t === 'bool' || t === 'boolean') init = 'false';
+        else init = '0';
+      }
       lines.push(`  let ${sanitizeId(v.id, 'var')
         } = ${init}; `);
     }
@@ -812,12 +828,20 @@ require('./intrinsics.js');
       case 'static_cast_float': return `Number(${val()})`;
       case 'static_cast_int': return `(${val()} | 0)`;
       case 'mat_inverse': return a('val');
-      case 'static_cast_uint': return `Math.abs(Math.trunc(${val()}))`;
       case 'static_cast_bool': return `Boolean(${val()})`;
+      case 'static_cast_int2':
+      case 'static_cast_int3':
+      case 'static_cast_int4': return `(${val()}).map(v => Math.trunc(v))`;
+      case 'static_cast_float2':
+      case 'static_cast_float3':
+      case 'static_cast_float4': return `(${val()}).map(v => Number(v))`;
 
       case 'float2': return `[${a('x')}, ${a('y')}]`;
       case 'float3': return `[${a('x')}, ${a('y')}, ${a('z')}]`;
       case 'float4': return `[${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}]`;
+      case 'int2': return `[Math.trunc(${a('x')}), Math.trunc(${a('y')})]`;
+      case 'int3': return `[Math.trunc(${a('x')}), Math.trunc(${a('y')}), Math.trunc(${a('z')})]`;
+      case 'int4': return `[Math.trunc(${a('x')}), Math.trunc(${a('y')}), Math.trunc(${a('z')}), Math.trunc(${a('w')})]`;
       case 'float3x3':
       case 'float4x4': {
         const size = node.op === 'float3x3' ? 9 : 16;
@@ -934,7 +958,7 @@ require('./intrinsics.js');
     if (mode === 'float') {
       return rawArgs.map((arg, i) => {
         const t = argTypes[i];
-        if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool' || t === 'boolean') {
+        if (t === 'int' || t === 'i32' || t === 'bool' || t === 'boolean' || t === 'int2' || t === 'int3' || t === 'int4') {
           return `Number(${arg})`;
         }
         return arg;
@@ -944,7 +968,7 @@ require('./intrinsics.js');
       if (hasFloat) {
         return rawArgs.map((arg, i) => {
           const t = argTypes[i];
-          if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool') {
+          if (t === 'int' || t === 'i32' || t === 'bool' || t === 'int2' || t === 'int3' || t === 'int4') {
             return `Number(${arg})`;
           }
           return arg;

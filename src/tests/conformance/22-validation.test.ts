@@ -95,7 +95,7 @@ describe('Strict Type Validation', () => {
       inputs: [
         { id: 'f', type: 'float' },
         { id: 'i', type: 'int' },
-        { id: 'u', type: 'uint' },
+        { id: 'u', type: 'int' },
         { id: 'b', type: 'bool' },
         { id: 'a', type: 'array<float, 4>' }
       ],

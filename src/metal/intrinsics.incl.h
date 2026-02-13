@@ -547,9 +547,15 @@ struct EvalContext {
   std::vector<float> returnValue;
 
   void setReturnValue(float val) { returnValue = {val}; }
+  void setReturnValue(int val) { returnValue = {static_cast<float>(val)}; }
 
   template <size_t N> void setReturnValue(const std::array<float, N> &val) {
     returnValue.assign(val.begin(), val.end());
+  }
+
+  template <size_t N> void setReturnValue(const std::array<int, N> &val) {
+    returnValue.resize(N);
+    for (size_t i = 0; i < N; i++) returnValue[i] = static_cast<float>(val[i]);
   }
 
   void resizeResource(size_t idx, int newSize, int stride, bool clearData) {

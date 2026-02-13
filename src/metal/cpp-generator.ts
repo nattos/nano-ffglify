@@ -318,11 +318,14 @@ export class CppGenerator {
     switch (irType) {
       case 'float': case 'f32': return 'float';
       case 'int': case 'i32': return 'int';
-      case 'uint': case 'u32': return 'unsigned int';
+
       case 'bool': return 'bool';
       case 'float2': return 'std::array<float, 2>';
       case 'float3': return 'std::array<float, 3>';
       case 'float4': return 'std::array<float, 4>';
+      case 'int2': return 'std::array<int, 2>';
+      case 'int3': return 'std::array<int, 3>';
+      case 'int4': return 'std::array<int, 4>';
       case 'float3x3': return 'std::array<float, 9>';
       case 'float4x4': return 'std::array<float, 16>';
       default:
@@ -411,9 +414,12 @@ export class CppGenerator {
 
   private hasResult(op: string): boolean {
     const valueOps = [
-      'float', 'int', 'uint', 'bool', 'literal', 'loop_index',
+      'float', 'int', 'bool', 'literal', 'loop_index',
       'float2', 'float3', 'float4', 'float3x3', 'float4x4',
+      'int2', 'int3', 'int4',
       'static_cast_float', 'static_cast_int', 'static_cast_bool',
+      'static_cast_int2', 'static_cast_int3', 'static_cast_int4',
+      'static_cast_float2', 'static_cast_float3', 'static_cast_float4',
       'var_get', 'buffer_load', 'vec_swizzle',
       'vec_get_element', 'call_func',
       'struct_construct', 'struct_extract',
@@ -449,6 +455,12 @@ export class CppGenerator {
         return 'std::array<float, 3>';
       case 'float4':
         return 'std::array<float, 4>';
+      case 'int2':
+        return 'std::array<int, 2>';
+      case 'int3':
+        return 'std::array<int, 3>';
+      case 'int4':
+        return 'std::array<int, 4>';
       // vec_normalize preserves input dimension - use auto
       // Default to auto for type inference
       default:
@@ -815,8 +827,17 @@ export class CppGenerator {
     if (mode === 'float') {
       return rawArgs.map((arg, i) => {
         const type = argTypes[i];
-        if (type === 'int' || type === 'uint' || type === 'boolean') {
+        if (type === 'int' || type === 'boolean') {
           return `static_cast<float>(${arg})`;
+        }
+        if (type === 'int2') {
+          return `std::array<float, 2>{static_cast<float>(${arg}[0]), static_cast<float>(${arg}[1])}`;
+        }
+        if (type === 'int3') {
+          return `std::array<float, 3>{static_cast<float>(${arg}[0]), static_cast<float>(${arg}[1]), static_cast<float>(${arg}[2])}`;
+        }
+        if (type === 'int4') {
+          return `std::array<float, 4>{static_cast<float>(${arg}[0]), static_cast<float>(${arg}[1]), static_cast<float>(${arg}[2]), static_cast<float>(${arg}[3])}`;
         }
         return arg;
       });
@@ -825,8 +846,17 @@ export class CppGenerator {
       if (hasFloat) {
         return rawArgs.map((arg, i) => {
           const type = argTypes[i];
-          if (type === 'int' || type === 'uint' || type === 'boolean') {
+          if (type === 'int' || type === 'boolean') {
             return `static_cast<float>(${arg})`;
+          }
+          if (type === 'int2') {
+            return `std::array<float, 2>{static_cast<float>(${arg}[0]), static_cast<float>(${arg}[1])}`;
+          }
+          if (type === 'int3') {
+            return `std::array<float, 3>{static_cast<float>(${arg}[0]), static_cast<float>(${arg}[1]), static_cast<float>(${arg}[2])}`;
+          }
+          if (type === 'int4') {
+            return `std::array<float, 4>{static_cast<float>(${arg}[0]), static_cast<float>(${arg}[1]), static_cast<float>(${arg}[2]), static_cast<float>(${arg}[3])}`;
           }
           return arg;
         });
@@ -1030,9 +1060,38 @@ export class CppGenerator {
       case 'static_cast_int': return `static_cast<int>(static_cast<int32_t>(static_cast<int64_t>(${val()})))`;
       case 'static_cast_bool': return `((${val()}) != 0.0f ? 1.0f : 0.0f)`;
 
+      case 'static_cast_int2': {
+        const v = val();
+        return `std::array<int, 2>{static_cast<int>(${v}[0]), static_cast<int>(${v}[1])}`;
+      }
+      case 'static_cast_int3': {
+        const v = val();
+        return `std::array<int, 3>{static_cast<int>(${v}[0]), static_cast<int>(${v}[1]), static_cast<int>(${v}[2])}`;
+      }
+      case 'static_cast_int4': {
+        const v = val();
+        return `std::array<int, 4>{static_cast<int>(${v}[0]), static_cast<int>(${v}[1]), static_cast<int>(${v}[2]), static_cast<int>(${v}[3])}`;
+      }
+      case 'static_cast_float2': {
+        const v = val();
+        return `std::array<float, 2>{static_cast<float>(${v}[0]), static_cast<float>(${v}[1])}`;
+      }
+      case 'static_cast_float3': {
+        const v = val();
+        return `std::array<float, 3>{static_cast<float>(${v}[0]), static_cast<float>(${v}[1]), static_cast<float>(${v}[2])}`;
+      }
+      case 'static_cast_float4': {
+        const v = val();
+        return `std::array<float, 4>{static_cast<float>(${v}[0]), static_cast<float>(${v}[1]), static_cast<float>(${v}[2]), static_cast<float>(${v}[3])}`;
+      }
+
       case 'float2': return `std::array<float, 2>{${a('x')}, ${a('y')}}`;
       case 'float3': return `std::array<float, 3>{${a('x')}, ${a('y')}, ${a('z')}}`;
       case 'float4': return `std::array<float, 4>{${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}}`;
+
+      case 'int2': return `std::array<int, 2>{static_cast<int>(${a('x')}), static_cast<int>(${a('y')})}`;
+      case 'int3': return `std::array<int, 3>{static_cast<int>(${a('x')}), static_cast<int>(${a('y')}), static_cast<int>(${a('z')})}`;
+      case 'int4': return `std::array<int, 4>{static_cast<int>(${a('x')}), static_cast<int>(${a('y')}), static_cast<int>(${a('z')}), static_cast<int>(${a('w')})}`;
 
       case 'float3x3': {
         const vals = node['vals'];
@@ -1436,7 +1495,19 @@ export class CppGenerator {
       for (let i = 0; i < 9; i++) {
         lines.push(`${indent}_shader_args.push_back(${argExpr}[${i}]);`);
       }
-    } else if (irType === 'int' || irType === 'uint' || irType === 'boolean') {
+    } else if (irType === 'int4') {
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[0]));`);
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[1]));`);
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[2]));`);
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[3]));`);
+    } else if (irType === 'int3') {
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[0]));`);
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[1]));`);
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[2]));`);
+    } else if (irType === 'int2') {
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[0]));`);
+      lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[1]));`);
+    } else if (irType === 'int' || irType === 'boolean') {
       lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}));`);
     } else {
       // float or unknown

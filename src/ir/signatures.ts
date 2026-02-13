@@ -4,12 +4,14 @@ import { BUILTIN_TYPES } from './builtin-schemas';
 export type ValidationType =
   | 'float'  // Generic scalar (float)
   | 'int'     // Integer (for loops, strict checks)
-  | 'uint'    // Unsigned Integer
   | 'boolean'
   | 'string'
   | 'float2'
   | 'float3'
   | 'float4'
+  | 'int2'
+  | 'int3'
+  | 'int4'
   | 'float3x3'
   | 'float4x4'
   | 'struct' // Generic Struct
@@ -23,7 +25,7 @@ export interface OpSignature {
 }
 
 const genMathVariants = (op: BuiltinOp, returnType: 'same' | 'boolean_vec'): OpSignature[] => {
-  const types: ValidationType[] = ['float', 'float2', 'float3', 'float4', 'int'];
+  const types: ValidationType[] = ['float', 'float2', 'float3', 'float4', 'int', 'int2', 'int3', 'int4'];
   const variants: OpSignature[] = [];
 
   // Standard (T, T) -> T (or bvec/bool)
@@ -51,7 +53,7 @@ const genMathVariants = (op: BuiltinOp, returnType: 'same' | 'boolean_vec'): OpS
 };
 
 const genUnaryVariants = (op: BuiltinOp, returnType: 'same' | 'boolean_vec'): OpSignature[] => {
-  const types: ValidationType[] = ['float', 'float2', 'float3', 'float4', 'int'];
+  const types: ValidationType[] = ['float', 'float2', 'float3', 'float4', 'int', 'int2', 'int3', 'int4'];
   return types.map(t => {
     let out = t;
     if (returnType === 'boolean_vec') {
@@ -161,32 +163,47 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { val: 'int' }, output: 'float' },
     { inputs: { val: 'boolean' }, output: 'float' }
   ],
-  'static_cast_uint': [
-    { inputs: { val: 'float' }, output: 'uint' },
-    { inputs: { val: 'int' }, output: 'uint' },
-    { inputs: { val: 'boolean' }, output: 'uint' }
-  ],
   'static_cast_bool': [
     { inputs: { val: 'int' }, output: 'boolean' },
-    { inputs: { val: 'uint' }, output: 'boolean' },
     { inputs: { val: 'float' }, output: 'boolean' }
+  ],
+  // Vector casts
+  'static_cast_int2': [{ inputs: { val: 'float2' }, output: 'int2' }],
+  'static_cast_int3': [{ inputs: { val: 'float3' }, output: 'int3' }],
+  'static_cast_int4': [{ inputs: { val: 'float4' }, output: 'int4' }],
+  'static_cast_float2': [
+    { inputs: { val: 'float2' }, output: 'float2' },
+    { inputs: { val: 'int2' }, output: 'float2' }
+  ],
+  'static_cast_float3': [
+    { inputs: { val: 'float3' }, output: 'float3' },
+    { inputs: { val: 'int3' }, output: 'float3' }
+  ],
+  'static_cast_float4': [
+    { inputs: { val: 'float4' }, output: 'float4' },
+    { inputs: { val: 'int4' }, output: 'float4' }
   ],
 
   // Scalar Constructors
   'float': [{ inputs: { val: 'float' }, output: 'float' }],
   'int': [{ inputs: { val: 'int' }, output: 'int' }],
-  'uint': [{ inputs: { val: 'int' }, output: 'uint' }],
   'bool': [{ inputs: { val: 'boolean' }, output: 'boolean' }],
 
   // Vector Constructors
   'float2': [{ inputs: { x: 'float', y: 'float' }, output: 'float2' }],
   'float3': [{ inputs: { x: 'float', y: 'float', z: 'float' }, output: 'float3' }],
   'float4': [{ inputs: { x: 'float', y: 'float', z: 'float', w: 'float' }, output: 'float4' }],
+  'int2': [{ inputs: { x: 'int', y: 'int' }, output: 'int2' }],
+  'int3': [{ inputs: { x: 'int', y: 'int', z: 'int' }, output: 'int3' }],
+  'int4': [{ inputs: { x: 'int', y: 'int', z: 'int', w: 'int' }, output: 'int4' }],
 
   'vec_get_element': [
     { inputs: { vec: 'float2', index: 'int' }, output: 'float' },
     { inputs: { vec: 'float3', index: 'int' }, output: 'float' },
     { inputs: { vec: 'float4', index: 'int' }, output: 'float' },
+    { inputs: { vec: 'int2', index: 'int' }, output: 'int' },
+    { inputs: { vec: 'int3', index: 'int' }, output: 'int' },
+    { inputs: { vec: 'int4', index: 'int' }, output: 'int' },
     { inputs: { vec: 'float3x3', index: 'int' }, output: 'float' },
     { inputs: { vec: 'float4x4', index: 'int' }, output: 'float' }
   ],
@@ -194,13 +211,19 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { vec: 'float2', index: 'int', value: 'float' }, output: 'any' },
     { inputs: { vec: 'float3', index: 'int', value: 'float' }, output: 'any' },
     { inputs: { vec: 'float4', index: 'int', value: 'float' }, output: 'any' },
+    { inputs: { vec: 'int2', index: 'int', value: 'int' }, output: 'any' },
+    { inputs: { vec: 'int3', index: 'int', value: 'int' }, output: 'any' },
+    { inputs: { vec: 'int4', index: 'int', value: 'int' }, output: 'any' },
     { inputs: { vec: 'float3x3', index: 'int', value: 'float' }, output: 'any' },
     { inputs: { vec: 'float4x4', index: 'int', value: 'float' }, output: 'any' }
   ],
   'vec_swizzle': [
     { inputs: { vec: 'float2', channels: 'string' }, output: 'any' },
     { inputs: { vec: 'float3', channels: 'string' }, output: 'any' },
-    { inputs: { vec: 'float4', channels: 'string' }, output: 'any' }
+    { inputs: { vec: 'float4', channels: 'string' }, output: 'any' },
+    { inputs: { vec: 'int2', channels: 'string' }, output: 'any' },
+    { inputs: { vec: 'int3', channels: 'string' }, output: 'any' },
+    { inputs: { vec: 'int4', channels: 'string' }, output: 'any' }
   ],
 
   // Vector Ops

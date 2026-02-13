@@ -231,10 +231,14 @@ const resolveNodeType = (
   }
 
   // 4. Match against Overloads (Signature-based inference)
+  // Two-pass: first allow only scalar int<->float coercion (needed because
+  // numeric literals are always typed 'float'), then allow vector coercion.
+  // This ensures vec_get_element(int3, 0) matches the int3->int signature
+  // before the float3->float signature.
 
   let matchedSig: OpSignature | undefined;
 
-  for (const sig of sigs) {
+  const matchSig = (sig: OpSignature, allowVectorCoercion: boolean): boolean => {
     let match = true;
     const hasWildcard = '*' in sig.inputs;
 
@@ -258,8 +262,18 @@ const resolveNodeType = (
       }
 
       if (argType !== 'any' && providedType !== 'any' && argType !== providedType) {
+        // Always allow scalar int<->float (literals are typed 'float')
         if ((argType === 'float' && providedType === 'int') ||
           (argType === 'int' && providedType === 'float')) continue;
+        // Only allow vector int<->float coercion in pass 2
+        if (allowVectorCoercion) {
+          if ((argType === 'float2' && providedType === 'int2') ||
+            (argType === 'int2' && providedType === 'float2') ||
+            (argType === 'float3' && providedType === 'int3') ||
+            (argType === 'int3' && providedType === 'float3') ||
+            (argType === 'float4' && providedType === 'int4') ||
+            (argType === 'int4' && providedType === 'float4')) continue;
+        }
 
         match = false;
         break;
@@ -269,12 +283,26 @@ const resolveNodeType = (
     if (match) {
       // Arity Check
       const extraKeys = Object.keys(inputTypes).filter(k => !(k in sig.inputs) && !hasWildcard);
-      if (extraKeys.length > 0) {
-        // Not a match, try next signature
-        continue;
-      }
+      if (extraKeys.length > 0) return false;
+      return true;
+    }
+    return false;
+  };
+
+  // Pass 1: scalar int<->float only (no vector coercion)
+  for (const sig of sigs) {
+    if (matchSig(sig, false)) {
       matchedSig = sig;
       break;
+    }
+  }
+  // Pass 2: also allow vector int<->float coercion
+  if (!matchedSig) {
+    for (const sig of sigs) {
+      if (matchSig(sig, true)) {
+        matchedSig = sig;
+        break;
+      }
     }
   }
 
@@ -355,7 +383,6 @@ const resolveNodeType = (
       let scalarType = type;
       if (type === 'float') scalarType = 'float';
       else if (type === 'int') scalarType = 'int';
-      else if (type === 'uint') scalarType = 'uint';
       else if (type === 'bool' || type === 'boolean') scalarType = 'bool';
 
 
@@ -384,7 +411,6 @@ const resolveNodeType = (
       let vType = type as ValidationType;
       if (type === 'float') vType = 'float';
       else if (type === 'int') vType = 'int';
-      else if (type === 'uint') vType = 'uint';
       else if (type === 'bool' || type === 'boolean') vType = 'boolean';
       else if (type === 'float2') vType = 'float2';
       else if (type === 'float3') vType = 'float3';
@@ -412,7 +438,6 @@ const resolveNodeType = (
           // Map back to ValidationType
           if (sType === 'float') { cache.set(nodeId, 'float'); return 'float'; }
           if (sType === 'int') { cache.set(nodeId, 'int'); return 'int'; }
-          if (sType === 'uint') { cache.set(nodeId, 'uint'); return 'uint'; }
           if (sType === 'bool' || sType === 'boolean') { cache.set(nodeId, 'boolean'); return 'boolean'; }
           // If it is a struct name or other type
           cache.set(nodeId, sType as ValidationType);
@@ -420,9 +445,12 @@ const resolveNodeType = (
         }
       }
 
-      // Handle vectors (e.g. float4 -> float)
+      // Handle vectors (e.g. float4 -> float, int3 -> int)
       if (arrayType === 'float2' || arrayType === 'float3' || arrayType === 'float4') {
         cache.set(nodeId, 'float'); return 'float';
+      }
+      if (arrayType === 'int2' || arrayType === 'int3' || arrayType === 'int4') {
+        cache.set(nodeId, 'int'); return 'int';
       }
 
       cache.set(nodeId, 'any');
@@ -444,7 +472,6 @@ const resolveNodeType = (
           let mType = member.type as ValidationType;
           if (mType === 'float') mType = 'float';
           else if (mType === 'int') mType = 'int';
-          else if (mType === 'uint') mType = 'uint';
 
           cache.set(nodeId, mType);
           return mType;
@@ -470,9 +497,10 @@ const resolveNodeType = (
       }
 
       let maxComp = 0;
-      if (inputType === 'float2') maxComp = 2;
-      else if (inputType === 'float3') maxComp = 3;
-      else if (inputType === 'float4') maxComp = 4;
+      const isIntVec = inputType === 'int2' || inputType === 'int3' || inputType === 'int4';
+      if (inputType === 'float2' || inputType === 'int2') maxComp = 2;
+      else if (inputType === 'float3' || inputType === 'int3') maxComp = 3;
+      else if (inputType === 'float4' || inputType === 'int4') maxComp = 4;
 
       if (maxComp > 0) {
         for (const char of mask) {
@@ -486,7 +514,9 @@ const resolveNodeType = (
             }
           }
         }
-        const outType = mask.length === 1 ? 'float' : `float${mask.length}` as ValidationType;
+        const scalarType = isIntVec ? 'int' : 'float';
+        const vecPrefix = isIntVec ? 'int' : 'float';
+        const outType = mask.length === 1 ? scalarType : `${vecPrefix}${mask.length}` as ValidationType;
         cache.set(nodeId, outType);
         return outType;
       }
@@ -521,6 +551,12 @@ const resolveNodeType = (
     if (providedType && argType !== 'any' && providedType !== 'any' && argType !== providedType) {
       if ((argType === 'float' && providedType === 'int') ||
         (argType === 'int' && providedType === 'float')) continue;
+      if ((argType === 'float2' && providedType === 'int2') ||
+        (argType === 'int2' && providedType === 'float2') ||
+        (argType === 'float3' && providedType === 'int3') ||
+        (argType === 'int3' && providedType === 'float3') ||
+        (argType === 'float4' && providedType === 'int4') ||
+        (argType === 'int4' && providedType === 'float4')) continue;
       errors.push({ nodeId, functionId, message: `Type Mismatch at '${argName}': expected ${argType}, got ${providedType}`, severity: 'error' });
     }
   }

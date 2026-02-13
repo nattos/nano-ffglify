@@ -13,9 +13,9 @@ import { WebGpuBackend } from './webgpu-backend';
  */
 const getComponentCount = (type: string): number => {
   const t = type.toLowerCase();
-  if (t === 'float2' || t === 'vec2<float>' || t === 'vec2<f32>') return 2;
-  if (t === 'float3' || t === 'vec3<float>' || t === 'vec3<f32>') return 3;
-  if (t === 'float4' || t === 'vec4<float>' || t === 'vec4<f32>') return 4;
+  if (t === 'float2' || t === 'int2' || t === 'vec2<float>' || t === 'vec2<f32>' || t === 'vec2<i32>') return 2;
+  if (t === 'float3' || t === 'int3' || t === 'vec3<float>' || t === 'vec3<f32>' || t === 'vec3<i32>') return 3;
+  if (t === 'float4' || t === 'int4' || t === 'vec4<float>' || t === 'vec4<f32>' || t === 'vec4<i32>') return 4;
   if (t === 'float3x3' || t === 'mat3x3<float>' || t === 'mat3x3<f32>') return 9;
   if (t === 'float4x4' || t === 'mat4x4<float>' || t === 'mat4x4<f32>') return 16;
   if (t.startsWith('array<')) {

@@ -317,6 +317,24 @@ export const Float4ConstructorDef = defineOp<Float4Args>({
   args: { x: { type: FloatSchema, doc: "X", refable: true }, y: { type: FloatSchema, doc: "Y", refable: true }, z: { type: FloatSchema, doc: "Z", refable: true }, w: { type: FloatSchema, doc: "W", refable: true } }
 });
 
+export const Int2ConstructorDef = defineOp<Float2Args>({
+  doc: "Construct an int2.",
+  args: {
+    x: { type: IntSchema, doc: "X", refable: true, literalTypes: ['int', 'float'] },
+    y: { type: IntSchema, doc: "Y", refable: true, literalTypes: ['int', 'float'] }
+  }
+});
+
+export const Int3ConstructorDef = defineOp<Float3Args>({
+  doc: "Construct an int3.",
+  args: { x: { type: IntSchema, doc: "X", refable: true }, y: { type: IntSchema, doc: "Y", refable: true }, z: { type: IntSchema, doc: "Z", refable: true } }
+});
+
+export const Int4ConstructorDef = defineOp<Float4Args>({
+  doc: "Construct an int4.",
+  args: { x: { type: IntSchema, doc: "X", refable: true }, y: { type: IntSchema, doc: "Y", refable: true }, z: { type: IntSchema, doc: "Z", refable: true }, w: { type: IntSchema, doc: "W", refable: true } }
+});
+
 // --- Vectors ---
 
 export interface VecSwizzleArgs { vec: any; channels: string;[key: string]: any; }
@@ -517,11 +535,11 @@ export const BUILTIN_TYPES: Record<string, string> = {
   'position': 'float4',
   'vertex_index': 'int',
   'instance_index': 'int',
-  'global_invocation_id': 'float3',
-  'local_invocation_id': 'float3',
-  'workgroup_id': 'float3',
+  'global_invocation_id': 'int3',
+  'local_invocation_id': 'int3',
+  'workgroup_id': 'int3',
   'local_invocation_index': 'int',
-  'num_workgroups': 'float3',
+  'num_workgroups': 'int3',
   'frag_coord': 'float4',
   'front_facing': 'boolean',
   'sample_index': 'int',
@@ -624,7 +642,9 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'math_sign': MathNumericUnaryDef, 'math_fract': MathNumericUnaryDef, 'math_trunc': MathNumericUnaryDef,
   'math_round': MathNumericUnaryDef,
   'math_is_nan': MathNumericUnaryDef, 'math_is_inf': MathNumericUnaryDef, 'math_is_finite': MathNumericUnaryDef,
-  'static_cast_int': MathCastUnaryDef, 'static_cast_uint': MathCastUnaryDef, 'static_cast_float': MathCastUnaryDef, 'static_cast_bool': MathCastUnaryDef,
+  'static_cast_int': MathCastUnaryDef, 'static_cast_float': MathCastUnaryDef, 'static_cast_bool': MathCastUnaryDef,
+  'static_cast_int2': MathCastUnaryDef, 'static_cast_int3': MathCastUnaryDef, 'static_cast_int4': MathCastUnaryDef,
+  'static_cast_float2': MathCastUnaryDef, 'static_cast_float3': MathCastUnaryDef, 'static_cast_float4': MathCastUnaryDef,
   'math_not': MathLogicUnaryDef,
 
   // Vector Unary
@@ -645,9 +665,11 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'float2': Float2ConstructorDef,
   'float3': Float3ConstructorDef,
   'float4': Float4ConstructorDef,
+  'int2': Int2ConstructorDef,
+  'int3': Int3ConstructorDef,
+  'int4': Int4ConstructorDef,
   'float': defineOp<ScalarArgs>({ doc: "Float constructor", args: { val: { type: FloatSchema, doc: "Value", refable: true } } }),
   'int': defineOp<ScalarArgs>({ doc: "Int constructor", args: { val: { type: IntSchema, doc: "Value", refable: true } } }),
-  'uint': defineOp<ScalarArgs>({ doc: "Uint constructor", args: { val: { type: IntSchema, doc: "Value", refable: true } } }),
   'bool': defineOp<ScalarArgs>({ doc: "Bool constructor", args: { val: { type: BoolSchema, doc: "Value", refable: true } } }),
   'string': defineOp<ScalarArgs>({ doc: "String constructor", args: { val: { type: z.string(), doc: "Value" } } }),
 
@@ -775,7 +797,9 @@ export type OpArgs = {
   'math_sign': MathUnaryArgs; 'math_fract': MathUnaryArgs; 'math_trunc': MathUnaryArgs;
   'math_round': MathUnaryArgs;
   'math_is_nan': MathUnaryArgs; 'math_is_inf': MathUnaryArgs; 'math_is_finite': MathUnaryArgs;
-  'static_cast_int': MathUnaryArgs; 'static_cast_uint': MathUnaryArgs; 'static_cast_float': MathUnaryArgs; 'static_cast_bool': MathUnaryArgs;
+  'static_cast_int': MathUnaryArgs; 'static_cast_float': MathUnaryArgs; 'static_cast_bool': MathUnaryArgs;
+  'static_cast_int2': MathUnaryArgs; 'static_cast_int3': MathUnaryArgs; 'static_cast_int4': MathUnaryArgs;
+  'static_cast_float2': MathUnaryArgs; 'static_cast_float3': MathUnaryArgs; 'static_cast_float4': MathUnaryArgs;
   'math_not': MathUnaryArgs;
   'vec_length': VecUnaryArgs;
   'vec_normalize': VecUnaryArgs;
@@ -790,9 +814,11 @@ export type OpArgs = {
   'float2': Float2Args;
   'float3': Float3Args;
   'float4': Float4Args;
+  'int2': Float2Args;
+  'int3': Float3Args;
+  'int4': Float4Args;
   'float': ScalarArgs;
   'int': ScalarArgs;
-  'uint': ScalarArgs;
   'bool': ScalarArgs;
   'string': ScalarArgs;
   'vec_swizzle': VecSwizzleArgs;

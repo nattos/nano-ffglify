@@ -1,6 +1,7 @@
 export type DataType =
-  | 'float' | 'int' | 'uint' | 'bool'
+  | 'float' | 'int' | 'bool'
   | 'float2' | 'float3' | 'float4'
+  | 'int2' | 'int3' | 'int4'
   | 'float3x3' | 'float4x4'
   | 'string' // logic only, usually
   | 'texture2d' // resource handle
@@ -8,8 +9,9 @@ export type DataType =
   | string; // Allow custom Struct IDs or "array<T, N>" syntax (e.g. "array<float, 10>")
 
 export const PRIMITIVE_TYPES = [
-  'float', 'int', 'uint', 'bool',
+  'float', 'int', 'bool',
   'float2', 'float3', 'float4',
+  'int2', 'int3', 'int4',
   'float3x3', 'float4x4',
   'string',
   'texture2d',
@@ -23,6 +25,9 @@ export const BLITTABLE_TYPES: DataType[] = [
   'float2',
   'float3',
   'float4',
+  'int2',
+  'int3',
+  'int4',
   'float3x3',
   'float4x4',
 ];
@@ -355,9 +360,11 @@ export type BuiltinOp =
   // Scalar Casts & Constructors
   // ----------------------------------------------------------------
   // Casts: { val: any } -> Type
-  | 'static_cast_int' | 'static_cast_uint' | 'static_cast_float' | 'static_cast_bool'
+  | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
+  | 'static_cast_int2' | 'static_cast_int3' | 'static_cast_int4'
+  | 'static_cast_float2' | 'static_cast_float3' | 'static_cast_float4'
   // Constructors: { val: scalar } -> scalar
-  | 'float' | 'int' | 'uint' | 'bool' | 'string'
+  | 'float' | 'int' | 'bool' | 'string'
 
   // ----------------------------------------------------------------
   // Extended Types
@@ -366,6 +373,9 @@ export type BuiltinOp =
   | 'float2' // { x: float, y: float } -> float2
   | 'float3' // { x, y, z } -> float3
   | 'float4' // { x, y, z, w } -> float4
+  | 'int2' // { x: int, y: int } -> int2
+  | 'int3' // { x, y, z } -> int3
+  | 'int4' // { x, y, z, w } -> int4
   | 'vec_length'    // { a: T } -> float
   | 'vec_normalize' // { a: T } -> T
   | 'vec_dot'       // { a: T, b: T } -> float

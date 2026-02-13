@@ -634,7 +634,6 @@ export class WgslGenerator {
         const i = func.inputs.find(inp => inp.id === varId);
         const t = (v?.type || i?.type || '').toLowerCase();
         if (t === 'int') elemType = 'int';
-        else if (t === 'uint') elemType = 'uint';
         else if (t === 'bool') elemType = 'bool';
         else if (t === 'float') elemType = 'float';
       }
@@ -768,11 +767,14 @@ export class WgslGenerator {
       // But test 2^31 is boundary.
       // Let's stick to simple cast first, if test fails we upgrade.
       if (type === 'int') return `i32(b_globals.data[${idx}])`;
-      if (type === 'uint') return `u32(b_globals.data[${idx}])`;
+
       if (count === 1) return `b_globals.data[${idx}]`;
       if (type === 'float2' || type === 'vec2<f32>') return `vec2<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}])`;
       if (type === 'float3' || type === 'vec3<f32>') return `vec3<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}], b_globals.data[${idx + 2}])`;
       if (type === 'float4' || type === 'vec4<f32>') return `vec4<f32>(b_globals.data[${idx}], b_globals.data[${idx + 1}], b_globals.data[${idx + 2}], b_globals.data[${idx + 3}])`;
+      if (type === 'int2' || type === 'vec2<i32>') return `vec2<i32>(i32(b_globals.data[${idx}]), i32(b_globals.data[${idx + 1}]))`;
+      if (type === 'int3' || type === 'vec3<i32>') return `vec3<i32>(i32(b_globals.data[${idx}]), i32(b_globals.data[${idx + 1}]), i32(b_globals.data[${idx + 2}]))`;
+      if (type === 'int4' || type === 'vec4<i32>') return `vec4<i32>(i32(b_globals.data[${idx}]), i32(b_globals.data[${idx + 1}]), i32(b_globals.data[${idx + 2}]), i32(b_globals.data[${idx + 3}]))`;
       if (type === 'float3x3' || type === 'mat3x3<f32>') {
         const comps = [];
         for (let i = 0; i < 9; i++) comps.push(`b_globals.data[${idx + i}]`);
@@ -879,6 +881,9 @@ export class WgslGenerator {
     if (node.op === 'float2') return `vec2<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}))`;
     if (node.op === 'float3') return `vec3<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float', edges)}))`;
     if (node.op === 'float4' || node.op === 'quat') return `vec4<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'w', func, options, ir, 'float', edges)}))`;
+    if (node.op === 'int2') return `vec2<i32>(i32(${this.resolveArg(node, 'x', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'y', func, options, ir, 'int', edges)}))`;
+    if (node.op === 'int3') return `vec3<i32>(i32(${this.resolveArg(node, 'x', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'y', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'z', func, options, ir, 'int', edges)}))`;
+    if (node.op === 'int4') return `vec4<i32>(i32(${this.resolveArg(node, 'x', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'y', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'z', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'w', func, options, ir, 'int', edges)}))`;
     if (node.op === 'float3x3' || node.op === 'float4x4') {
       const vals = node['vals'];
       if (Array.isArray(vals)) {
@@ -926,6 +931,12 @@ export class WgslGenerator {
       return `safe_f32_to_i32(${valExpr})`;
     }
     if (node.op === 'static_cast_bool') return `bool(${this.resolveArg(node, 'val', func, options, ir, 'any', edges)})`;
+    if (node.op === 'static_cast_int2') return `vec2<i32>(${this.resolveArg(node, 'val', func, options, ir, 'any', edges)})`;
+    if (node.op === 'static_cast_int3') return `vec3<i32>(${this.resolveArg(node, 'val', func, options, ir, 'any', edges)})`;
+    if (node.op === 'static_cast_int4') return `vec4<i32>(${this.resolveArg(node, 'val', func, options, ir, 'any', edges)})`;
+    if (node.op === 'static_cast_float2') return `vec2<f32>(${this.resolveArg(node, 'val', func, options, ir, 'any', edges)})`;
+    if (node.op === 'static_cast_float3') return `vec3<f32>(${this.resolveArg(node, 'val', func, options, ir, 'any', edges)})`;
+    if (node.op === 'static_cast_float4') return `vec4<f32>(${this.resolveArg(node, 'val', func, options, ir, 'any', edges)})`;
     if (node.op === 'struct_construct') {
       const type = node['type'];
       const structDef = ir.structs?.find(s => s.id === type);
@@ -1133,11 +1144,16 @@ export class WgslGenerator {
       else if (['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'].includes(name)) expr = `b_inputs.${name}`;
 
       // Built-ins in WGSL are often u32 or vecN<u32>.
-      // Our IR often expects floats for generic math.
+      // Our IR often expects floats for generic math, or ints for integer math.
       if (outType.startsWith('float') || outType === 'float') {
         const count = this.getComponentCount(outType);
         if (count === 1) return `f32(${expr})`;
         return `vec${count}<f32>(${expr})`;
+      }
+      if (outType.startsWith('int') || outType === 'int') {
+        const count = this.getComponentCount(outType);
+        if (count === 1) return `i32(${expr})`;
+        return `vec${count}<i32>(${expr})`;
       }
       return expr;
     }
@@ -1164,6 +1180,9 @@ export class WgslGenerator {
       if (t === 'float2') t = 'vec2<f32>';
       if (t === 'float3') t = 'vec3<f32>';
       if (t === 'float4') t = 'vec4<f32>';
+      if (t === 'int2') t = 'vec2<i32>';
+      if (t === 'int3') t = 'vec3<i32>';
+      if (t === 'int4') t = 'vec4<i32>';
 
       if (t === 'float' && typeof val === 'string') {
         const def = func.nodes.find(n => n.id === val);
@@ -1171,6 +1190,9 @@ export class WgslGenerator {
           if (def.op === 'float2') t = 'vec2<f32>';
           else if (def.op === 'float3') t = 'vec3<f32>';
           else if (def.op === 'float4') t = 'vec4<f32>';
+          else if (def.op === 'int2') t = 'vec2<i32>';
+          else if (def.op === 'int3') t = 'vec3<i32>';
+          else if (def.op === 'int4') t = 'vec4<i32>';
         }
       }
 
@@ -1195,6 +1217,9 @@ export class WgslGenerator {
       const expr = this.resolveArg(node, k, func, options, ir, 'any', edges);
       const argType = getType(k);
       if (isFloatResult && argType === 'int') return `f32(${expr})`;
+      if (isFloatResult && (argType === 'vec2<i32>' || argType === 'int2')) return `vec2<f32>(${expr})`;
+      if (isFloatResult && (argType === 'vec3<i32>' || argType === 'int3')) return `vec3<f32>(${expr})`;
+      if (isFloatResult && (argType === 'vec4<i32>' || argType === 'int4')) return `vec4<f32>(${expr})`;
       if (!isFloatResult && !isBoolResult && argType === 'float') return `i32(${expr})`;
       return expr;
     };
@@ -1237,7 +1262,10 @@ export class WgslGenerator {
       if (op === 'math_atan2') return `atan2(${aExpr}, ${bExpr})`;
     }
 
-    if (op === 'math_mul' || op === 'mat_mul') return `(${arg('a')} * ${arg('b')})`; // WGSL supports scalar*vector natively
+    if (op === 'math_mul' || op === 'mat_mul') {
+      const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, options, ir, edges);
+      return `(${aExpr} * ${bExpr})`;
+    }
     if (op === 'math_neg') return `(-${arg('val')})`;
 
     // Standard Math
@@ -1407,6 +1435,9 @@ export class WgslGenerator {
   private resolveType(type: DataType | string): string {
     if (type === 'float') return 'f32';
     if (type === 'int') return 'i32';
+    if (type === 'int2') return 'vec2<i32>';
+    if (type === 'int3') return 'vec3<i32>';
+    if (type === 'int4') return 'vec4<i32>';
     if (type === 'bool') return 'bool';
     if (type === 'float2') return 'vec2<f32>';
     if (type === 'float3') return 'vec3<f32>';
@@ -1439,9 +1470,9 @@ export class WgslGenerator {
   }
 
   private getComponentCount(type: DataType | string): number {
-    if (type === 'float2' || type === 'vec2<f32>') return 2;
-    if (type === 'float3' || type === 'vec3<f32>') return 3;
-    if (type === 'float4' || type === 'vec4<f32>' || type === 'quat') return 4;
+    if (type === 'float2' || type === 'vec2<f32>' || type === 'int2' || type === 'vec2<i32>') return 2;
+    if (type === 'float3' || type === 'vec3<f32>' || type === 'int3' || type === 'vec3<i32>') return 3;
+    if (type === 'float4' || type === 'vec4<f32>' || type === 'quat' || type === 'int4' || type === 'vec4<i32>') return 4;
     if (type === 'float3x3' || type === 'mat3x3<f32>') return 9;
     if (type === 'float4x4' || type === 'mat4x4<f32>') return 16;
 
@@ -1567,19 +1598,25 @@ export class WgslGenerator {
     if (mode === 'float') {
       result = rawArgs.map((arg, i) => {
         const t = argTypes[i];
-        if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool') {
+        if (t === 'int' || t === 'i32' || t === 'bool') {
           return `f32(${arg})`;
         }
+        if (t === 'int2' || t === 'vec2<i32>') return `vec2<f32>(${arg})`;
+        if (t === 'int3' || t === 'vec3<i32>') return `vec3<f32>(${arg})`;
+        if (t === 'int4' || t === 'vec4<i32>') return `vec4<f32>(${arg})`;
         return arg;
       });
     } else if (mode === 'unify') {
-      const hasFloat = argTypes.some(t => t.includes('float') || t.includes('vec') || t.includes('mat') || t === 'f32');
+      const hasFloat = argTypes.some(t => t.includes('float') || t.includes('f32') || t.includes('mat'));
       if (hasFloat) {
         result = rawArgs.map((arg, i) => {
           const t = argTypes[i];
-          if (t === 'int' || t === 'i32' || t === 'uint' || t === 'u32' || t === 'bool') {
+          if (t === 'int' || t === 'i32' || t === 'bool') {
             return `f32(${arg})`;
           }
+          if (t === 'int2' || t === 'vec2<i32>') return `vec2<f32>(${arg})`;
+          if (t === 'int3' || t === 'vec3<i32>') return `vec3<f32>(${arg})`;
+          if (t === 'int4' || t === 'vec4<i32>') return `vec4<f32>(${arg})`;
           return arg;
         });
       }
@@ -1591,7 +1628,7 @@ export class WgslGenerator {
   private formatLiteral(val: any, type: string | DataType): string {
     if (typeof val === 'number') {
       // For integer types in WGSL, no decimal points allowed
-      if (type === 'int' || type === 'i32' || type === 'u32' || type === 'uint') {
+      if (type === 'int' || type === 'i32') {
         return Math.floor(val).toString();
       }
 
@@ -1624,8 +1661,11 @@ export class WgslGenerator {
     const t = this.resolveType(type);
     if (t === 'f32') return '0.0';
     if (t === 'i32') return '0';
-    if (t === 'u32') return '0u';
+
     if (t === 'bool') return 'false';
+    if (t === 'vec2<i32>') return 'vec2<i32>(0)';
+    if (t === 'vec3<i32>') return 'vec3<i32>(0)';
+    if (t === 'vec4<i32>') return 'vec4<i32>(0)';
     if (t.startsWith('vec')) return `${t}(0.0)`;
     if (t.startsWith('mat')) return `${t}()`;
     return `${t}()`;
@@ -1667,13 +1707,17 @@ export class WgslGenerator {
 
     if (toType === 'float') return `f32(${expr})`;
     if (toType === 'int') return `i32(${expr})`;
-    if (toType === 'uint') return `u32(${expr})`;
+
     if (toType === 'bool' || toType === 'boolean') return `bool(${expr})`;
 
     if (toType.startsWith('float') && toCount > 1 && !toType.includes('x')) {
       if (fromCount === 1) return `vec${toCount}<f32>(${expr})`;
       return `vec${toCount}<f32>(${expr})`;
     }
+
+    if (toType === 'int2' || toType === 'vec2<i32>') return `vec2<i32>(${expr})`;
+    if (toType === 'int3' || toType === 'vec3<i32>') return `vec3<i32>(${expr})`;
+    if (toType === 'int4' || toType === 'vec4<i32>') return `vec4<i32>(${expr})`;
 
     return expr;
   }

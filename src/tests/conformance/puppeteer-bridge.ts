@@ -1,4 +1,3 @@
-import { InterpreterBackend } from './interpreter-backend';
 import { ForceOntoGPUTestBackend } from './force-on-gpu-test-backend';
 import { WebGpuBackend } from './webgpu-backend';
 import { validateIR } from '../../ir/validator';
@@ -37,8 +36,7 @@ import { validateIR } from '../../ir/validator';
   }
 
   let backend = ForceOntoGPUTestBackend;
-  if (backendName === 'Interpreter') backend = InterpreterBackend;
-  else if (backendName === 'WebGPU') backend = WebGpuBackend;
+  if (backendName === 'WebGPU') backend = WebGpuBackend;
 
   // Validate IR
   const errors = validateIR(ir);

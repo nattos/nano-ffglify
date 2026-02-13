@@ -163,7 +163,7 @@ export const MetalBackend: TestBackend = {
       } else if (typeof val === 'boolean') {
         out.push(val ? 1 : 0);
       } else if (Array.isArray(val)) {
-        if (t.includes('vec') || (t.startsWith('float') && !t.includes('x') && !t.includes('['))) {
+        if (t.includes('vec') || (t.startsWith('float') && !t.includes('x') && !t.includes('[')) || (t.startsWith('int') && t.length <= 4)) {
           // Vector
           const count = t.includes('2') ? 2 : t.includes('3') ? 3 : 4;
           for (let i = 0; i < count; i++) out.push(Number(val[i] || 0));
@@ -328,7 +328,7 @@ export const MetalBackend: TestBackend = {
         for (const v of entryFunc.localVars || []) {
           const offset = varMap2.get(v.id);
           if (offset === undefined) continue;
-          const typeSize = v.type === 'float4' ? 4 : v.type === 'float3' ? 3 : v.type === 'float2' ? 2
+          const typeSize = v.type === 'float4' || v.type === 'int4' ? 4 : v.type === 'float3' || v.type === 'int3' ? 3 : v.type === 'float2' || v.type === 'int2' ? 2
             : v.type === 'float4x4' ? 16 : v.type === 'float3x3' ? 9 : 1;
           if (typeSize === 1) {
             const val = globalsData[offset];

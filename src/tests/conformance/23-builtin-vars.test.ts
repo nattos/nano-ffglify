@@ -23,11 +23,11 @@ describe('Conformance: Built-in Variables', () => {
         { name: 'position', type: 'float4' },
         { name: 'vertex_index', type: 'int' },
         { name: 'instance_index', type: 'int' },
-        { name: 'global_invocation_id', type: 'float3' },
-        { name: 'local_invocation_id', type: 'float3' },
-        { name: 'workgroup_id', type: 'float3' },
+        { name: 'global_invocation_id', type: 'int3' },
+        { name: 'local_invocation_id', type: 'int3' },
+        { name: 'workgroup_id', type: 'int3' },
         { name: 'local_invocation_index', type: 'int' },
-        { name: 'num_workgroups', type: 'float3' },
+        { name: 'num_workgroups', type: 'int3' },
         { name: 'frag_coord', type: 'float4' },
         { name: 'front_facing', type: 'bool' }, // Use 'bool' for local variable type
       ];

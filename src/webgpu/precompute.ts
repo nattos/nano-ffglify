@@ -59,11 +59,11 @@ function generateOp(offset: number, type: string, path: string[], helpers: Shade
 
   if (['f32', 'float'].includes(t)) return { op: 'f32', offset, path };
   if (['i32', 'int'].includes(t)) return { op: 'i32', offset, path };
-  if (['u32', 'uint', 'bool'].includes(t)) return { op: 'u32', offset, path };
+  if (['bool'].includes(t)) return { op: 'u32', offset, path };
 
-  if (t.startsWith('vec') || (t.startsWith('float') && !t.includes('x') && !t.includes('['))) {
+  if (t.startsWith('vec') || (t.startsWith('float') && !t.includes('x') && !t.includes('[')) || (t.startsWith('int') && t.length <= 4)) {
     const size = helpers.getComponentCount(t);
-    const elementType = (t.includes('int') || t.includes('i32')) ? 'i32' : (t.includes('uint') || t.includes('u32')) ? 'u32' : 'f32';
+    const elementType = (t.includes('int') || t.includes('i32')) ? 'i32' : 'f32';
     return { op: 'vec', offset, path, size, elementType };
   }
 
@@ -154,7 +154,7 @@ export function precomputeResourceLayout(def: any): PrecomputedResourceInfo {
 
     if (dataType.includes('int') && !dataType.includes('float')) {
       isInteger = true;
-      if (dataType.includes('uint') || dataType === 'bool') typedArray = 'Uint32Array';
+      if (dataType === 'bool') typedArray = 'Uint32Array';
       else typedArray = 'Int32Array';
     }
 

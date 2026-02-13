@@ -1031,9 +1031,12 @@ export class MslGenerator {
     if (mode === 'float') {
       return rawArgs.map((arg, i) => {
         const type = argTypes[i];
-        if (type === 'int' || type === 'uint' || type === 'boolean') {
+        if (type === 'int' || type === 'boolean') {
           return `float(${arg})`;
         }
+        if (type === 'int2') return `float2(${arg})`;
+        if (type === 'int3') return `float3(${arg})`;
+        if (type === 'int4') return `float4(${arg})`;
         return arg;
       });
     } else if (mode === 'unify') {
@@ -1041,9 +1044,12 @@ export class MslGenerator {
       if (hasFloat) {
         return rawArgs.map((arg, i) => {
           const type = argTypes[i];
-          if (type === 'int' || type === 'uint' || type === 'boolean') {
+          if (type === 'int' || type === 'boolean') {
             return `float(${arg})`;
           }
+          if (type === 'int2') return `float2(${arg})`;
+          if (type === 'int3') return `float3(${arg})`;
+          if (type === 'int4') return `float4(${arg})`;
           return arg;
         });
       }
@@ -1110,6 +1116,9 @@ export class MslGenerator {
       case 'float2': return `float2(${a('x')}, ${a('y')})`;
       case 'float3': return `float3(${a('x')}, ${a('y')}, ${a('z')})`;
       case 'float4': return `float4(${a('x')}, ${a('y')}, ${a('z')}, ${a('w')})`;
+      case 'int2': return `int2(int(${a('x')}), int(${a('y')}))`;
+      case 'int3': return `int3(int(${a('x')}), int(${a('y')}), int(${a('z')}))`;
+      case 'int4': return `int4(int(${a('x')}), int(${a('y')}), int(${a('z')}), int(${a('w')}))`;
 
       // Quaternion constructors
       case 'quat': {
@@ -1206,7 +1215,7 @@ export class MslGenerator {
         const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         // Check inferred type of A
         const typeA = typeof node['a'] === 'string' ? inferredTypes?.get(node['a']) : 'float';
-        if (typeA && (typeA === 'int' || typeA === 'uint')) {
+        if (typeA && typeA === 'int') {
           return `(${argA} % ${argB})`;
         }
         return `fmod(${argA}, ${argB})`;
@@ -1344,6 +1353,12 @@ export class MslGenerator {
         return `float(${valExpr})`;
       }
       case 'static_cast_int': return `safe_cast_int(${a('val')})`;
+      case 'static_cast_int2': return `int2(${a('val')})`;
+      case 'static_cast_int3': return `int3(${a('val')})`;
+      case 'static_cast_int4': return `int4(${a('val')})`;
+      case 'static_cast_float2': return `float2(${a('val')})`;
+      case 'static_cast_float3': return `float3(${a('val')})`;
+      case 'static_cast_float4': return `float4(${a('val')})`;
       case 'static_cast_bool': return `(${a('val')} != 0.0f ? 1.0f : 0.0f)`;
 
       // Struct operations
@@ -1449,7 +1464,7 @@ export class MslGenerator {
       case 'builtin_get': {
         const name = node['name'] as string;
         if (name === 'global_invocation_id') {
-          return 'float3(gid)';
+          return 'int3(gid)';
         }
         if (BUILTIN_CPU_ALLOWED.includes(name)) {
           const offset = varMap.get(name);
@@ -1560,10 +1575,13 @@ export class MslGenerator {
       'literal', 'float', 'int', 'bool',
       'var_get', 'buffer_load', 'builtin_get',
       'float2', 'float3', 'float4',
+      'int2', 'int3', 'int4',
       'float3x3', 'float4x4',
       'quat', 'quat_identity',
       'vec_dot', 'vec_length', 'vec_normalize', 'vec_swizzle', 'vec_get_element',
       'static_cast_float', 'static_cast_int', 'static_cast_bool',
+      'static_cast_int2', 'static_cast_int3', 'static_cast_int4',
+      'static_cast_float2', 'static_cast_float3', 'static_cast_float4',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length',
       'resource_get_size',
@@ -1613,11 +1631,13 @@ export class MslGenerator {
     switch (irType) {
       case 'float': return 'float';
       case 'int': return 'int';
-      case 'uint': return 'uint';
       case 'bool': return 'bool';
       case 'float2': return 'float2';
       case 'float3': return 'float3';
       case 'float4': case 'quat': return 'float4';
+      case 'int2': return 'int2';
+      case 'int3': return 'int3';
+      case 'int4': return 'int4';
       case 'float3x3': return 'float3x3';
       case 'float4x4': return 'float4x4';
       default:
@@ -1672,10 +1692,10 @@ export class MslGenerator {
    */
   private getTypeFlatSize(irType: string): number {
     switch (irType) {
-      case 'float': case 'int': case 'bool': case 'uint': return 1;
-      case 'float2': return 2;
-      case 'float3': return 3;
-      case 'float4': case 'quat': return 4;
+      case 'float': case 'int': case 'bool': return 1;
+      case 'float2': case 'int2': return 2;
+      case 'float3': case 'int3': return 3;
+      case 'float4': case 'quat': case 'int4': return 4;
       case 'float3x3': return 9;
       case 'float4x4': return 16;
       default: {
@@ -1748,9 +1768,6 @@ export class MslGenerator {
       case 'int':
         lines.push(`    int ${varName} = int(inputs[${offset}]);`);
         return offset + 1;
-      case 'uint':
-        lines.push(`    uint ${varName} = uint(inputs[${offset}]);`);
-        return offset + 1;
       case 'bool':
         lines.push(`    bool ${varName} = inputs[${offset}] != 0.0f;`);
         return offset + 1;
@@ -1762,6 +1779,15 @@ export class MslGenerator {
         return offset + 3;
       case 'float4':
         lines.push(`    float4 ${varName} = float4(inputs[${offset}], inputs[${offset + 1}], inputs[${offset + 2}], inputs[${offset + 3}]);`);
+        return offset + 4;
+      case 'int2':
+        lines.push(`    int2 ${varName} = int2(int(inputs[${offset}]), int(inputs[${offset + 1}]));`);
+        return offset + 2;
+      case 'int3':
+        lines.push(`    int3 ${varName} = int3(int(inputs[${offset}]), int(inputs[${offset + 1}]), int(inputs[${offset + 2}]));`);
+        return offset + 3;
+      case 'int4':
+        lines.push(`    int4 ${varName} = int4(int(inputs[${offset}]), int(inputs[${offset + 1}]), int(inputs[${offset + 2}]), int(inputs[${offset + 3}]));`);
         return offset + 4;
       case 'float3x3': {
         const indices = Array.from({ length: 9 }, (_, i) => `inputs[${offset + i}]`);
@@ -1788,9 +1814,6 @@ export class MslGenerator {
             } else if (mt === 'int') {
               memberExprs.push(`int(inputs[${memberOffset}])`);
               memberOffset += 1;
-            } else if (mt === 'uint') {
-              memberExprs.push(`uint(inputs[${memberOffset}])`);
-              memberOffset += 1;
             } else if (mt === 'float2') {
               memberExprs.push(`float2(inputs[${memberOffset}], inputs[${memberOffset + 1}])`);
               memberOffset += 2;
@@ -1799,6 +1822,15 @@ export class MslGenerator {
               memberOffset += 3;
             } else if (mt === 'float4') {
               memberExprs.push(`float4(inputs[${memberOffset}], inputs[${memberOffset + 1}], inputs[${memberOffset + 2}], inputs[${memberOffset + 3}])`);
+              memberOffset += 4;
+            } else if (mt === 'int2') {
+              memberExprs.push(`int2(int(inputs[${memberOffset}]), int(inputs[${memberOffset + 1}]))`);
+              memberOffset += 2;
+            } else if (mt === 'int3') {
+              memberExprs.push(`int3(int(inputs[${memberOffset}]), int(inputs[${memberOffset + 1}]), int(inputs[${memberOffset + 2}]))`);
+              memberOffset += 3;
+            } else if (mt === 'int4') {
+              memberExprs.push(`int4(int(inputs[${memberOffset}]), int(inputs[${memberOffset + 1}]), int(inputs[${memberOffset + 2}]), int(inputs[${memberOffset + 3}]))`);
               memberOffset += 4;
             } else {
               memberExprs.push(`inputs[${memberOffset}]`);
@@ -1833,8 +1865,12 @@ export class MslGenerator {
                   lines.push(`    ${varName}[${i}].${fieldName} = float4(inputs[${offset + i * elemSize + memberOff}], inputs[${offset + i * elemSize + memberOff + 1}], inputs[${offset + i * elemSize + memberOff + 2}], inputs[${offset + i * elemSize + memberOff + 3}]);`);
                 } else if (mt === 'int') {
                   lines.push(`    ${varName}[${i}].${fieldName} = int(inputs[${offset + i * elemSize + memberOff}]);`);
-                } else if (mt === 'uint') {
-                  lines.push(`    ${varName}[${i}].${fieldName} = uint(inputs[${offset + i * elemSize + memberOff}]);`);
+                } else if (mt === 'int2') {
+                  lines.push(`    ${varName}[${i}].${fieldName} = int2(int(inputs[${offset + i * elemSize + memberOff}]), int(inputs[${offset + i * elemSize + memberOff + 1}]));`);
+                } else if (mt === 'int3') {
+                  lines.push(`    ${varName}[${i}].${fieldName} = int3(int(inputs[${offset + i * elemSize + memberOff}]), int(inputs[${offset + i * elemSize + memberOff + 1}]), int(inputs[${offset + i * elemSize + memberOff + 2}]));`);
+                } else if (mt === 'int4') {
+                  lines.push(`    ${varName}[${i}].${fieldName} = int4(int(inputs[${offset + i * elemSize + memberOff}]), int(inputs[${offset + i * elemSize + memberOff + 1}]), int(inputs[${offset + i * elemSize + memberOff + 2}]), int(inputs[${offset + i * elemSize + memberOff + 3}]));`);
                 } else {
                   lines.push(`    ${varName}[${i}].${fieldName} = inputs[${offset + i * elemSize + memberOff}];`);
                 }
@@ -1871,12 +1907,24 @@ export class MslGenerator {
               } else if (mt === 'int') {
                 lines.push(`        ${varName}[_i].${fieldName} = int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}]);`);
                 memberOff += 1;
-              } else if (mt === 'uint') {
-                lines.push(`        ${varName}[_i].${fieldName} = uint(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}]);`);
-                memberOff += 1;
               } else if (mt === 'float2') {
                 lines.push(`        ${varName}[_i].${fieldName} = float2(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}], inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 1}]);`);
                 memberOff += 2;
+              } else if (mt === 'float3') {
+                lines.push(`        ${varName}[_i].${fieldName} = float3(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}], inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 1}], inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 2}]);`);
+                memberOff += 3;
+              } else if (mt === 'float4') {
+                lines.push(`        ${varName}[_i].${fieldName} = float4(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}], inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 1}], inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 2}], inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 3}]);`);
+                memberOff += 4;
+              } else if (mt === 'int2') {
+                lines.push(`        ${varName}[_i].${fieldName} = int2(int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}]), int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 1}]));`);
+                memberOff += 2;
+              } else if (mt === 'int3') {
+                lines.push(`        ${varName}[_i].${fieldName} = int3(int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}]), int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 1}]), int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 2}]));`);
+                memberOff += 3;
+              } else if (mt === 'int4') {
+                lines.push(`        ${varName}[_i].${fieldName} = int4(int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}]), int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 1}]), int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 2}]), int(inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff + 3}]));`);
+                memberOff += 4;
               } else {
                 lines.push(`        ${varName}[_i].${fieldName} = inputs[${offset + 1} + _i * ${elemFlatSize} + ${memberOff}];`);
                 memberOff += this.getTypeFlatSize(mt);

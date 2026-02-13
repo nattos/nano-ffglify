@@ -159,13 +159,13 @@ export class ShaderLayout {
   public getAlignment(type: DataType, mode: 'std140' | 'std430' = 'std430'): number {
     const t = type.toLowerCase();
 
-    if (['f32', 'i32', 'u32', 'float', 'int', 'bool', 'uint'].some(x => t === x)) return 4;
+    if (['f32', 'i32', 'float', 'int', 'bool'].some(x => t === x)) return 4;
 
     // Matrices (array of columns)
     if (t.startsWith('mat') || (t.startsWith('float') && t.includes('x'))) return 16;
 
-    if (['vec2', 'float2'].some(x => t.includes(x))) return 8;
-    if (['vec3', 'vec4', 'float3', 'float4', 'quat'].some(x => t.includes(x))) return 16;
+    if (['vec2', 'float2', 'int2'].some(x => t.includes(x))) return 8;
+    if (['vec3', 'vec4', 'float3', 'float4', 'int3', 'int4', 'quat'].some(x => t.includes(x))) return 16;
 
     if (t.endsWith(']') || t.startsWith('array<')) {
       if (mode === 'std140') return 16;
@@ -193,7 +193,7 @@ export class ShaderLayout {
   public getSize(type: DataType, mode: 'std140' | 'std430' = 'std430'): number {
     const t = type.toLowerCase();
 
-    if (['f32', 'i32', 'u32', 'float', 'int', 'bool', 'uint'].some(x => t === x)) return 4;
+    if (['f32', 'i32', 'float', 'int', 'bool'].some(x => t === x)) return 4;
 
     if (t.endsWith(']') || t.startsWith('array<')) {
       let inner = 'float';
@@ -217,9 +217,9 @@ export class ShaderLayout {
     if (t.includes('mat3') || t.includes('float3x3')) return 48; // 3 * 16 (std140/std430 same for matrix columns?) yes columns 16-align
     if (t.includes('mat4') || t.includes('float4x4')) return 64;
 
-    if (['vec2', 'float2'].some(x => t.includes(x))) return 8;
-    if (['vec3', 'float3'].some(x => t.includes(x))) return 12;
-    if (['vec4', 'float4', 'quat'].some(x => t.includes(x))) return 16;
+    if (['vec2', 'float2', 'int2'].some(x => t.includes(x))) return 8;
+    if (['vec3', 'float3', 'int3'].some(x => t.includes(x))) return 12;
+    if (['vec4', 'float4', 'int4', 'quat'].some(x => t.includes(x))) return 16;
 
     const s = this.structs.get(t);
     if (s) return this.getStructLayout(type, mode).size;
@@ -236,9 +236,9 @@ export class ShaderLayout {
 
   public getComponentCount(type: string): number {
     const t = type.toLowerCase();
-    if (t.includes('float4') || t === 'quat' || t.includes('vec4')) return 4;
-    if (t.includes('float3') || t.includes('vec3')) return 3;
-    if (t.includes('float2') || t.includes('vec2')) return 2;
+    if (t.includes('float4') || t.includes('int4') || t === 'quat' || t.includes('vec4')) return 4;
+    if (t.includes('float3') || t.includes('int3') || t.includes('vec3')) return 3;
+    if (t.includes('float2') || t.includes('int2') || t.includes('vec2')) return 2;
     if (t.includes('mat4')) return 16;
     if (t.includes('mat3')) return 9;
 
@@ -307,18 +307,16 @@ function writeFieldRecursive(view: DataView, offset: number, val: RuntimeValue, 
 
   if (typeof val === 'number') {
     if (t.includes('int') && !t.includes('u')) view.setInt32(offset, val, true);
-    else if (t.includes('uint') || t.includes('u32') || t === 'bool') view.setUint32(offset, typeof val === 'boolean' ? (val ? 1 : 0) : val as number, true);
+    else if (t === 'bool') view.setUint32(offset, typeof val === 'boolean' ? (val ? 1 : 0) : val as number, true);
     else view.setFloat32(offset, val, true);
   } else if (typeof val === 'boolean') {
     view.setUint32(offset, val ? 1 : 0, true);
   } else if (Array.isArray(val)) {
-    if ((t.startsWith('vec') || t.startsWith('float')) && !t.includes('x') && !t.includes('[')) {
+    if ((t.startsWith('vec') || t.startsWith('float') || t.startsWith('int')) && !t.includes('x') && !t.includes('[')) {
       // Vector
       const isInt = t.includes('int') || t.includes('i32');
-      const isUint = t.includes('uint') || t.includes('u32');
       for (let i = 0; i < val.length; i++) {
         if (isInt) view.setInt32(offset + i * 4, val[i] as number, true);
-        else if (isUint) view.setUint32(offset + i * 4, val[i] as number, true);
         else view.setFloat32(offset + i * 4, val[i] as number, true);
       }
     } else if (t.includes('mat') || t.includes('x')) {
