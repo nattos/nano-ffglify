@@ -17,7 +17,6 @@ describe('Conformance: Integration - Noise Generator', () => {
     it(`should execute the Noise Generator pipeline [${backend.name}]`, async () => {
       const inputs = new Map<string, RuntimeValue>();
       inputs.set('scale', 10.0);
-      inputs.set('time', 1.0);
 
       try {
         const context = await backend.execute(ir, 'fn_main_cpu', inputs);

@@ -694,7 +694,7 @@ export class CppGenerator {
       const shaderAnalysis = this.functionAnalysis.get(targetFunc);
       const usedBuiltins = shaderAnalysis ? [...shaderAnalysis.usedBuiltins].filter(b => BUILTIN_CPU_ALLOWED.includes(b)) : [];
 
-      if (hasExplicitInputs || usedBuiltins.length > 0) {
+      if (hasExplicitInputs || hasGlobalInputs || usedBuiltins.length > 0) {
         lines.push(`${indent}{`);
         lines.push(`${indent}    std::vector<float> _shader_args;`);
 
@@ -713,24 +713,17 @@ export class CppGenerator {
             const irType = input.type || 'float';
             this.emitArgFlattening(`${indent}    `, argExpr, irType, lines);
           }
+        } else if (hasGlobalInputs) {
+          // No explicit function inputs — serialize IR global inputs instead
+          for (const input of this.ir!.inputs!) {
+            const irType = input.type || 'float';
+            this.emitGlobalInputFlattening(`${indent}    `, input.id, irType, lines, []);
+          }
         }
 
         // Inject CPU-allowed builtins used by the shader
         for (const b of usedBuiltins) {
           lines.push(`${indent}    _shader_args.push_back(ctx.getInput("${b}"));`);
-        }
-
-        lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
-        lines.push(`${indent}}`);
-      } else if (hasGlobalInputs) {
-        // Serialize IR global inputs into args buffer for the shader
-        lines.push(`${indent}{`);
-        lines.push(`${indent}    std::vector<float> _shader_args;`);
-
-        for (const input of this.ir!.inputs!) {
-          const irType = input.type || 'float';
-          // Use flattened global inputs (e.g. "u_color_tint_0", "u_color_tint_1")
-          this.emitGlobalInputFlattening(`${indent}    `, input.id, irType, lines, []);
         }
 
         lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);

@@ -3,12 +3,11 @@ import { IRDocument, TextureFormat } from "../ir/types";
 export const NOISE_SHADER: IRDocument = {
   version: '1.0.0',
   meta: { name: 'Simple Noise Generator' },
-  comment: 'Demonstrates input inheritance, builtin_get (global_invocation_id is int3), and isOutput flag.',
+  comment: 'Animated hash-based noise. Demonstrates builtin_get, input inheritance via var_get, and isOutput flag.',
   entryPoint: 'fn_main_cpu',
 
   inputs: [
-    { id: 'scale', type: 'float', default: 10.0, comment: 'Global scale for noise frequency.' },
-    { id: 'time', type: 'float', default: 0.0, comment: 'Global time for noise animation.' }
+    { id: 'scale', type: 'float', default: 10.0, comment: 'Noise frequency scale.' }
   ],
 
   resources: [
@@ -18,7 +17,7 @@ export const NOISE_SHADER: IRDocument = {
       format: TextureFormat.RGBA8,
       size: { mode: 'viewport' },
       isOutput: true,
-      comment: `Primary display output. Note that mode: 'fixed' means it has own dimensions, 'viewport' means it follows the display. isOutput: true marks the texture resource as the primary output, usually the one that will be displayed.`,
+      comment: "Primary display output. mode: 'viewport' follows display size. isOutput: true marks this as the displayed texture.",
       persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: true }
     }
   ],
@@ -30,21 +29,10 @@ export const NOISE_SHADER: IRDocument = {
       inputs: [],
       outputs: [],
       localVars: [],
-      comment: 'Root CPU entry point. Handles high-level dispatch logic.',
+      comment: 'CPU entry point: dispatches the noise compute kernel.',
       nodes: [
-        {
-          id: 'get_tex_size',
-          op: 'resource_get_size',
-          resource: 'output_tex',
-          comment: 'PITFALL: Shaders expect workgroup-normalized dispatch sizes. resource_get_size provides raw dimensions.'
-        },
-        {
-          id: 'dispatch_noise',
-          op: 'cmd_dispatch',
-          func: 'fn_noise_gpu',
-          dispatch: 'get_tex_size',
-          comment: 'DISPATCH: Global inputs (scale, time) are automatically inherited.'
-        }
+        { id: 'get_tex_size', op: 'resource_get_size', resource: 'output_tex' },
+        { id: 'dispatch_noise', op: 'cmd_dispatch', func: 'fn_noise_gpu', dispatch: 'get_tex_size', comment: 'Global inputs (scale) are automatically inherited by the shader.' }
       ]
     },
     {
@@ -53,41 +41,23 @@ export const NOISE_SHADER: IRDocument = {
       inputs: [],
       outputs: [],
       localVars: [],
-      comment: 'Compute kernel for noise generation.',
+      comment: 'Compute kernel: hash-based noise with time animation.',
       nodes: [
-        {
-          id: 'in_gid',
-          op: 'builtin_get',
-          name: 'global_invocation_id',
-          comment: 'BUILT-INS: global_invocation_id is int3. Swizzle to xy for 2D coords; int->float coercion is automatic in math ops.'
-        },
-        {
-          id: 'pixel_coords',
-          op: 'vec_swizzle',
-          vec: 'in_gid',
-          channels: 'xy',
-          comment: 'Cast to 2D coordinates for texture access.'
-        },
-        {
-          id: 'tex_dims',
-          op: 'resource_get_size',
-          resource: 'output_tex',
-          comment: 'RESISTANCE TO HARDCODING: Always use the resource size for normalization.'
-        },
+        { id: 'c_coords', op: 'comment', comment: 'Pixel coordinates to normalized UV. global_invocation_id is int3; int->float coercion is automatic in math ops.' },
+        { id: 'in_gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'pixel_coords', op: 'vec_swizzle', vec: 'in_gid', channels: 'xy' },
+        { id: 'tex_dims', op: 'resource_get_size', resource: 'output_tex' },
         { id: 'uv', op: 'math_div', a: 'pixel_coords', b: 'tex_dims' },
 
-        {
-          id: 'val_scale',
-          op: 'var_get',
-          var: 'scale',
-          comment: 'INPUT INHERITANCE: Getting globals via var_get.'
-        },
+        { id: 'val_scale', op: 'var_get', var: 'scale', comment: 'Global inputs accessed via var_get.' },
         { id: 'scaled_uv', op: 'math_mul', a: 'uv', b: 'val_scale' },
 
-        { id: 'val_time', op: 'var_get', var: 'time' },
+        { id: 'c_anim', op: 'comment', comment: 'Animate by offsetting UV with builtin time.' },
+        { id: 'val_time', op: 'builtin_get', name: 'time' },
         { id: 'time_offset', op: 'float2', x: 'val_time', y: 'val_time' },
         { id: 'uv_animated', op: 'math_add', a: 'scaled_uv', b: 'time_offset' },
 
+        { id: 'c_hash', op: 'comment', comment: 'Hash-based pseudo-noise: fract(sin(dot(uv, magic)) * 43758.5453)' },
         { id: 'hash_const', op: 'float2', x: 12.9898, y: 78.233 },
         { id: 'dot_prod', op: 'vec_dot', a: 'uv_animated', b: 'hash_const' },
         { id: 'sin_res', op: 'math_sin', val: 'dot_prod' },
@@ -95,15 +65,7 @@ export const NOISE_SHADER: IRDocument = {
         { id: 'noise_final', op: 'math_fract', val: 'noise_raw' },
 
         { id: 'rgba_out', op: 'float4', x: 'noise_final', y: 'noise_final', z: 'noise_final', w: 1.0 },
-
-        {
-          id: 'op_store',
-          op: 'texture_store',
-          tex: 'output_tex',
-          coords: 'pixel_coords',
-          value: 'rgba_out',
-          comment: 'STORAGE: Coordinates should be floats or ints; system handles casting.'
-        }
+        { id: 'op_store', op: 'texture_store', tex: 'output_tex', coords: 'pixel_coords', value: 'rgba_out' }
       ]
     }
   ]
@@ -112,10 +74,11 @@ export const NOISE_SHADER: IRDocument = {
 export const EFFECT_SHADER: IRDocument = {
   version: '1.0.0',
   meta: { name: 'Simple Effect' },
+  comment: 'Adjustable grayscale desaturation on an input texture. Demonstrates texture inputs and intensity slider.',
   entryPoint: 'fn_main_cpu',
   inputs: [
-    { id: 'input_visual', type: 'texture2d', format: 'rgba8', comment: 'Input video stream' },
-    { id: 'intensity', type: 'float', default: 1.0, ui: { min: 0.0, max: 1.0, widget: 'slider' } }
+    { id: 'input_visual', type: 'texture2d', format: 'rgba8', comment: 'Input video stream.' },
+    { id: 'intensity', type: 'float', default: 1.0, ui: { min: 0.0, max: 1.0, widget: 'slider' }, comment: 'Desaturation amount: 0 = original, 1 = full grayscale.' }
   ],
   resources: [
     {
@@ -145,25 +108,22 @@ export const EFFECT_SHADER: IRDocument = {
       inputs: [],
       outputs: [],
       localVars: [],
+      comment: 'Compute kernel: per-pixel grayscale desaturation.',
       nodes: [
         { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
         { id: 'coords', op: 'vec_swizzle', vec: 'gid', channels: 'xy' },
         { id: 'size', op: 'resource_get_size', resource: 'output_tex' },
-
-        // Sampling normalization
         { id: 'uv', op: 'math_div', a: 'coords', b: 'size' },
 
-        // Sample input
         { id: 'color', op: 'texture_sample', tex: 'input_visual', coords: 'uv' },
 
-        // Grayscale conversion
+        { id: 'c_gray', op: 'comment', comment: 'Grayscale via perceptual luminance weights (BT.709).' },
         { id: 'lum_coeffs', op: 'float3', x: 0.2126, y: 0.7152, z: 0.0722 },
         { id: 'rgb', op: 'vec_swizzle', vec: 'color', channels: 'xyz' },
         { id: 'luma', op: 'vec_dot', a: 'rgb', b: 'lum_coeffs' },
         { id: 'gray_vec', op: 'float3', x: 'luma', y: 'luma', z: 'luma' },
 
-        // Mix based on intensity
-        { id: 'val_intensity', op: 'var_get', var: 'intensity' },
+        { id: 'val_intensity', op: 'var_get', var: 'intensity', comment: 'Mix original RGB toward grayscale by intensity.' },
         { id: 'final_rgb', op: 'math_mix', a: 'rgb', b: 'gray_vec', t: 'val_intensity' },
 
         { id: 'r', op: 'vec_swizzle', vec: 'final_rgb', channels: 'x' },
@@ -180,11 +140,12 @@ export const EFFECT_SHADER: IRDocument = {
 export const MIXER_SHADER: IRDocument = {
   version: '1.0.0',
   meta: { name: 'Texture Mixer' },
+  comment: 'Blends two texture inputs by an opacity slider. Demonstrates multi-texture input and simple per-pixel math.',
   entryPoint: 'fn_main_cpu',
   inputs: [
-    { id: 'tex_a', type: 'texture2d', format: 'rgba8', label: 'Layer A' },
-    { id: 'tex_b', type: 'texture2d', format: 'rgba8', label: 'Layer B' },
-    { id: 'opacity', type: 'float', default: 0.5, ui: { min: 0.0, max: 1.0, widget: 'slider' } }
+    { id: 'tex_a', type: 'texture2d', format: 'rgba8', label: 'Layer A', comment: 'First input texture.' },
+    { id: 'tex_b', type: 'texture2d', format: 'rgba8', label: 'Layer B', comment: 'Second input texture.' },
+    { id: 'opacity', type: 'float', default: 0.5, ui: { min: 0.0, max: 1.0, widget: 'slider' }, comment: 'Blend factor: 0 = Layer A, 1 = Layer B.' }
   ],
   resources: [
     {
@@ -214,6 +175,7 @@ export const MIXER_SHADER: IRDocument = {
       inputs: [],
       outputs: [],
       localVars: [],
+      comment: 'Compute kernel: per-pixel blend of two textures.',
       nodes: [
         { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
         { id: 'coords', op: 'vec_swizzle', vec: 'gid', channels: 'xy' },
@@ -224,7 +186,7 @@ export const MIXER_SHADER: IRDocument = {
         { id: 'col_b', op: 'texture_sample', tex: 'tex_b', coords: 'uv' },
 
         { id: 'val_opacity', op: 'var_get', var: 'opacity' },
-        { id: 'mixed', op: 'math_mix', a: 'col_a', b: 'col_b', t: 'val_opacity' },
+        { id: 'mixed', op: 'math_mix', a: 'col_a', b: 'col_b', t: 'val_opacity', comment: 'Linear blend: mix(A, B, opacity)' },
 
         { id: 'store', op: 'texture_store', tex: 'output_mix', coords: 'coords', value: 'mixed' }
       ]
