@@ -720,6 +720,13 @@ require('./intrinsics.js');
       }
       case 'math_div': {
         const [aExpr, bExpr] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        const aType = this.getArgType(node, 'a', func, inferredTypes);
+        const bType = this.getArgType(node, 'b', func, inferredTypes);
+        const isIntA = aType === 'int' || aType === 'i32';
+        const isIntB = bType === 'int' || bType === 'i32';
+        if (isIntA && isIntB) {
+          return `_applyBinary(${aExpr}, ${bExpr}, (x, y) => Math.trunc(x / y))`;
+        }
         return `_applyBinary(${aExpr}, ${bExpr}, (x, y) => x / y)`;
       }
       case 'math_mod': {
@@ -976,6 +983,21 @@ require('./intrinsics.js');
       }
     }
     return rawArgs;
+  }
+
+  private getArgType(node: Node, key: string, func: FunctionDef, inferredTypes: InferredTypes): string {
+    const val = node[key];
+    if (typeof val === 'string') {
+      const t = inferredTypes?.get(val);
+      if (t) return t;
+      const localVar = func.localVars.find(v => v.id === val);
+      if (localVar) return localVar.type;
+      const input = func.inputs.find(i => i.id === val);
+      if (input) return input.type;
+    }
+    if (typeof val === 'number') return Number.isInteger(val) ? 'int' : 'float';
+    if (typeof val === 'boolean') return 'bool';
+    return 'float';
   }
 
   private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]): string {

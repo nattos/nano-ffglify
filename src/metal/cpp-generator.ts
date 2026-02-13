@@ -146,7 +146,7 @@ export class CppGenerator {
     for (const funcId of requiredFuncs) {
       const func = allFunctions.find((f: FunctionDef) => f.id === funcId)!;
       const hasReturn = func.outputs && func.outputs.length > 0;
-      const returnType = hasReturn ? 'float' : 'void';
+      const returnType = hasReturn ? this.irTypeToCpp(func.outputs![0].type || 'float') : 'void';
       const params = this.buildFuncParams(func);
       lines.push(`${returnType} ${this.sanitizeId(funcId, 'func')}(EvalContext& ctx${params});`);
     }
@@ -285,7 +285,10 @@ export class CppGenerator {
    */
   private buildFuncParams(func: FunctionDef): string {
     if (!func.inputs || func.inputs.length === 0) return '';
-    const params = func.inputs.map(inp => `float ${this.sanitizeId(inp.id, 'input')}`);
+    const params = func.inputs.map(inp => {
+      const cppType = this.irTypeToCpp(inp.type || 'float');
+      return `${cppType} ${this.sanitizeId(inp.id, 'input')}`;
+    });
     return ', ' + params.join(', ');
   }
 
@@ -351,7 +354,7 @@ export class CppGenerator {
     inferredTypes: Map<string, InferredTypes>
   ) {
     const hasReturn = f.outputs && f.outputs.length > 0;
-    const returnType = hasReturn ? 'float' : 'void';
+    const returnType = hasReturn ? this.irTypeToCpp(f.outputs![0].type || 'float') : 'void';
     const params = this.buildFuncParams(f);
     lines.push(`${returnType} ${this.sanitizeId(f.id, 'func')}(EvalContext& ctx${params}) {`);
 
@@ -504,7 +507,13 @@ export class CppGenerator {
         const retVal = this.resolveArg(curr, 'val', func, allFunctions, emitPure, edges, inferredTypes);
         const hasReturn = func.outputs && func.outputs.length > 0;
         if (retVal && retVal !== '0.0f') {
-          lines.push(`${indent}ctx.setReturnValue(${retVal});`);
+          // Only call setReturnValue for types supported by the harness (scalars, vectors, matrices)
+          // Struct types don't have setReturnValue overloads
+          const returnType = hasReturn ? (func.outputs![0].type || 'float') : undefined;
+          const isStructReturn = returnType && this.ir?.structs?.some(s => s.id === returnType);
+          if (!isStructReturn) {
+            lines.push(`${indent}ctx.setReturnValue(${retVal});`);
+          }
           if (hasReturn) {
             lines.push(`${indent}return ${retVal};`);
           } else {
@@ -935,7 +944,7 @@ export class CppGenerator {
         return String(v);
       }
       case 'loop_index':
-        return `static_cast<float>(loop_${node['loop'].replace(/[^a-zA-Z0-9_]/g, '_')})`;
+        return `loop_${node['loop'].replace(/[^a-zA-Z0-9_]/g, '_')}`;
 
       case 'buffer_load': {
         const bufferId = node['buffer'];
@@ -1123,7 +1132,11 @@ export class CppGenerator {
         const map: Record<string, number> = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3 };
         const idxs = channels.split('').map((c: string) => map[c]);
         if (idxs.length === 1) return `${vec}[${idxs[0]}]`;
-        return `std::array<float, ${idxs.length}>{${idxs.map((i: number) => `${vec}[${i}]`).join(', ')}}`;
+        const vecId = node['vec'];
+        const vecType = (typeof vecId === 'string' && inferredTypes) ? inferredTypes.get(vecId) : undefined;
+        const isInt = vecType === 'int2' || vecType === 'int3' || vecType === 'int4';
+        const elemType = isInt ? 'int' : 'float';
+        return `std::array<${elemType}, ${idxs.length}>{${idxs.map((i: number) => `${vec}[${i}]`).join(', ')}}`;
       }
 
       case 'vec_get_element': {

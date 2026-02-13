@@ -510,7 +510,9 @@ export class MslGenerator {
     resourceBindings: Map<string, number>,
     inferredTypes?: Map<string, InferredTypes>
   ) {
-    const returnType = func.outputs && func.outputs.length > 0 ? 'float' : 'void';
+    const returnType = func.outputs && func.outputs.length > 0
+      ? this.mslFuncType(func.outputs[0].type || 'float')
+      : 'void';
     const params = this.buildFuncParams(func);
 
     lines.push(`${returnType} ${this.sanitizeId(func.id, 'func')}(device float* b_globals${params}) {`);
@@ -749,7 +751,16 @@ export class MslGenerator {
         if (Array.isArray((node as any)['values'])) {
           len = (node as any)['values'].length;
         }
-        lines.push(`    float ${this.nodeResId(node.id)}[${len}] = ${expr};`);
+        // Use Metal array<T, N> for compatibility with function params
+        let elemType = 'float';
+        if (inferredTypes) {
+          const nodeType = inferredTypes.get(node.id);
+          if (nodeType) {
+            const match = nodeType.match(/array<([^,]+),/);
+            if (match) elemType = this.irTypeToMsl(match[1].trim());
+          }
+        }
+        lines.push(`    array<${elemType}, ${len}> ${this.nodeResId(node.id)} = ${expr};`);
       } else {
         lines.push(`    auto ${this.nodeResId(node.id)} = ${expr};`);
       }
@@ -1664,7 +1675,7 @@ export class MslGenerator {
       const lastUnderscore = stripped.lastIndexOf('_');
       const elemType = stripped.substring(0, lastUnderscore);
       const len = stripped.substring(lastUnderscore + 1);
-      return `${elemType} ${this.sanitizeId(varId)}[${len}]`;
+      return `${elemType} ${this.sanitizeId(varId)}[${len}] = {}`;
     }
     let initStr = '';
     if (Array.isArray(init)) {
@@ -1672,6 +1683,10 @@ export class MslGenerator {
       initStr = ` = ${type}(${init.map(v => this.formatFloat(v)).join(', ')})`;
     } else if (init !== undefined) {
       initStr = ` = ${this.formatFloat(init)}`;
+    } else {
+      // Zero-initialize: matches WGSL formatZero() and C++ = {}
+      const builtinTypes = ['float', 'int', 'bool', 'float2', 'float3', 'float4', 'int2', 'int3', 'int4', 'float3x3', 'float4x4'];
+      initStr = builtinTypes.includes(type) ? ` = ${type}(0)` : ' = {}';
     }
     return `${type} ${this.sanitizeId(varId)}${initStr}`;
   }
@@ -1684,7 +1699,26 @@ export class MslGenerator {
 
   private buildFuncParams(func: FunctionDef): string {
     if (!func.inputs || func.inputs.length === 0) return '';
-    return ', ' + func.inputs.map(i => `float ${this.sanitizeId(i.id, 'var')}`).join(', ');
+    return ', ' + func.inputs.map(i => {
+      const mslType = this.mslFuncType(i.type || 'float');
+      return `${mslType} ${this.sanitizeId(i.id, 'var')}`;
+    }).join(', ');
+  }
+
+  /**
+   * Convert an IR type to a valid MSL type for function params/returns.
+   * Handles the __array_ marker from irTypeToMsl by converting to Metal array<T, N>.
+   */
+  private mslFuncType(irType: string): string {
+    const mslType = this.irTypeToMsl(irType);
+    if (mslType.startsWith('__array_')) {
+      const stripped = mslType.substring('__array_'.length);
+      const lastUnderscore = stripped.lastIndexOf('_');
+      const elemType = stripped.substring(0, lastUnderscore);
+      const len = stripped.substring(lastUnderscore + 1);
+      return `array<${elemType}, ${len}>`;
+    }
+    return mslType;
   }
 
   /**
