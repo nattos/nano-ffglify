@@ -294,165 +294,71 @@ export interface Edge {
 }
 
 // ------------------------------------------------------------------
-// Standard OpCodes (Reference)
+// Standard OpCodes
 // ------------------------------------------------------------------
-// The IR uses a strict set of Builtin Ops.
-//
-// Signatures Legend:
-// - T: Generic Scalar (float) or Vector (floatN)
-// - B: Boolean or Boolean Vector (implied)
-//
-// Most Math Ops support overloaded signatures:
-// - Scalar: (float, float) -> float
-// - Vector: (floatN, floatN) -> floatN
-// - Broadcast: (floatN, float) -> floatN (and vice versa)
+// The IR uses a strict set of Builtin Ops. See OpDefs in
+// builtin-schemas.ts for full argument schemas and doc strings.
 //
 export type BuiltinOp =
-  // ----------------------------------------------------------------
   // Math & Logic
-  // ----------------------------------------------------------------
-  // Standard Arithmetic:
-  // Inputs: { a: T, b: T } | Output: T
   | 'math_add' | 'math_sub' | 'math_mul' | 'math_div' | 'math_mod'
   | 'math_pow' | 'math_min' | 'math_max'
-  // Multiply-Add: { a: T, b: T, c: T } -> T (a * b + c)
   | 'math_mad'
-
-  // Unary Math:
-  // Inputs: { val: T } | Output: T
   | 'math_abs' | 'math_ceil' | 'math_floor' | 'math_sqrt' | 'math_exp' | 'math_log'
   | 'math_sin' | 'math_cos' | 'math_tan' | 'math_asin' | 'math_acos' | 'math_atan'
   | 'math_sinh' | 'math_cosh' | 'math_tanh' | 'math_asinh' | 'math_acosh' | 'math_atanh' | 'math_sign'
-  | 'math_clamp' // { val: T, min: T, max: T } -> T
-  | 'math_step' // { edge: T, x: T } -> T
-  | 'math_smoothstep' // { edge0: T, edge1: T, x: T } -> T
-  | 'math_mix' // { a: T, b: T, t: T|float } -> T
-
-  // Special Math:
-  | 'math_atan2' // { y: T, x: T } -> T
-  | 'math_div_scalar' // { val: T(vec), scalar: float } -> T
-
-  // Logic & Comparison:
-  // Inputs: { a: T, b: T } | Output: T (0.0/1.0) or B (true/false)
-  // Note: In strict mode, output is boolean. In shader mode, often maps to mix/step.
+  | 'math_clamp' | 'math_step' | 'math_smoothstep' | 'math_mix'
+  | 'math_atan2' | 'math_div_scalar'
   | 'math_gt' | 'math_lt' | 'math_ge' | 'math_le' | 'math_eq' | 'math_neq'
-  | 'math_and' | 'math_or' | 'math_xor' | 'math_not' // { val: B } -> B
-
-  // Constants:
-  | 'math_pi' | 'math_e' // { } -> float
-
-  // ----------------------------------------------------------------
-  // Advanced Math
-  // ----------------------------------------------------------------
-  // Unary: { val: T } -> T
+  | 'math_and' | 'math_or' | 'math_xor' | 'math_not'
+  | 'math_pi' | 'math_e'
   | 'math_fract' | 'math_trunc' | 'math_round'
-  // Classification: { val: T } -> boolean
   | 'math_is_nan' | 'math_is_inf' | 'math_is_finite'
-  // Advanced:
-  | 'math_flush_subnormal' // { val: T } -> T
-  // Decomposition:
-  | 'math_mantissa' | 'math_exponent' // { val: T } -> T
-  | 'math_frexp_mantissa' | 'math_frexp_exponent' // { val: T } -> T
-  | 'math_ldexp' // { val: T, exp: int|T } -> T
-  | 'literal' // { val: any } -> any
+  | 'math_flush_subnormal'
+  | 'math_mantissa' | 'math_exponent'
+  | 'math_frexp_mantissa' | 'math_frexp_exponent'
+  | 'math_ldexp'
+  | 'literal'
 
-  // ----------------------------------------------------------------
-  // Scalar Casts & Constructors
-  // ----------------------------------------------------------------
-  // Casts: { val: any } -> Type
+  // Casts & Constructors
   | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
   | 'static_cast_int2' | 'static_cast_int3' | 'static_cast_int4'
   | 'static_cast_float2' | 'static_cast_float3' | 'static_cast_float4'
-  // Constructors: { val: scalar } -> scalar
   | 'float' | 'int' | 'bool' | 'string'
 
-  // ----------------------------------------------------------------
-  // Extended Types
-  // ----------------------------------------------------------------
-  // Vectors:
-  | 'float2' // { x: float, y: float } -> float2
-  | 'float3' // { x, y, z } -> float3
-  | 'float4' // { x, y, z, w } -> float4
-  | 'int2' // { x: int, y: int } -> int2
-  | 'int3' // { x, y, z } -> int3
-  | 'int4' // { x, y, z, w } -> int4
-  | 'vec_length'    // { a: T } -> float
-  | 'vec_normalize' // { a: T } -> T
-  | 'vec_dot'       // { a: T, b: T } -> float
-  | 'vec_mix'       // { a: T, b: T, t: float|T } -> T
-  | 'color_mix'     // { a: float4, b: float4, t: float } -> float4 (Porter-Duff)
-  | 'vec_swizzle'   // { vec: T, channels: string("xy") } -> T'
-  | 'vec_get_element' // { vec: T, index: int } -> float
-  | 'vec_set_element' // { vec: T, index: int, value: float } -> any
+  // Vectors
+  | 'float2' | 'float3' | 'float4'
+  | 'int2' | 'int3' | 'int4'
+  | 'vec_length' | 'vec_normalize' | 'vec_dot' | 'vec_mix'
+  | 'color_mix'
+  | 'vec_swizzle' | 'vec_get_element' | 'vec_set_element'
 
-  // Matrices:
-  | 'float3x3' // { ...9 floats }
-  | 'float4x4' // { ...16 floats }
-  | 'mat_identity'  // { size: int } -> mat
-  | 'mat_mul'       // { a: mat, b: mat|vec } -> mat|vec
-  | 'mat_transpose' // { val: mat } -> mat
-  | 'mat_inverse'   // { val: mat } -> mat
-  | 'mat_extract'   // { mat: mat, col: int, row: int } -> float
+  // Matrices
+  | 'float3x3' | 'float4x4'
+  | 'mat_identity' | 'mat_mul' | 'mat_transpose' | 'mat_inverse' | 'mat_extract'
 
-  // Quaternions:
-  | 'quat' // { x, y, z, w }
-  | 'quat_identity' // {} -> quat
-  | 'quat_mul'      // { a: quat, b: quat } -> quat
-  | 'quat_slerp'    // { a: quat, b: quat, t: float } -> quat
-  | 'quat_to_float4x4' // { q: quat } -> float4x4
-  | 'quat_rotate'   // { vec: float3, q: quat } -> float3
+  // Quaternions
+  | 'quat' | 'quat_identity' | 'quat_mul' | 'quat_slerp'
+  | 'quat_to_float4x4' | 'quat_rotate'
 
-  // ----------------------------------------------------------------
-  // Variables, Data, & Memory
-  // ----------------------------------------------------------------
-  | 'var_get'    // { var: string } -> any
-  | 'var_set'    // { var: string, val: any } -> val
-  | 'const_get'  // { name: string } -> any
-  | 'builtin_get' // { name: BuiltinName } -> any
-  | 'loop_index' // { loop: string } -> int
+  // Variables & Data
+  | 'var_get' | 'var_set' | 'const_get' | 'builtin_get' | 'loop_index'
 
-  // Structs:
-  | 'struct_construct' // { ...members } -> struct (Type inferred from Op ID/Context)
-  | 'struct_extract'   // { struct: T, field: string } -> T.field
+  // Structs & Arrays
+  | 'struct_construct' | 'struct_extract'
+  | 'array_construct' | 'array_set' | 'array_extract' | 'array_length'
 
-  // Arrays:
-  | 'array_construct'  // { ...elements } -> array
-  | 'array_set'        // { array: string(Ref), index: int, val: T } -> void
-  | 'array_extract'    // { array: T[], index: int } -> T
-  | 'array_length'     // { array: T[] } -> int
-
-  // ----------------------------------------------------------------
   // Flow Control
-  // ----------------------------------------------------------------
-  | 'flow_branch' // { cond: bool, true: NodeID, false: NodeID }
-  | 'flow_loop'   // { count: int, body: NodeID }
-  | 'call_func'   // { func: string, ...args } -> any
-  | 'func_return' // { val: any }
+  | 'flow_branch' | 'flow_loop' | 'call_func' | 'func_return'
 
-  // ----------------------------------------------------------------
-  // GPU / Resource Ops
-  // ----------------------------------------------------------------
-  // Buffers (Typed):
-  | 'buffer_load'  // { buffer: string, index: int } -> T
-  | 'buffer_store' // { buffer: string, index: int, value: T } -> void
+  // Resources
+  | 'buffer_load' | 'buffer_store'
+  | 'texture_sample' | 'texture_load' | 'texture_store'
+  | 'resource_get_size' | 'resource_get_format'
 
-  // Textures:
-  | 'texture_sample' // { texture: string, uv: float2 } -> float4. NOTE: Emulated via manual bilinear/wrap logic in WGSL for universal compatibility with storage textures.
-  | 'texture_load'   // { texture: string, coords: int2 } -> float4
-  | 'texture_store'  // { texture: string, coords: int2, value: float4 } -> void
-
-  // Metadata:
-  | 'resource_get_size'   // { id: string } -> float2
-  | 'resource_get_format' // { id: string } -> int
-
-  // ----------------------------------------------------------------
-  // Side Effects / Commands
-  // ----------------------------------------------------------------
-  | 'cmd_dispatch' // { func: string, dispatch: int3, ...args }
-  | 'cmd_resize_resource' // { id: string, size: int2 }
-  | 'cmd_draw' // { target: string, vertex: string, fragment: string, count: int, pipeline: RenderPipelineDef }
-  | 'cmd_sync_to_cpu' // { resource: string }
-  | 'cmd_wait_cpu_sync'; // { resource: string }
+  // Commands
+  | 'cmd_dispatch' | 'cmd_resize_resource' | 'cmd_draw'
+  | 'cmd_sync_to_cpu' | 'cmd_wait_cpu_sync';
 
 
 // ------------------------------------------------------------------
