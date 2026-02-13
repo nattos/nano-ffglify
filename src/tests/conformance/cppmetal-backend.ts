@@ -14,6 +14,7 @@ import { TestBackend } from './types';
 import { CppGenerator } from '../../metal/cpp-generator';
 import { MslGenerator } from '../../metal/msl-generator';
 import { makeResourceStates } from '../../runtime/resources';
+import { validateIR } from '../../ir/validator';
 
 function getCppMetalBuildDir(): string {
   // Use unique subdirectory for each call to avoid parallel test conflicts
@@ -29,6 +30,13 @@ export const CppMetalBackend: TestBackend = {
   name: 'CppMetal',
 
   createContext: async (ir: IRDocument, inputs: Map<string, RuntimeValue> = new Map(), builtins?: Map<string, RuntimeValue>) => {
+    // Validate IR
+    const errors = validateIR(ir);
+    const criticalErrors = errors.filter(e => e.severity === 'error');
+    if (criticalErrors.length > 0) {
+      throw new Error(`IR Validation Failed:\n${criticalErrors.map(e => e.message).join('\n')}`);
+    }
+
     const ctx = new EvaluationContext(ir, inputs);
     if (builtins) {
       builtins.forEach((v, k) => ctx.builtins.set(k, v));
@@ -160,7 +168,7 @@ export const CppMetalBackend: TestBackend = {
       dataFileArg = `-d "${dataFilePath}" `;
     }
 
-    // 7. Build input args from ctx.inputs
+    // 7. Build input args from ctx.inputs and ctx.builtins
     const inputArgs: string[] = [];
     for (const [name, value] of ctx.inputs) {
       if (Array.isArray(value)) {
@@ -170,6 +178,12 @@ export const CppMetalBackend: TestBackend = {
       } else if (typeof value === 'boolean') {
         inputArgs.push('-i', `${name}:${value ? 1 : 0}`);
       } else if (typeof value === 'number') {
+        inputArgs.push('-i', `${name}:${value}`);
+      }
+    }
+    // Pass builtins as inputs (CPU-allowed builtins like time, delta_time, etc.)
+    for (const [name, value] of ctx.builtins) {
+      if (typeof value === 'number') {
         inputArgs.push('-i', `${name}:${value}`);
       }
     }

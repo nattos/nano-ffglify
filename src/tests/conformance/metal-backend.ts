@@ -240,6 +240,17 @@ export const MetalBackend: TestBackend = {
         }
       }
     }
+
+    // Fill globals with builtin values (time, delta_time, bpm, etc.)
+    for (const [name, value] of ctx.builtins) {
+      const offset = varMap.get(name);
+      if (offset !== undefined && typeof value === 'number') {
+        if (offset < initialGlobals.length) {
+          initialGlobals[offset] = value;
+        }
+      }
+    }
+
     const globalsDataStr = '[' + Array.from(initialGlobals).map(v => String(v)).join(',') + ']';
 
     // 5. Execute harness

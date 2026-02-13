@@ -5,7 +5,8 @@
 
 import { IRDocument, FunctionDef, Node, Edge, StructDef } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
-import { inferFunctionTypes, InferredTypes } from '../ir/validator';
+import { inferFunctionTypes, InferredTypes, analyzeFunction } from '../ir/validator';
+import { BUILTIN_CPU_ALLOWED } from '../ir/builtin-schemas';
 
 const isMslDebugEnabled = () => {
   try {
@@ -56,10 +57,13 @@ export class MslGenerator {
 
     const allFunctions = this.collectFunctions(entryFunc, ir.functions);
 
-    // Infer types for all functions
+    // Infer types and analyze functions for used builtins
     const inferredTypes = new Map<string, InferredTypes>();
+    const allUsedBuiltins = new Set<string>();
     for (const func of allFunctions) {
-      inferredTypes.set(func.id, inferFunctionTypes(func, ir));
+      const analysis = analyzeFunction(func, ir);
+      inferredTypes.set(func.id, analysis.inferredTypes);
+      analysis.usedBuiltins.forEach(b => allUsedBuiltins.add(b));
     }
 
     // Analyze variables for globals buffer allocation
@@ -81,6 +85,14 @@ export class MslGenerator {
         varOffset += this.getTypeFlatSize(input.type);
       }
     });
+
+    // Allocate space for CPU-allowed builtins used by any function
+    for (const b of allUsedBuiltins) {
+      if (BUILTIN_CPU_ALLOWED.includes(b) && !varMap.has(b)) {
+        varMap.set(b, varOffset);
+        varOffset += 1; // All CPU builtins are float
+      }
+    }
 
     // Allocate space for local vars and any var_set targets
     for (const func of allFunctions) {
@@ -206,10 +218,13 @@ export class MslGenerator {
 
       const allFunctions = this.collectFunctions(entryFunc, ir.functions);
 
-      // Infer types for all functions
+      // Infer types and analyze functions for used builtins
       const inferredTypes = new Map<string, InferredTypes>();
+      const allUsedBuiltins = new Set<string>();
       for (const func of allFunctions) {
-        inferredTypes.set(func.id, inferFunctionTypes(func, ir));
+        const analysis = analyzeFunction(func, ir);
+        inferredTypes.set(func.id, analysis.inferredTypes);
+        analysis.usedBuiltins.forEach(b => allUsedBuiltins.add(b));
       }
 
       // Allocate varMap for inputs and local vars (same as compile())
@@ -228,6 +243,15 @@ export class MslGenerator {
           varOffset += this.getTypeSize(input.type);
         }
       }
+
+      // Allocate space for CPU-allowed builtins used by any function
+      for (const b of allUsedBuiltins) {
+        if (BUILTIN_CPU_ALLOWED.includes(b) && !varMap.has(b)) {
+          varMap.set(b, varOffset);
+          varOffset += 1; // All CPU builtins are float
+        }
+      }
+
       for (const func of allFunctions) {
         for (const v of func.localVars || []) {
           if (!varMap.has(v.id)) {
@@ -780,6 +804,12 @@ export class MslGenerator {
       } else if (curr.op === 'func_return') {
         const val = this.resolveArg(curr, 'val', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         if (isKernel) {
+          // Assign return value to local var so readback epilogue captures it
+          const returnVarId = curr['val'];
+          if (typeof returnVarId === 'string' && func.localVars?.some(v => v.id === returnVarId)) {
+            const varName = this.sanitizeId(returnVarId, 'var');
+            lines.push(`${indent}${varName} = ${val};`);
+          }
           this.emitReadbackEpilogue(func, lines, varMap, indent);
           lines.push(`${indent}return;`);
         } else {
@@ -1420,6 +1450,13 @@ export class MslGenerator {
         const name = node['name'] as string;
         if (name === 'global_invocation_id') {
           return 'float3(gid)';
+        }
+        if (BUILTIN_CPU_ALLOWED.includes(name)) {
+          const offset = varMap.get(name);
+          if (offset !== undefined) {
+            return `b_globals[${offset}]`;
+          }
+          throw new Error(`MSL Generator: Builtin '${name}' not allocated in globals buffer`);
         }
         throw new Error(`MSL Generator: Unsupported builtin '${name}'`);
       }

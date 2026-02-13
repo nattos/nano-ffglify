@@ -5,7 +5,8 @@
 
 import { IRDocument, FunctionDef, Node, Edge } from '../ir/types';
 import { reconstructEdges } from '../ir/utils';
-import { inferFunctionTypes, InferredTypes } from '../ir/validator';
+import { inferFunctionTypes, InferredTypes, analyzeFunction, FunctionAnalysis } from '../ir/validator';
+import { BUILTIN_CPU_ALLOWED } from '../ir/builtin-schemas';
 
 const isCppDebugEnabled = () => {
   try {
@@ -33,12 +34,14 @@ export interface CppCompileResult {
  */
 export class CppGenerator {
   private ir?: IRDocument;
+  private functionAnalysis = new Map<string, FunctionAnalysis>();
 
   /**
    * Compile an IR document to C++ source code
    */
   compile(ir: IRDocument, entryPointId: string): CppCompileResult {
     this.ir = ir;
+    this.functionAnalysis.clear();
     const allFunctions = ir.functions;
     const entryFunc = allFunctions.find((f: FunctionDef) => f.id === entryPointId);
     if (!entryFunc) throw new Error(`Entry point '${entryPointId}' not found`);
@@ -104,11 +107,19 @@ export class CppGenerator {
 
     collectFunctions(entryPointId);
 
-    // Infer types for all functions
+    // Infer types and analyze functions
     const inferredTypes = new Map<string, InferredTypes>();
     for (const func of allFunctions) {
       if (requiredFuncs.has(func.id) || func.id === entryPointId) {
-        inferredTypes.set(func.id, inferFunctionTypes(func, ir));
+        const analysis = analyzeFunction(func, ir);
+        inferredTypes.set(func.id, analysis.inferredTypes);
+        this.functionAnalysis.set(func.id, analysis);
+      }
+    }
+    // Also analyze shader functions (for builtin injection during dispatch)
+    for (const [id, info] of shaderFuncs) {
+      if (!this.functionAnalysis.has(id)) {
+        this.functionAnalysis.set(id, analyzeFunction(info.func, ir));
       }
     }
 
@@ -407,7 +418,7 @@ export class CppGenerator {
       'vec_get_element', 'call_func',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length',
-      'resource_get_size', 'resource_get_format',
+      'resource_get_size', 'resource_get_format', 'builtin_get',
       'math_pi', 'math_e',
       'mat_identity', 'mat_mul', 'mat_inverse', 'mat_transpose',
       'quat', 'quat_identity', 'quat_mul', 'quat_rotate', 'quat_slerp', 'quat_to_float4x4',
@@ -653,23 +664,34 @@ export class CppGenerator {
       // If shader has no explicit inputs but IR has global inputs, serialize those
       const hasGlobalInputs = !hasExplicitInputs && this.ir?.inputs && this.ir.inputs.length > 0;
 
-      if (hasExplicitInputs) {
+      // Collect CPU-allowed builtins used by the target shader
+      const shaderAnalysis = this.functionAnalysis.get(targetFunc);
+      const usedBuiltins = shaderAnalysis ? [...shaderAnalysis.usedBuiltins].filter(b => BUILTIN_CPU_ALLOWED.includes(b)) : [];
+
+      if (hasExplicitInputs || usedBuiltins.length > 0) {
         lines.push(`${indent}{`);
         lines.push(`${indent}    std::vector<float> _shader_args;`);
 
-        for (const input of targetFuncDef!.inputs!) {
-          let argExpr: string;
-          if (node['args'] && node['args'][input.id]) {
-            const argId = node['args'][input.id];
-            argExpr = this.resolveArg({ ...node, [input.id]: argId } as Node, input.id, func, allFunctions, emitPure, edges, inferredTypes);
-          } else if (node[input.id] !== undefined) {
-            argExpr = this.resolveArg(node, input.id, func, allFunctions, emitPure, edges, inferredTypes);
-          } else {
-            argExpr = '0.0f';
-          }
+        if (hasExplicitInputs) {
+          for (const input of targetFuncDef!.inputs!) {
+            let argExpr: string;
+            if (node['args'] && node['args'][input.id]) {
+              const argId = node['args'][input.id];
+              argExpr = this.resolveArg({ ...node, [input.id]: argId } as Node, input.id, func, allFunctions, emitPure, edges, inferredTypes);
+            } else if (node[input.id] !== undefined) {
+              argExpr = this.resolveArg(node, input.id, func, allFunctions, emitPure, edges, inferredTypes);
+            } else {
+              argExpr = '0.0f';
+            }
 
-          const irType = input.type || 'float';
-          this.emitArgFlattening(`${indent}    `, argExpr, irType, lines);
+            const irType = input.type || 'float';
+            this.emitArgFlattening(`${indent}    `, argExpr, irType, lines);
+          }
+        }
+
+        // Inject CPU-allowed builtins used by the shader
+        for (const b of usedBuiltins) {
+          lines.push(`${indent}    _shader_args.push_back(ctx.getInput("${b}"));`);
         }
 
         lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
@@ -1290,7 +1312,13 @@ export class CppGenerator {
         return `${this.formatFloat(fmtId)}`;
       }
 
-
+      case 'builtin_get': {
+        const name = node['name'] as string;
+        if (BUILTIN_CPU_ALLOWED.includes(name)) {
+          return `ctx.getInput("${name}")`;
+        }
+        throw new Error(`C++ Generator: GPU Built-in '${name}' is not available in CPU context`);
+      }
 
       default:
         throw new Error(`C++ Generator: Unsupported op '${node.op}'`);
