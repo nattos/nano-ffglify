@@ -12,13 +12,14 @@ import { WebGpuBackend } from './webgpu-backend';
  * to run as a Compute Shader on the GPU.
  */
 const getComponentCount = (type: string): number => {
-  if (type === 'float2' || type === 'vec2<float>') return 2;
-  if (type === 'float3' || type === 'vec3<float>') return 3;
-  if (type === 'float4' || type === 'vec4<float>') return 4;
-  if (type === 'float3x3' || type === 'mat3x3<float>') return 9;
-  if (type === 'float4x4' || type === 'mat4x4<float>') return 16;
-  if (type.startsWith('array<')) {
-    const match = type.match(/,\s*(\d+)>/);
+  const t = type.toLowerCase();
+  if (t === 'float2' || t === 'vec2<float>' || t === 'vec2<f32>') return 2;
+  if (t === 'float3' || t === 'vec3<float>' || t === 'vec3<f32>') return 3;
+  if (t === 'float4' || t === 'vec4<float>' || t === 'vec4<f32>') return 4;
+  if (t === 'float3x3' || t === 'mat3x3<float>' || t === 'mat3x3<f32>') return 9;
+  if (t === 'float4x4' || t === 'mat4x4<float>' || t === 'mat4x4<f32>') return 16;
+  if (t.startsWith('array<')) {
+    const match = t.match(/,\s*(\d+)>/);
     if (match) return parseInt(match[1]);
   }
   return 1;
@@ -65,9 +66,16 @@ export const ForceOntoGPUTestBackend: TestBackend = {
         const varId = n.op === 'var_set' ? n['var'] : RETURN_CAPTURE_VAR;
         if (!varCaptures.has(varId)) {
           const valId = n['val'];
-          const type = nodeTypes.get(valId) || 'float';
+          let type = nodeTypes.get(valId);
+          if (!type) {
+            // Check local vars or inputs if it's not a node ID
+            type = (originalFunc.localVars.find(v => v.id === valId)?.type as DataType) ||
+              (originalFunc.inputs.find(i => i.id === valId)?.type as DataType) ||
+              'float';
+          }
+          const count = getComponentCount(type as string);
           varCaptures.set(varId, { offset: currentOffset, type: type as any });
-          currentOffset += getComponentCount(type as string);
+          currentOffset += count;
         }
       }
     });

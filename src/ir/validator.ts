@@ -102,11 +102,11 @@ const resolveNodeType = (
   const functionId = func.id;
   if (cache.has(nodeId)) return cache.get(nodeId)!;
 
-  // Sentinel to break recursion cycles
-  cache.set(nodeId, 'any');
-
   const node = func.nodes.find(n => n.id === nodeId);
   if (!node) return 'any';
+
+  // Sentinel to break recursion cycles
+  cache.set(nodeId, 'any');
 
   // console.log(`[Validator] Resolving ${node.id} (${node.op})`);
 
@@ -165,6 +165,7 @@ const resolveNodeType = (
     } else if (typeof val === 'string') {
       const refNode = func.nodes.find(n => n.id === val);
       const refInput = func.inputs.find(i => i.id === val);
+      const refLocal = func.localVars.find(v => v.id === val);
       const refGlobal = doc.inputs?.find(i => i.id === val);
 
       const def = OpDefs[node.op as BuiltinOp];
@@ -174,6 +175,8 @@ const resolveNodeType = (
         inputTypes[key] = resolveNodeType(val, func, doc, cache, resourceIds, errors, edges);
       } else if (refInput && !isNameProperty) {
         inputTypes[key] = refInput.type as ValidationType;
+      } else if (refLocal && !isNameProperty) {
+        inputTypes[key] = refLocal.type as ValidationType;
       } else if (refGlobal && !isNameProperty) {
         inputTypes[key] = refGlobal.type as ValidationType;
       } else {

@@ -90,5 +90,30 @@ describe('Validator Basic Checks', () => {
       const errors = validateIR(ir);
       expect(errors).toHaveLength(0);
     });
+
+    it('should correctly infer type when an operation uses a local variable', () => {
+      const ir: IRDocument = {
+        version: '3.0',
+        meta: { name: 'test' },
+        entryPoint: 'main',
+        functions: [{
+          id: 'main',
+          type: 'cpu',
+          inputs: [],
+          outputs: [],
+          localVars: [{ id: 'res', type: 'float3' }],
+          nodes: [
+            { id: 'v', op: 'float3', x: 1, y: 2, z: 3 },
+            { id: 'sink', op: 'var_set', var: 'res', val: 'v' },
+            { id: 'add', op: 'math_add', a: 'res', b: 'v' },
+            { id: 'ret', op: 'func_return', val: 'add' }
+          ]
+        }],
+        resources: [],
+        inputs: []
+      };
+      const typeAnalysis = inferFunctionTypes(ir.functions[0], ir);
+      expect(typeAnalysis.get('add')).toBe('float3');
+    });
   });
 });
