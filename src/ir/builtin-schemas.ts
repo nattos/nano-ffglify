@@ -209,9 +209,16 @@ export interface MathBinaryArgs { a: any; b: any;[key: string]: any; }
 
 /**
  * Numeric binary ops (add, sub, mul, div, mod, pow, min, max, atan2, vec_dot)
+ *
+ * Quirks:
+ * - Mixed int/float operands are auto-coerced to float. WGSL is strict about this
+ *   (`i32 * abstract-float` is invalid), so the WGSL generator uses `resolveCoercedArgs`
+ *   with 'unify' mode to insert explicit `f32()` casts.
+ * - The validator types all numeric literals as 'float' (even integer literals like `0`),
+ *   so scalar int<->float coercion is always allowed to accommodate this.
  */
 export const MathNumericBinaryDef = defineOp<MathBinaryArgs>({
-  doc: "Standard numeric binary math operation.",
+  doc: "Standard numeric binary math operation. Mixed int/float operands are auto-coerced to float.",
   args: {
     a: { type: AnyData, doc: "First operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] },
     b: { type: AnyData, doc: "Second operand", refable: true, literalTypes: ['float', 'int', 'float2', 'float3', 'float4'] }
@@ -275,9 +282,14 @@ export const MathLogicUnaryDef = defineOp<MathUnaryArgs>({
 
 /**
  * Casting ops (static_cast_int, etc.) - broad inputs
+ *
+ * Quirks:
+ * - `static_cast_int` on Metal uses a `safe_cast_int` helper with wrapping semantics
+ *   because `int(2147483648.0)` is undefined behavior in Metal/C++.
+ * - Vector casts (static_cast_int3, static_cast_float4, etc.) cast element-wise.
  */
 export const MathCastUnaryDef = defineOp<MathUnaryArgs>({
-  doc: "Type-casting unary operation.",
+  doc: "Type-casting unary operation. On Metal, float->int uses wrapping for out-of-range values.",
   args: {
     val: { type: AnyData, doc: "Input value", refable: true, literalTypes: ['float', 'int', 'bool', 'string', 'float2', 'float3', 'float4'] }
   }
@@ -294,7 +306,7 @@ export const MathClampDef = defineOp<MathClampArgs>({
 });
 
 export const LiteralDef = defineOp<LiteralArgs>({
-  doc: "Constant literal value.",
+  doc: "Constant literal value. The validator types ALL numeric literals as 'float', even integer values like 0 or 42. Use static_cast_int if you need a typed int.",
   args: { val: { type: z.any(), doc: "The literal value (scalar, vector, matrix, array, etc.)", literalTypes: ['float', 'int', 'bool', 'string', 'float2', 'float3', 'float4', 'float3x3', 'float4x4', 'array', 'struct'] } }
 });
 
@@ -339,10 +351,10 @@ export const Int4ConstructorDef = defineOp<Float4Args>({
 
 export interface VecSwizzleArgs { vec: any; channels: string;[key: string]: any; }
 export const VecSwizzleDef = defineOp<VecSwizzleArgs>({
-  doc: "Swizzle components of a vector.",
+  doc: "Swizzle components of a vector. Works on both float and int vectors. Output type preserves the input's element type (e.g. int3.xz -> int2).",
   args: {
-    vec: { type: AnyVector, doc: "Input vector", refable: true, literalTypes: ['float2', 'float3', 'float4'] },
-    channels: { type: z.string(), doc: "Swizzle mask (e.g. 'xyz')", literalTypes: ['string'], isIdentifier: true }
+    vec: { type: AnyVector, doc: "Input vector (float or int)", refable: true, literalTypes: ['float2', 'float3', 'float4'] },
+    channels: { type: z.string(), doc: "Swizzle mask using xyzw (e.g. 'xyz', 'xz', 'wwww')", literalTypes: ['string'], isIdentifier: true }
   }
 });
 
@@ -464,7 +476,7 @@ export const MatMulDef = defineOp<MatMulArgs>({
 });
 
 export const MatUnaryDef = defineOp<MatUnaryArgs>({
-  doc: "Matrix unary operation (transpose, inverse).",
+  doc: "Matrix unary operation (transpose, inverse). Note: mat_transpose is not implemented in the standalone MSL generator.",
   args: { val: { type: z.any(), doc: "Input matrix", refable: true } }
 });
 
@@ -504,8 +516,8 @@ export const QuatRotateDef = defineOp<QuatRotateArgs>({
 });
 
 export const ColorMixDef = defineOp<ColorMixArgs>({
-  doc: "Mix colors",
-  args: { a: { type: Float4Schema, doc: "a", refable: true }, b: { type: Float4Schema, doc: "b", refable: true }, t: { type: FloatSchema, doc: "t", refable: true, optional: true } }
+  doc: "Alpha-aware premultiplied color blend (NOT a simple lerp). The t parameter is optional and may be unused by some backends.",
+  args: { a: { type: Float4Schema, doc: "Source color (RGBA)", refable: true }, b: { type: Float4Schema, doc: "Destination color (RGBA)", refable: true }, t: { type: FloatSchema, doc: "Blend factor (optional, unused in premultiplied blend)", refable: true, optional: true } }
 });
 
 // --- Structs & Arrays ---
@@ -518,9 +530,9 @@ export const StructExtractDef = defineOp<StructExtractArgs>({
 
 export interface ArraySetArgs { array: any; index: any; value: any;[key: string]: any; }
 export const ArraySetDef = defineOp<ArraySetArgs>({
-  doc: "Set an element in an array.",
+  doc: "Set an element in an array. Mutates in-place — the `array` arg should reference a var_get of the array variable, not a pure node.",
   isExecutable: true,
-  args: { array: { type: z.any(), doc: "Array instance", refable: true, refType: 'data' }, index: { type: IntSchema, doc: "Index", refable: true }, value: { type: z.any(), doc: "Value", refable: true } }
+  args: { array: { type: z.any(), doc: "Array variable (use var_get ref)", refable: true, refType: 'data' }, index: { type: IntSchema, doc: "Index", refable: true }, value: { type: z.any(), doc: "Value", refable: true } }
 });
 
 export interface ArrayExtractArgs { array: any; index: any;[key: string]: any; }
@@ -581,8 +593,8 @@ export const BuiltinNameSchema = z.enum([
 
 export interface BuiltinGetArgs { name: string;[key: string]: any; }
 export const BuiltinGetDef = defineOp<BuiltinGetArgs>({
-  doc: "Get a GPU/Shader built-in variable.",
-  args: { name: { type: BuiltinNameSchema, doc: "Built-in name", refType: 'builtin', isIdentifier: true } }
+  doc: "Get a GPU/Shader built-in variable. Compute builtins (global_invocation_id, local_invocation_id, workgroup_id, num_workgroups) are int3, NOT float3. CPU-allowed builtins (time, delta_time, bpm, beat_number, beat_delta) are auto-injected as shader args by cmd_dispatch.",
+  args: { name: { type: BuiltinNameSchema, doc: "Built-in name (see BUILTIN_TYPES for return types)", refType: 'builtin', isIdentifier: true } }
 });
 
 export interface VarSetArgs { var: string; val: any;[key: string]: any; }
@@ -599,20 +611,20 @@ export interface MathClampArgs { val: any; min: any; max: any;[key: string]: any
 
 export interface VarGetArgs { var: string;[key: string]: any; }
 export const VarGetDef = defineOp<VarGetArgs>({
-  doc: "Get the value of a local variable.",
+  doc: "Get the value of a local variable. Resolution order: function inputs first, then localVars, then IR-level global inputs.",
   args: { var: { type: z.string(), doc: "Name of the variable", requiredRef: true, refType: 'var', isIdentifier: true } }
 });
 
 export const FlowLoopDef = defineOp<FlowLoopArgs>({
-  doc: "Loop over a sequence.",
+  doc: "Loop over a sequence. Use either `count` (iterates 0..count-1) OR `start`+`end` (iterates start..end-1), not both. Access the current index via a `loop_index` node with a matching `tag`.",
   isExecutable: true,
   args: {
-    count: { type: IntSchema, doc: "Number of iterations", refable: true, optional: true },
-    start: { type: IntSchema, doc: "Start index", refable: true, optional: true },
-    end: { type: IntSchema, doc: "End index", refable: true, optional: true },
+    count: { type: IntSchema, doc: "Number of iterations (0..count-1). Mutually exclusive with start/end.", refable: true, optional: true },
+    start: { type: IntSchema, doc: "Start index (inclusive). Use with end.", refable: true, optional: true },
+    end: { type: IntSchema, doc: "End index (exclusive). Use with start.", refable: true, optional: true },
     exec_body: { type: z.string(), doc: "Node ID for loop body", requiredRef: true, optional: true, refType: 'exec' },
     exec_completed: { type: z.string(), doc: "Node ID for after loop", requiredRef: true, optional: true, refType: 'exec' },
-    tag: { type: z.string(), doc: "Loop tag for identification", optional: true, refable: true, isIdentifier: true }
+    tag: { type: z.string(), doc: "Loop tag — must match the `loop` arg in loop_index nodes to retrieve the current iteration index", optional: true, refable: true, isIdentifier: true }
   }
 });
 
@@ -654,7 +666,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   // Special Math
   'math_mad': defineOp<MadArgs>({ doc: "a * b + c", args: { a: { type: AnyData, doc: "a", refable: true }, b: { type: AnyData, doc: "b", refable: true }, c: { type: AnyData, doc: "c", refable: true } } }),
   'math_clamp': MathClampDef,
-  'math_step': defineOp<MathStepArgs>({ doc: "Step function", args: { edge: { type: AnyData, doc: "Edge", refable: true }, x: { type: AnyData, doc: "x", refable: true } } }),
+  'math_step': defineOp<MathStepArgs>({ doc: "Step function: returns 0.0 if x < edge, else 1.0. Some backend resolvers use arg keys 'edge' and 'val' instead of 'edge' and 'x'.", args: { edge: { type: AnyData, doc: "Edge threshold", refable: true }, x: { type: AnyData, doc: "Input value", refable: true } } }),
   'math_smoothstep': defineOp<MathSmoothstepArgs>({ doc: "Smoothstep function", args: { edge0: { type: AnyData, doc: "Edge 0", refable: true }, edge1: { type: AnyData, doc: "Edge 1", refable: true }, x: { type: AnyData, doc: "x", refable: true } } }),
   'math_mix': defineOp<MathMixArgs>({ doc: "Linear interpolation", args: { a: { type: AnyData, doc: "a", refable: true }, b: { type: AnyData, doc: "b", refable: true }, t: { type: AnyData, doc: "t", refable: true } } }),
   'literal': LiteralDef,
@@ -676,8 +688,8 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   // Vectors
   'vec_swizzle': VecSwizzleDef,
   'vec_mix': VecMixDef,
-  'vec_get_element': defineOp<VecGetElementArgs>({ doc: "Get element from vector or matrix", args: { vec: { type: AnyVector, doc: "Vector or Matrix", refable: true }, index: { type: IntSchema, doc: "Index", refable: true } } }),
-  'vec_set_element': defineOp<VecSetElementArgs>({ doc: "Set element in vector or matrix", args: { vec: { type: AnyVector, doc: "Vector or Matrix", refable: true }, index: { type: IntSchema, doc: "Index", refable: true }, value: { type: FloatSchema, doc: "Value", refable: true } } }),
+  'vec_get_element': defineOp<VecGetElementArgs>({ doc: "Get element from vector or matrix. For matrices, uses flat column-major indexing: index = col * colSize + row (WGSL/MSL emit mat[i/size][i%size]).", args: { vec: { type: AnyVector, doc: "Vector or Matrix", refable: true }, index: { type: IntSchema, doc: "Element index (flat for matrices)", refable: true } } }),
+  'vec_set_element': defineOp<VecSetElementArgs>({ doc: "Set element in vector or matrix. For matrices, uses flat column-major indexing: index = col * colSize + row.", args: { vec: { type: AnyVector, doc: "Vector or Matrix", refable: true }, index: { type: IntSchema, doc: "Element index (flat for matrices)", refable: true }, value: { type: FloatSchema, doc: "Value", refable: true } } }),
 
   // Resources
   'texture_sample': TextureSampleDef,
@@ -695,7 +707,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'mat_mul': MatMulDef,
   'mat_transpose': MatUnaryDef,
   'mat_inverse': MatUnaryDef,
-  'mat_extract': defineOp<MatExtractArgs>({ doc: "Extract element from matrix", args: { mat: { type: AnyMat, doc: "Matrix", refable: true }, col: { type: IntSchema, doc: "Column", refable: true }, row: { type: IntSchema, doc: "Row", refable: true } } }),
+  'mat_extract': defineOp<MatExtractArgs>({ doc: "Extract element from matrix by col/row. Matrices are column-major: mat[col] returns a column vector in WGSL/MSL.", args: { mat: { type: AnyMat, doc: "Matrix", refable: true }, col: { type: IntSchema, doc: "Column index", refable: true }, row: { type: IntSchema, doc: "Row index", refable: true } } }),
 
   // Quaternions
   'quat': QuatDef,
@@ -714,20 +726,20 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
 
   // Structs & Arrays
   'struct_construct': defineOp<StructConstructArgs>({
-    doc: "Construct struct",
+    doc: "Construct struct. The `values` keys must match the struct's member names exactly.",
     args: {
-      type: { type: z.string(), doc: "Struct type", refType: 'struct', isIdentifier: true },
-      values: { type: z.any(), doc: "Struct fields", optional: true }
+      type: { type: z.string(), doc: "Struct type ID (must match a struct defined in ir.structs)", refType: 'struct', isIdentifier: true },
+      values: { type: z.any(), doc: "Struct fields — keys are member names, values are data refs or literals", optional: true }
     }
   }),
   'struct_extract': StructExtractDef,
   'array_construct': defineOp<ArrayConstructArgs>({
-    doc: "Construct array",
+    doc: "Construct a fixed-size typed array. Provide either `values` (elements list) OR `length`+`fill` (uniform fill). Element type is inferred from context or the `type` hint.",
     args: {
-      values: { type: z.array(z.any()), doc: "Array elements", refable: true, isArray: true, optional: true },
-      type: { type: z.string(), doc: "Explicit array type", optional: true, refType: 'struct', isIdentifier: true },
-      length: { type: z.any(), doc: "Array length", optional: true, refable: true },
-      fill: { type: z.any(), doc: "Fill value", optional: true, refable: true }
+      values: { type: z.array(z.any()), doc: "Array elements (determines length)", refable: true, isArray: true, optional: true },
+      type: { type: z.string(), doc: "Explicit element type (e.g. struct ID for arrays of structs)", optional: true, refType: 'struct', isIdentifier: true },
+      length: { type: z.any(), doc: "Array length (use with fill)", optional: true, refable: true },
+      fill: { type: z.any(), doc: "Fill value (use with length)", optional: true, refable: true }
     }
   }),
   'array_set': ArraySetDef,
@@ -737,13 +749,13 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   // Commands
   'cmd_draw': CmdDrawDef,
   'cmd_dispatch': defineOp<CmdDispatchArgs>({
-    doc: "Dispatch compute shader",
+    doc: "Dispatch compute shader. All function inputs are serialized as flat floats for GPU marshalling (CppMetal backend). CPU-allowed builtins (time, delta_time, bpm, etc.) are auto-injected as extra shader args.",
     isExecutable: true,
     cpuOnly: true,
     args: {
       func: { type: z.string(), doc: "Shader function ID", requiredRef: true, refType: 'func', isIdentifier: true },
-      dispatch: { type: z.any(), doc: "Dispatch dimensions (vec3<u32> or scalar)", optional: true, refable: true },
-      args: { type: z.any(), doc: "Shader arguments", optional: true }
+      dispatch: { type: z.any(), doc: "Dispatch dimensions (int3 workgroup count, or scalar for 1D)", optional: true, refable: true },
+      args: { type: z.any(), doc: "Shader arguments — keys must match function input IDs", optional: true }
     }
   }),
   'cmd_resize_resource': defineOp<CmdResizeResourceArgs>({ doc: "Resize a resource", isExecutable: true, cpuOnly: true, args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true }, size: { type: AnyData, doc: "New size [w, h] or scalar", refable: true, literalTypes: ['float', 'int', 'float2'] }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
@@ -755,18 +767,18 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'var_get': VarGetDef,
   'builtin_get': BuiltinGetDef,
   'const_get': defineOp<ConstGetArgs>({ doc: "Get a constant, such as the value of an enum by name", args: { name: { type: BuiltinConstantSchema, doc: "Name", refType: 'const' } } }),
-  'loop_index': defineOp<LoopIndexArgs>({ doc: "Get loop index", args: { loop: { type: z.string(), doc: "Loop tag", refable: true, refType: 'loop', isIdentifier: true } } }),
+  'loop_index': defineOp<LoopIndexArgs>({ doc: "Get current loop iteration index. The `loop` arg must match the `tag` on the corresponding flow_loop node.", args: { loop: { type: z.string(), doc: "Loop tag (must match flow_loop's tag)", refable: true, refType: 'loop', isIdentifier: true } } }),
   'flow_branch': defineOp<FlowBranchArgs>({ doc: "Branch based on condition", isExecutable: true, args: { cond: { type: BoolSchema, doc: "Condition", refable: true }, exec_true: { type: z.string(), doc: "Node ID for true", requiredRef: true, optional: true, refType: 'exec' }, exec_false: { type: z.string(), doc: "Node ID for false", requiredRef: true, optional: true, refType: 'exec' } } }),
   'flow_loop': FlowLoopDef,
   'call_func': defineOp<CallFuncArgs>({
-    doc: "Call a function",
+    doc: "Call a function. Parameters are fully typed (float, int, bool, vectors, structs, arrays, matrices) — not just float. The `args` keys must match the target function's input IDs exactly.",
     isExecutable: true,
     args: {
-      func: { type: z.string(), doc: "Function ID", requiredRef: true, refType: 'func', isIdentifier: true },
-      args: { type: z.any(), doc: "Function arguments", optional: true }
+      func: { type: z.string(), doc: "Function ID (must match a function defined in ir.functions)", requiredRef: true, refType: 'func', isIdentifier: true },
+      args: { type: z.any(), doc: "Function arguments — keys are input IDs, values are data refs or literals", optional: true }
     }
   }),
-  'func_return': defineOp<FuncReturnArgs>({ doc: "Return from function", isExecutable: true, args: { val: { type: z.any(), doc: "Return value", optional: true, refable: true } } }),
+  'func_return': defineOp<FuncReturnArgs>({ doc: "Return from function. Return type is determined by the parent function's outputs[0].type, not inferred from the value.", isExecutable: true, args: { val: { type: z.any(), doc: "Return value (must match function's declared output type)", optional: true, refable: true } } }),
 };
 
 /**
