@@ -84,6 +84,12 @@ Type Coercion & Math:
   - Vector dimensions must match (no \`vec2 + vec3\`).
   - Resource operations (like \`buffer_store\`) are strict about types (no storing \`int\` into a \`float\` buffer without a cast).
 
+Coordinate Systems:
+
+- **Screen / Texture space**: Pixel (0,0) is the **top-left** corner. X increases rightward, Y increases **downward**. This matches \`global_invocation_id\` and \`texture_store\` coordinates.
+- **World / Camera space**: Standard right-handed: +X right, +Y **up**, +Z toward camera. When constructing a camera ray from UV, **negate** the screen-space Y to get world-space Y (i.e. \`rd_y = -uv_y\`).
+- **UV space**: Textures are sampled with (0,0) at top-left, (1,1) at bottom-right. To map to centered clip space (−1..1), use: \`uv * 2 − 1\`.
+
 Execution Semantics:
 
 1. **Nodes Categories**:

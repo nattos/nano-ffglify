@@ -22,7 +22,7 @@ describe('Conformance: Integration - Raymarcher', () => {
       }
 
       const inputs = new Map<string, RuntimeValue>();
-      inputs.set('time', 0.0);
+      inputs.set('scale', 0.4);
 
       try {
         const context = await backend.execute(ir, 'fn_main_cpu', inputs);

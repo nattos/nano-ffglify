@@ -235,10 +235,10 @@ export const MIXER_SHADER: IRDocument = {
 export const RAYMARCH_SHADER: IRDocument = {
   version: '1.0.0',
   meta: { name: 'Animated Raymarcher' },
-  comment: 'Animated SDF with smooth blending, Lambert+Blinn-Phong shading, checkerboard floor, and exponential fog. Uses runtime-provided time input for animation.',
+  comment: 'Animated SDF with smooth blending, Lambert+Blinn-Phong shading, checkerboard floor, and exponential fog. Uses builtin_get(time) for animation.',
   entryPoint: 'fn_main_cpu',
   inputs: [
-    { id: 'time', type: 'float', default: 0.0, comment: 'Elapsed time in seconds (set by runtime via first-order integration of delta_time, capped at 100ms per step).' }
+    { id: 'scale', type: 'float', default: 0.4, ui: { min: 0.05, max: 1.5, widget: 'slider' }, comment: 'Sphere radius.' }
   ],
   resources: [
     {
@@ -275,6 +275,8 @@ export const RAYMARCH_SHADER: IRDocument = {
       nodes: [
         // ============================================================
         // Setup: screen coords, UV, aspect ratio
+        // Coordinate system: pixel (0,0) = top-left, y increases downward.
+        // UV maps to -1..1 with y flipped so +y = up (world space convention).
         // ============================================================
         { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
         { id: 'coords', op: 'vec_swizzle', vec: 'gid', channels: 'xy' },
@@ -288,19 +290,21 @@ export const RAYMARCH_SHADER: IRDocument = {
 
         // ============================================================
         // Camera: slightly elevated, looking down toward scene
+        // uv_y is negated to flip screen-space y (top-down) to world y (up).
         // ============================================================
         { id: 'ro', op: 'float3', x: 0.0, y: 1.0, z: -3.0 },
         { id: 'uv_x', op: 'vec_swizzle', vec: 'uv', channels: 'x' },
         { id: 'uv_y', op: 'vec_swizzle', vec: 'uv', channels: 'y' },
+        { id: 'uv_y_flip', op: 'math_mul', a: 'uv_y', b: -1.0 },
         { id: 'rd_x', op: 'math_mul', a: 'uv_x', b: 'aspect' },
-        { id: 'rd_y', op: 'math_sub', a: 'uv_y', b: 0.3 },
+        { id: 'rd_y', op: 'math_sub', a: 'uv_y_flip', b: 0.3 },
         { id: 'rd_raw', op: 'float3', x: 'rd_x', y: 'rd_y', z: 1.5 },
         { id: 'rd', op: 'vec_normalize', a: 'rd_raw' },
 
         // ============================================================
         // Animation: sphere orbits in xz plane, bobs vertically
         // ============================================================
-        { id: 'val_time', op: 'var_get', var: 'time' },
+        { id: 'val_time', op: 'builtin_get', name: 'time' },
         { id: 't_orbit', op: 'math_mul', a: 'val_time', b: 0.7 },
         { id: 'sin_orbit', op: 'math_sin', val: 't_orbit' },
         { id: 'cos_orbit', op: 'math_cos', val: 't_orbit' },
@@ -311,6 +315,7 @@ export const RAYMARCH_SHADER: IRDocument = {
         { id: 'sc_y_wave', op: 'math_mul', a: 'sin_bob', b: 0.1 },
         { id: 'sc_y', op: 'math_add', a: 'sc_y_wave', b: 0.15 },
         { id: 'sphere_center', op: 'float3', x: 'sc_x', y: 'sc_y', z: 'sc_z' },
+        { id: 'sphere_radius', op: 'var_get', var: 'scale' },
         { id: 'k_sm', op: 'literal', val: 0.4 },
 
         // ============================================================
@@ -337,7 +342,7 @@ export const RAYMARCH_SHADER: IRDocument = {
         // Sphere SDF: length(p - center) - radius
         { id: 'p_sub_c', op: 'math_sub', a: 'cur_p', b: 'sphere_center' },
         { id: 'len_psc', op: 'vec_length', a: 'p_sub_c' },
-        { id: 'd_sphere', op: 'math_sub', a: 'len_psc', b: 0.4 },
+        { id: 'd_sphere', op: 'math_sub', a: 'len_psc', b: 'sphere_radius' },
 
         // Ground plane SDF: p.y - (-0.5) = p.y + 0.5
         { id: 'cur_py', op: 'vec_swizzle', vec: 'cur_p', channels: 'y' },
@@ -383,7 +388,7 @@ export const RAYMARCH_SHADER: IRDocument = {
         // Recompute individual distances at hit point for blend factor
         { id: 'hp_sub_c', op: 'math_sub', a: 'hit_p', b: 'sphere_center' },
         { id: 'hp_len', op: 'vec_length', a: 'hp_sub_c' },
-        { id: 'hp_d_sphere', op: 'math_sub', a: 'hp_len', b: 0.4 },
+        { id: 'hp_d_sphere', op: 'math_sub', a: 'hp_len', b: 'sphere_radius' },
         { id: 'hp_py', op: 'vec_swizzle', vec: 'hit_p', channels: 'y' },
         { id: 'hp_d_plane', op: 'math_add', a: 'hp_py', b: 0.5 },
 

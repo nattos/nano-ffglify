@@ -258,8 +258,7 @@ export class RuntimeManager {
     const rawDeltaMs = this.lastFrameTime > 0 ? (startTime - this.lastFrameTime) : 0;
     const deltaTime = Math.min(rawDeltaMs / 1000, 0.1);
     this.elapsedTime += deltaTime;
-    this.inputs.set('time', this.elapsedTime);
-    this.inputs.set('delta_time', deltaTime);
+    this.executor.setBuiltins({ time: this.elapsedTime, delta_time: deltaTime });
 
     try {
       // Sync dynamic inputs
