@@ -672,6 +672,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'literal': LiteralDef,
   'math_pi': defineOp<EmptyArgs>({ doc: "Pi constant", args: {} }),
   'math_e': defineOp<EmptyArgs>({ doc: "Euler's number constant", args: {} }),
+  'comment': defineOp<EmptyArgs>({ doc: "No-op comment node for graph annotation. Produces no value and cannot be referenced by other nodes. Use the node's `comment` field for text.", args: {} }),
 
   // Constructors
   'float2': Float2ConstructorDef,
@@ -823,6 +824,7 @@ export type OpArgs = {
   'literal': LiteralArgs;
   'math_pi': EmptyArgs;
   'math_e': EmptyArgs;
+  'comment': EmptyArgs;
   'float2': Float2Args;
   'float3': Float3Args;
   'float4': Float4Args;

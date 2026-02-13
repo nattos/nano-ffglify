@@ -172,6 +172,9 @@ const resolveNodeType = (
       const isNameProperty = def?.args[key]?.isIdentifier ?? false;
 
       if (refNode && !isNameProperty) {
+        if (refNode.op === 'comment') {
+          errors.push({ nodeId, functionId, message: `Node '${nodeId}' cannot reference comment node '${val}'`, severity: 'error' });
+        }
         inputTypes[key] = resolveNodeType(val, func, doc, cache, resourceIds, errors, edges);
       } else if (refInput && !isNameProperty) {
         inputTypes[key] = refInput.type as ValidationType;

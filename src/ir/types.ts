@@ -320,6 +320,9 @@ export type BuiltinOp =
   | 'math_ldexp'
   | 'literal'
 
+  // Metadata
+  | 'comment'
+
   // Casts & Constructors
   | 'static_cast_int' | 'static_cast_float' | 'static_cast_bool'
   | 'static_cast_int2' | 'static_cast_int3' | 'static_cast_int4'

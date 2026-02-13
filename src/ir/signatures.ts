@@ -311,6 +311,7 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   ],
   'math_pi': [{ inputs: {}, output: 'float' }],
   'math_e': [{ inputs: {}, output: 'float' }],
+  'comment': [{ inputs: {}, output: 'any' }],
 
   // --- Quaternions ---
   'quat': [
