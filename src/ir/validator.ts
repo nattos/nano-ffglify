@@ -368,7 +368,8 @@ const resolveNodeType = (
       const varId = node['var'];
       const localVar = func.localVars.find(v => v.id === varId);
       const globalVar = doc.inputs?.find(i => i.id === varId);
-      const type = localVar?.type || globalVar?.type || 'float';
+      const funcInput = func.inputs.find(i => i.id === varId);
+      const type = localVar?.type || funcInput?.type || globalVar?.type || 'float';
       const vType = type as ValidationType;
       cache.set(nodeId, vType);
       return vType;

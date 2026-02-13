@@ -1511,6 +1511,10 @@ export class WgslGenerator {
           const v = func.localVars.find(v => v.id === val);
           if (v) t = v.type;
         }
+        if (!t) {
+          const gi = ir.inputs?.find(i => i.id === val);
+          if (gi) t = gi.type;
+        }
         // Fallback: Check node op if reachable
         if (!t) {
           const n = func.nodes.find(n => n.id === val);
@@ -1518,6 +1522,38 @@ export class WgslGenerator {
             if (n.op === 'loop_index') t = 'int';
             if (n.op === 'array_length') t = 'int';
             if (n.op === 'resource_get_format') t = 'int';
+          }
+        }
+        // Fix: nodeTypes may say 'float' for binary math ops that actually emit i32
+        // (because the validator treats integer literals as 'float').
+        // Check if the referenced node is a binary math op with all-int operands.
+        if (t === 'float') {
+          const binaryMathOps = ['math_add', 'math_sub', 'math_mul', 'math_div', 'math_mod'];
+          const refNode = func.nodes.find(n => n.id === val);
+          if (refNode && binaryMathOps.includes(refNode.op)) {
+            const getDirectArgType = (argKey: string): string => {
+              const argEdge = edges.find(e => e.to === refNode.id && e.portIn === argKey);
+              const argVal = argEdge ? argEdge.from : refNode[argKey];
+              if (typeof argVal === 'number') return Number.isInteger(argVal) ? 'int' : 'float';
+              if (typeof argVal === 'string') {
+                const nt = options.nodeTypes?.get(argVal);
+                if (nt) return nt;
+                const fi = func.inputs.find(i => i.id === argVal);
+                if (fi) return fi.type;
+                const lv = func.localVars.find(v => v.id === argVal);
+                if (lv) return lv.type;
+                const gi = ir.inputs?.find(i => i.id === argVal);
+                if (gi) return gi.type;
+                const nn = func.nodes.find(n => n.id === argVal);
+                if (nn && (nn.op === 'loop_index' || nn.op === 'array_length')) return 'int';
+              }
+              return 'float';
+            };
+            const aType = getDirectArgType('a');
+            const bType = getDirectArgType('b');
+            if ((aType === 'int' || aType === 'i32') && (bType === 'int' || bType === 'i32')) {
+              t = 'int';
+            }
           }
         }
       }
