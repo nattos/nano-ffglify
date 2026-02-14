@@ -837,9 +837,18 @@ export class WgslGenerator {
     if (edge) {
       const src = func.nodes.find(n => n.id === edge.from);
       if (src) {
-        if (src.op === 'call_func') return `v_${src.id}`;
-        if (src.op === 'var_get') return this.getVariableExpr(src['var'], func, options);
-        return this.compileExpression(src, func, options, ir, targetType, edges);
+        // Check for inline swizzle suffix on the original property value
+        let edgeSwizzle = '';
+        for (const k of keys) {
+          const origVal = node[k];
+          if (typeof origVal === 'string' && origVal.includes('.')) {
+            edgeSwizzle = origVal.substring(origVal.indexOf('.'));
+            break;
+          }
+        }
+        if (src.op === 'call_func') return `v_${src.id}` + edgeSwizzle;
+        if (src.op === 'var_get') return this.getVariableExpr(src['var'], func, options) + edgeSwizzle;
+        return this.compileExpression(src, func, options, ir, targetType, edges) + edgeSwizzle;
       }
     }
 
@@ -862,14 +871,22 @@ export class WgslGenerator {
       if (val !== undefined) {
         if (typeof val === 'string' && val.trim() !== '') {
           const tid = val.trim();
-          if (func.localVars.some(v => v.id === tid) ||
-            func.inputs.some(i => i.id === tid) ||
-            options.fullIr?.inputs?.some(i => i.id === tid) ||
-            options.varMap?.has(tid)) {
-            return this.getVariableExpr(tid, func, options);
+          // Inline swizzle support: "nodeId.xyz"
+          let baseTid = tid;
+          let swizzleSuffix = '';
+          const dotIdx = tid.indexOf('.');
+          if (dotIdx !== -1) {
+            baseTid = tid.substring(0, dotIdx);
+            swizzleSuffix = tid.substring(dotIdx); // includes the '.'
           }
-          const targetNode = func.nodes.find(n => n.id === tid);
-          if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, options, ir, targetType, edges);
+          if (func.localVars.some(v => v.id === baseTid) ||
+            func.inputs.some(i => i.id === baseTid) ||
+            options.fullIr?.inputs?.some(i => i.id === baseTid) ||
+            options.varMap?.has(baseTid)) {
+            return this.getVariableExpr(baseTid, func, options) + swizzleSuffix;
+          }
+          const targetNode = func.nodes.find(n => n.id === baseTid);
+          if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, options, ir, targetType, edges) + swizzleSuffix;
         }
         return this.formatLiteral(val, targetType || 'unknown');
       }
@@ -878,17 +895,32 @@ export class WgslGenerator {
   }
 
   private compileExpression(node: Node, func: FunctionDef, options: WgslOptions, ir: IRDocument, targetType: string | DataType = 'float', edges: Edge[]): string {
-    if (node.op === 'literal') return this.formatLiteral(node['val'], targetType || 'float');
+    if (node.op === 'literal') return this.formatLiteral(node['val'], node['type'] || targetType || 'float');
     if (node.op === 'loop_index') return `i_${node['loop']}`;
     if (node.op === 'float') return this.resolveArg(node, 'val', func, options, ir, 'float', edges);
     if (node.op === 'int') return this.resolveArg(node, 'val', func, options, ir, 'int', edges);
     if (node.op === 'bool') return this.resolveArg(node, 'val', func, options, ir, 'bool', edges);
-    if (node.op === 'float2') return `vec2<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}))`;
-    if (node.op === 'float3') return `vec3<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float', edges)}))`;
-    if (node.op === 'float4' || node.op === 'quat') return `vec4<f32>(f32(${this.resolveArg(node, 'x', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'y', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'z', func, options, ir, 'float', edges)}), f32(${this.resolveArg(node, 'w', func, options, ir, 'float', edges)}))`;
-    if (node.op === 'int2') return `vec2<i32>(i32(${this.resolveArg(node, 'x', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'y', func, options, ir, 'int', edges)}))`;
-    if (node.op === 'int3') return `vec3<i32>(i32(${this.resolveArg(node, 'x', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'y', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'z', func, options, ir, 'int', edges)}))`;
-    if (node.op === 'int4') return `vec4<i32>(i32(${this.resolveArg(node, 'x', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'y', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'z', func, options, ir, 'int', edges)}), i32(${this.resolveArg(node, 'w', func, options, ir, 'int', edges)}))`;
+    if (['float2', 'float3', 'float4', 'int2', 'int3', 'int4'].includes(node.op)) {
+      const isInt = node.op.startsWith('int');
+      const dim = parseInt(node.op.replace(/^(float|int)/, ''));
+      const wgslType = isInt ? `vec${dim}<i32>` : `vec${dim}<f32>`;
+      const castFn = isInt ? 'i32' : 'f32';
+      const scalarType = isInt ? 'int' : 'float';
+      const compOrder = ['x', 'y', 'z', 'w'].slice(0, dim);
+
+      // Detect component groups
+      const groups = this.detectComponentGroups(node, dim);
+      if (groups) {
+        const argExprs = groups.map(g =>
+          this.resolveArg(node, g.key, func, options, ir, g.count === 1 ? scalarType : `${scalarType}${g.count}`, edges)
+        );
+        return `${wgslType}(${argExprs.join(', ')})`;
+      }
+
+      // Default scalar-per-component
+      const args = compOrder.map(c => `${castFn}(${this.resolveArg(node, c, func, options, ir, scalarType, edges)})`);
+      return `${wgslType}(${args.join(', ')})`;
+    }
     if (node.op === 'float3x3' || node.op === 'float4x4') {
       const vals = node['vals'];
       if (Array.isArray(vals)) {
@@ -1628,6 +1660,31 @@ export class WgslGenerator {
     }
 
     return result;
+  }
+
+  /** Detect component-group keys on a vector constructor node. Returns sorted groups or null if standard x/y/z/w form. */
+  private detectComponentGroups(node: Node, dim: number): { key: string, startIdx: number, count: number }[] | null {
+    const compOrder = ['x', 'y', 'z', 'w'];
+    const validGroups = ['x', 'y', 'z', 'w', 'xy', 'yz', 'zw', 'xyz', 'yzw', 'xyzw'];
+    const groups: { key: string, startIdx: number, count: number }[] = [];
+
+    for (const key of validGroups) {
+      if (node[key] !== undefined && key.length > 1) {
+        groups.push({ key, startIdx: compOrder.indexOf(key[0]), count: key.length });
+      }
+    }
+    if (groups.length === 0) return null;
+
+    // Also include any single-component keys that are present
+    for (let i = 0; i < dim; i++) {
+      const c = compOrder[i];
+      if (node[c] !== undefined && !groups.some(g => g.startIdx <= i && i < g.startIdx + g.count)) {
+        groups.push({ key: c, startIdx: i, count: 1 });
+      }
+    }
+
+    groups.sort((a, b) => a.startIdx - b.startIdx);
+    return groups;
   }
 
   private formatLiteral(val: any, type: string | DataType): string {

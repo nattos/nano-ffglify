@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateIR } from '../../ir/schema';
+import { validateStaticLogic } from '../../ir/validator';
 import { IRDocument } from '../../ir/types';
 
 describe('Conformance: Structural Logic Validation', () => {
@@ -87,11 +88,13 @@ describe('Conformance: Structural Logic Validation', () => {
       const ir = makeIR([
         { id: 'v2', op: 'float2', x: 1 } // missing y
       ]);
-      const result = validateIR(ir);
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.errors[0].message).toContain("Missing required argument 'y'");
-      }
+      // With flexible constructors, the schema allows optional scalar components.
+      // The logic validator catches incomplete component coverage instead.
+      const logicErrors = validateStaticLogic(ir);
+      const hasError = logicErrors.some((e: any) =>
+        e.message.includes('cover') || e.message.includes('Missing required')
+      );
+      expect(hasError).toBe(true);
     });
   });
 

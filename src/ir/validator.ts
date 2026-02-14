@@ -89,6 +89,50 @@ type TypeCache = Map<string, ValidationType>;
 
 export type InferredTypes = Map<string, ValidationType>;
 
+const resolveSwizzleType = (
+  baseType: ValidationType,
+  swizzle: string,
+  nodeId: string,
+  functionId: string,
+  errors: LogicValidationError[]
+): ValidationType => {
+  const validComps = ['x', 'y', 'z', 'w', 'r', 'g', 'b', 'a'];
+  const isIntVec = baseType === 'int2' || baseType === 'int3' || baseType === 'int4';
+  const isFloatVec = baseType === 'float2' || baseType === 'float3' || baseType === 'float4';
+
+  if (!isIntVec && !isFloatVec) {
+    errors.push({ nodeId, functionId, message: `Cannot swizzle non-vector type '${baseType}'`, severity: 'error' });
+    return 'any';
+  }
+
+  let maxComp = 0;
+  if (baseType === 'float2' || baseType === 'int2') maxComp = 2;
+  else if (baseType === 'float3' || baseType === 'int3') maxComp = 3;
+  else if (baseType === 'float4' || baseType === 'int4') maxComp = 4;
+
+  if (swizzle.length < 1 || swizzle.length > 4) {
+    errors.push({ nodeId, functionId, message: `Invalid swizzle mask length '${swizzle}'`, severity: 'error' });
+    return 'any';
+  }
+
+  for (const char of swizzle) {
+    const idx = validComps.indexOf(char);
+    if (idx === -1) {
+      errors.push({ nodeId, functionId, message: `Invalid swizzle component '${char}'`, severity: 'error' });
+      return 'any';
+    }
+    const effectiveIdx = idx % 4;
+    if (effectiveIdx >= maxComp) {
+      errors.push({ nodeId, functionId, message: `Swizzle component '${char}' out of bounds for ${baseType}`, severity: 'error' });
+      return 'any';
+    }
+  }
+
+  const scalarType = isIntVec ? 'int' : 'float';
+  const vecPrefix = isIntVec ? 'int' : 'float';
+  return (swizzle.length === 1 ? scalarType : `${vecPrefix}${swizzle.length}`) as ValidationType;
+};
+
 const resolveNodeType = (
   nodeId: string,
   func: FunctionDef,
@@ -129,8 +173,29 @@ const resolveNodeType = (
   // 1. Gather Input Types from Edges
   const incomingEdges = edges.filter(e => e.to === nodeId && e.type === 'data');
   incomingEdges.forEach(edge => {
-    const srcType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors, edges, usedBuiltins);
+    let srcType = resolveNodeType(edge.from, func, doc, cache, resourceIds, errors, edges, usedBuiltins);
     const port = edge.portIn;
+
+    // Apply inline swizzle if the original property value has a "." suffix
+    const propVal = node[port];
+    if (typeof propVal === 'string' && propVal.includes('.')) {
+      const dotIdx = propVal.indexOf('.');
+      const swizzle = propVal.substring(dotIdx + 1);
+      if (swizzle.length > 0) {
+        // If srcType is 'any' (e.g., edge.from is a local var not in node list), resolve from local vars/inputs
+        if (srcType === 'any') {
+          const baseId = propVal.substring(0, dotIdx);
+          const localVar = func.localVars?.find(v => v.id === baseId);
+          const funcInput = func.inputs?.find(i => i.id === baseId);
+          const globalInput = doc.inputs?.find(i => i.id === baseId);
+          if (localVar) srcType = localVar.type as ValidationType;
+          else if (funcInput) srcType = funcInput.type as ValidationType;
+          else if (globalInput) srcType = globalInput.type as ValidationType;
+        }
+        srcType = resolveSwizzleType(srcType, swizzle, nodeId, functionId, errors);
+      }
+    }
+
     // Handle path resolution: if edge is to 'args.foo', update 'foo' in inputTypes
     if (port.startsWith('args.')) {
       inputTypes[port.substring(5)] = srcType;
@@ -163,25 +228,45 @@ const resolveNodeType = (
     } else if (typeof val === 'boolean') {
       inputTypes[key] = 'boolean';
     } else if (typeof val === 'string') {
-      const refNode = func.nodes.find(n => n.id === val);
-      const refInput = func.inputs.find(i => i.id === val);
-      const refLocal = func.localVars.find(v => v.id === val);
-      const refGlobal = doc.inputs?.find(i => i.id === val);
-
       const def = OpDefs[node.op as BuiltinOp];
       const isNameProperty = def?.args[key]?.isIdentifier ?? false;
 
+      // Inline swizzle support: split "nodeId.xyz" into base + swizzle
+      let baseVal = val;
+      let swizzle: string | undefined;
+      const dotIdx = val.indexOf('.');
+      if (dotIdx !== -1 && !isNameProperty) {
+        baseVal = val.substring(0, dotIdx);
+        swizzle = val.substring(dotIdx + 1);
+      }
+
+      const refNode = func.nodes.find(n => n.id === baseVal);
+      const refInput = func.inputs.find(i => i.id === baseVal);
+      const refLocal = func.localVars.find(v => v.id === baseVal);
+      const refGlobal = doc.inputs?.find(i => i.id === baseVal);
+
+      let baseType: ValidationType | undefined;
+
       if (refNode && !isNameProperty) {
         if (refNode.op === 'comment') {
-          errors.push({ nodeId, functionId, message: `Node '${nodeId}' cannot reference comment node '${val}'`, severity: 'error' });
+          errors.push({ nodeId, functionId, message: `Node '${nodeId}' cannot reference comment node '${baseVal}'`, severity: 'error' });
         }
-        inputTypes[key] = resolveNodeType(val, func, doc, cache, resourceIds, errors, edges);
+        baseType = resolveNodeType(baseVal, func, doc, cache, resourceIds, errors, edges);
       } else if (refInput && !isNameProperty) {
-        inputTypes[key] = refInput.type as ValidationType;
+        baseType = refInput.type as ValidationType;
       } else if (refLocal && !isNameProperty) {
-        inputTypes[key] = refLocal.type as ValidationType;
+        baseType = refLocal.type as ValidationType;
       } else if (refGlobal && !isNameProperty) {
-        inputTypes[key] = refGlobal.type as ValidationType;
+        baseType = refGlobal.type as ValidationType;
+      }
+
+      if (baseType !== undefined) {
+        if (swizzle) {
+          const swizzleResult = resolveSwizzleType(baseType, swizzle, nodeId, functionId, errors);
+          inputTypes[key] = swizzleResult;
+        } else {
+          inputTypes[key] = baseType;
+        }
       } else {
         inputTypes[key] = 'string';
       }
@@ -326,6 +411,16 @@ const resolveNodeType = (
     }
 
     if (node.op === 'literal') {
+      const explicitType = node['type'];
+      if (explicitType) {
+        const validLiteralTypes = ['float', 'int', 'boolean', 'bool', 'float2', 'float3', 'float4', 'int2', 'int3', 'int4', 'float3x3', 'float4x4'];
+        if (validLiteralTypes.includes(explicitType)) {
+          const normalizedType = (explicitType === 'bool' ? 'boolean' : explicitType) as ValidationType;
+          cache.set(nodeId, normalizedType);
+          return normalizedType;
+        }
+        errors.push({ nodeId, functionId, message: `Invalid explicit type '${explicitType}' on literal node`, severity: 'error' });
+      }
       const val = node['val'];
       if (typeof val === 'number') {
         cache.set(nodeId, 'float');
@@ -525,6 +620,79 @@ const resolveNodeType = (
       }
     }
 
+    // Flexible vector constructor validation (matched via wildcard signature)
+    const VECTOR_CONSTRUCTOR_OPS: Record<string, { dim: number, scalarType: ValidationType, outType: ValidationType }> = {
+      'float2': { dim: 2, scalarType: 'float', outType: 'float2' },
+      'float3': { dim: 3, scalarType: 'float', outType: 'float3' },
+      'float4': { dim: 4, scalarType: 'float', outType: 'float4' },
+      'int2': { dim: 2, scalarType: 'int', outType: 'int2' },
+      'int3': { dim: 3, scalarType: 'int', outType: 'int3' },
+      'int4': { dim: 4, scalarType: 'int', outType: 'int4' },
+    };
+    const vecInfo = VECTOR_CONSTRUCTOR_OPS[node.op];
+    if (vecInfo && matchedSig.inputs['*'] !== undefined) {
+      // Matched via wildcard — validate component groups
+      const compOrder = ['x', 'y', 'z', 'w'];
+      const groups: { key: string, startIdx: number, count: number }[] = [];
+      const compGroupPattern = /^[xyzw]+$/;
+
+      for (const key of Object.keys(inputTypes)) {
+        if (!compGroupPattern.test(key)) {
+          errors.push({ nodeId, functionId, message: `Invalid component-group key '${key}' for ${node.op}`, severity: 'error' });
+          continue;
+        }
+        const startIdx = compOrder.indexOf(key[0]);
+        if (startIdx === -1) {
+          errors.push({ nodeId, functionId, message: `Invalid component '${key[0]}' in key '${key}'`, severity: 'error' });
+          continue;
+        }
+        // Validate contiguous
+        let contiguous = true;
+        for (let i = 0; i < key.length; i++) {
+          if (compOrder[startIdx + i] !== key[i]) { contiguous = false; break; }
+        }
+        if (!contiguous) {
+          errors.push({ nodeId, functionId, message: `Component-group key '${key}' must be contiguous (e.g. 'xy', 'xyz')`, severity: 'error' });
+          continue;
+        }
+        groups.push({ key, startIdx, count: key.length });
+      }
+
+      // Sort by start index
+      groups.sort((a, b) => a.startIdx - b.startIdx);
+
+      // Validate no gaps, no overlaps, total = dim
+      let expectedStart = 0;
+      for (const g of groups) {
+        if (g.startIdx !== expectedStart) {
+          errors.push({ nodeId, functionId, message: `Component-group gap or overlap: expected component at index ${expectedStart}, got '${g.key}' at index ${g.startIdx}`, severity: 'error' });
+        }
+        expectedStart = g.startIdx + g.count;
+      }
+      if (expectedStart !== vecInfo.dim) {
+        errors.push({ nodeId, functionId, message: `Component groups cover ${expectedStart} components, but ${node.op} requires ${vecInfo.dim}`, severity: 'error' });
+      }
+
+      // Validate arg types: scalar ok (broadcast), vector must match component count
+      for (const g of groups) {
+        const argType = inputTypes[g.key];
+        if (!argType || argType === 'any') continue;
+        const isScalar = argType === 'float' || argType === 'int' || argType === 'boolean';
+        if (isScalar) continue; // scalar broadcast is always ok
+        // Check if it's a matching-dimension vector
+        const vecDimMatch: Record<string, number> = { float2: 2, float3: 3, float4: 4, int2: 2, int3: 3, int4: 4 };
+        const argDim = vecDimMatch[argType];
+        if (argDim !== undefined) {
+          if (argDim !== g.count) {
+            errors.push({ nodeId, functionId, message: `Component-group '${g.key}' expects ${g.count} components, but got ${argType} (${argDim})`, severity: 'error' });
+          }
+        }
+      }
+
+      cache.set(nodeId, vecInfo.outType);
+      return vecInfo.outType;
+    }
+
     cache.set(nodeId, matchedSig.output);
     return matchedSig.output;
   }
@@ -717,6 +885,13 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
   });
 
   const cache: TypeCache = new Map();
+
+  // Reject node IDs containing '.' (conflicts with inline swizzle syntax)
+  func.nodes.forEach(node => {
+    if (node.id.includes('.')) {
+      errors.push({ nodeId: node.id, functionId: func.id, message: `Node ID '${node.id}' contains '.', which conflicts with inline swizzle syntax`, severity: 'error' });
+    }
+  });
 
   func.nodes.forEach(node => {
     // 1. Literal and Reference Verification

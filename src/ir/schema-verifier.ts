@@ -151,7 +151,9 @@ function validateArg(
 
     if (!argDef.literalTypes) {
       if (!argDef.refable && typeof v === 'string') {
-        const isActuallyStringLiteral = (argDef.type instanceof z.ZodString) || (argDef.type instanceof z.ZodEnum);
+        const unwrapType = (t: any): any => (t instanceof z.ZodOptional || t instanceof z.ZodNullable) ? unwrapType(t.unwrap()) : t;
+        const innerType = unwrapType(argDef.type);
+        const isActuallyStringLiteral = (innerType instanceof z.ZodString) || (innerType instanceof z.ZodEnum);
         if (!isActuallyStringLiteral) {
           errors.push(`Argument '${key}${portSuffix}' does not support references, but got string '${v}'`);
         }
@@ -266,26 +268,29 @@ function getLiteralType(value: unknown): IRValueType | 'unknown' {
  * Helper to check if a string points to a valid reference in the IR document or function.
  */
 function checkReferenceExists(id: string, ir?: IRDocument, func?: FunctionDef): boolean {
+  // Support inline swizzle syntax: "nodeId.xyz" resolves via the base ID
+  const baseId = id.includes('.') ? id.substring(0, id.indexOf('.')) : id;
+
   // 1. Check Resources
-  if (ir?.resources?.some(r => r.id === id)) return true;
+  if (ir?.resources?.some(r => r.id === baseId)) return true;
 
   // 2. Check Inputs
-  if (ir?.inputs?.some(i => i.id === id)) return true;
+  if (ir?.inputs?.some(i => i.id === baseId)) return true;
 
   // 3. Check Function Locals
-  if (func?.localVars?.some(v => v.id === id)) return true;
+  if (func?.localVars?.some(v => v.id === baseId)) return true;
 
   // 4. Check Other Nodes in Function
-  if (func?.nodes?.some(n => n.id === id)) return true;
+  if (func?.nodes?.some(n => n.id === baseId)) return true;
 
   // 5. Check Global Functions
-  if (ir?.functions?.some(f => f.id === id)) return true;
+  if (ir?.functions?.some(f => f.id === baseId)) return true;
 
   // 6. Special Constants (optional, but keep it clean)
-  if (id === 'screen') return true; // Common generic target
+  if (baseId === 'screen') return true; // Common generic target
 
   // 7. Function Inputs
-  if (func?.inputs?.some(i => i.id === id)) return true;
+  if (func?.inputs?.some(i => i.id === baseId)) return true;
 
   return false;
 }

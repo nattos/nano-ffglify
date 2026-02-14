@@ -65,13 +65,32 @@ export const ForceOntoGPUTestBackend: TestBackend = {
       if (n.op === 'var_set' || n.op === 'func_return') {
         const varId = n.op === 'var_set' ? n['var'] : RETURN_CAPTURE_VAR;
         if (!varCaptures.has(varId)) {
-          const valId = n['val'];
-          let type = nodeTypes.get(valId);
+          let type: string | undefined;
+          if (n.op === 'var_set') {
+            // Use the local var's declared type (handles inline swizzle refs correctly)
+            const localVar = originalFunc.localVars.find(v => v.id === varId);
+            type = localVar?.type as DataType;
+          }
           if (!type) {
-            // Check local vars or inputs if it's not a node ID
-            type = (originalFunc.localVars.find(v => v.id === valId)?.type as DataType) ||
-              (originalFunc.inputs.find(i => i.id === valId)?.type as DataType) ||
+            const valId = n['val'];
+            // Handle inline swizzle: "nodeId.xyz" — resolve base and compute swizzled type
+            let baseValId = valId;
+            let swizzleLen = 0;
+            if (typeof valId === 'string' && valId.includes('.')) {
+              const dotIdx = valId.indexOf('.');
+              baseValId = valId.substring(0, dotIdx);
+              swizzleLen = valId.length - dotIdx - 1;
+            }
+            type = nodeTypes.get(baseValId) ||
+              (originalFunc.localVars.find(v => v.id === baseValId)?.type as DataType) ||
+              (originalFunc.inputs.find(i => i.id === baseValId)?.type as DataType) ||
               'float';
+            if (swizzleLen > 0) {
+              // Compute swizzled type from base type
+              const isInt = (type as string).startsWith('int');
+              const prefix = isInt ? 'int' : 'float';
+              type = (swizzleLen === 1 ? prefix : `${prefix}${swizzleLen}`) as DataType;
+            }
           }
           const count = getComponentCount(type as string);
           varCaptures.set(varId, { offset: currentOffset, type: type as any });
@@ -151,7 +170,11 @@ export const ForceOntoGPUTestBackend: TestBackend = {
         const varId = node['var'];
         const capture = varCaptures.get(varId)!;
         const count = getComponentCount(capture.type);
-        injectCaptureNodes(newNodes, node.id, capture.offset, node['val'], capture.type, count);
+        // Use a var_get to read the local var after the var_set,
+        // so inline swizzles and type coercions are properly materialized.
+        const varGetId = `capture_varget_${node.id}_${varId}`;
+        newNodes.push({ id: varGetId, op: 'var_get', var: varId } as any);
+        injectCaptureNodes(newNodes, node.id, capture.offset, varGetId, capture.type, count);
       } else if (node.op === 'func_return') {
         const capture = varCaptures.get(RETURN_CAPTURE_VAR)!;
         const count = getComponentCount(capture.type);

@@ -760,41 +760,79 @@ export class CppGenerator {
     const edge = edges.find(e => e.to === node.id && (e.portIn === key || (key === 'val' && e.portIn === 'value')) && e.type === 'data');
     if (edge) {
       const source = func.nodes.find(n => n.id === edge.from);
-      if (source) return this.compileExpression(source, func, allFunctions, false, emitPure, edges, inferredTypes);
+      if (source) {
+        let baseExpr = this.compileExpression(source, func, allFunctions, false, emitPure, edges, inferredTypes);
+        // Check for inline swizzle suffix on the original property value
+        const origVal = node[key];
+        if (typeof origVal === 'string' && origVal.includes('.')) {
+          const swizzle = origVal.substring(origVal.indexOf('.') + 1);
+          const compMap: Record<string, number> = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3 };
+          const indices = [...swizzle].map(c => compMap[c]);
+          const srcType = inferredTypes?.get(source.id) || '';
+          const elemType = (typeof srcType === 'string' && srcType.startsWith('int')) ? 'int' : 'float';
+          if (indices.length === 1) return `(${baseExpr})[${indices[0]}]`;
+          return `std::array<${elemType}, ${indices.length}>{${indices.map(i => `(${baseExpr})[${i}]`).join(', ')}}`;
+        }
+        return baseExpr;
+      }
     }
 
     let val: any = node[key];
 
     if (val !== undefined) {
       if (typeof val === 'string') {
-        if (func.localVars.some(v => v.id === val)) return this.sanitizeId(val, 'var');
-        if (func.inputs.some(i => i.id === val)) return this.sanitizeId(val, 'input');
-        // Check IR global inputs (input inheritance)
-        if (this.ir?.inputs?.some(i => i.id === val)) {
-          const varId = val;
-          const inputDef = this.ir.inputs.find(i => i.id === varId)!;
-          if (inputDef.type === 'float2') {
-            return `std::array<float, 2>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1")}`;
-          }
-          if (inputDef.type === 'float3') {
-            return `std::array<float, 3>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1"), ctx.getInput("${varId}_2")}`;
-          }
-          if (inputDef.type === 'float4') {
-            return `std::array<float, 4>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1"), ctx.getInput("${varId}_2"), ctx.getInput("${varId}_3")}`;
-          }
-          if (inputDef.type === 'float4x4') {
-            const items = Array.from({ length: 16 }, (_, i) => `ctx.getInput("${varId}_${i}")`);
-            return `std::array<float, 16>{${items.join(', ')}}`;
-          }
-          if (inputDef.type === 'float3x3') {
-            const items = Array.from({ length: 9 }, (_, i) => `ctx.getInput("${varId}_${i}")`);
-            return `std::array<float, 9>{${items.join(', ')}}`;
-          }
-          return `ctx.getInput("${varId}")`;
+        // Inline swizzle support: "nodeId.xyz"
+        let baseVal = val;
+        let swizzle: string | undefined;
+        const dotIdx = val.indexOf('.');
+        if (dotIdx !== -1) {
+          baseVal = val.substring(0, dotIdx);
+          swizzle = val.substring(dotIdx + 1);
         }
-        const targetNode = func.nodes.find(n => n.id === val);
+        const applySwizzle = (expr: string, elemType: string = 'float') => {
+          if (!swizzle) return expr;
+          const compMap: Record<string, number> = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3 };
+          const indices = [...swizzle].map(c => compMap[c]);
+          if (indices.length === 1) return `(${expr})[${indices[0]}]`;
+          return `std::array<${elemType}, ${indices.length}>{${indices.map(i => `(${expr})[${i}]`).join(', ')}}`;
+        };
+        const getElemType = (id: string) => {
+          const t = inferredTypes?.get(id) || '';
+          if (typeof t === 'string' && t.startsWith('int')) return 'int';
+          const localVar = func.localVars.find(v => v.id === id);
+          if (localVar && typeof localVar.type === 'string' && localVar.type.startsWith('int')) return 'int';
+          const funcInput = func.inputs.find(i => i.id === id);
+          if (funcInput && typeof funcInput.type === 'string' && funcInput.type.startsWith('int')) return 'int';
+          return 'float';
+        };
+
+        if (func.localVars.some(v => v.id === baseVal)) return applySwizzle(this.sanitizeId(baseVal, 'var'), getElemType(baseVal));
+        if (func.inputs.some(i => i.id === baseVal)) return applySwizzle(this.sanitizeId(baseVal, 'input'), getElemType(baseVal));
+        // Check IR global inputs (input inheritance)
+        if (this.ir?.inputs?.some(i => i.id === baseVal)) {
+          const varId = baseVal;
+          const inputDef = this.ir.inputs.find(i => i.id === varId)!;
+          let baseExpr: string;
+          if (inputDef.type === 'float2') {
+            baseExpr = `std::array<float, 2>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1")}`;
+          } else if (inputDef.type === 'float3') {
+            baseExpr = `std::array<float, 3>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1"), ctx.getInput("${varId}_2")}`;
+          } else if (inputDef.type === 'float4') {
+            baseExpr = `std::array<float, 4>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1"), ctx.getInput("${varId}_2"), ctx.getInput("${varId}_3")}`;
+          } else if (inputDef.type === 'float4x4') {
+            const items = Array.from({ length: 16 }, (_, i) => `ctx.getInput("${varId}_${i}")`);
+            baseExpr = `std::array<float, 16>{${items.join(', ')}}`;
+          } else if (inputDef.type === 'float3x3') {
+            const items = Array.from({ length: 9 }, (_, i) => `ctx.getInput("${varId}_${i}")`);
+            baseExpr = `std::array<float, 9>{${items.join(', ')}}`;
+          } else {
+            baseExpr = `ctx.getInput("${varId}")`;
+          }
+          return applySwizzle(baseExpr, 'float');
+        }
+        const targetNode = func.nodes.find(n => n.id === baseVal);
         if (targetNode && targetNode.id !== node.id) {
-          return this.compileExpression(targetNode, func, allFunctions, false, emitPure, edges, inferredTypes);
+          return applySwizzle(this.compileExpression(targetNode, func, allFunctions, false, emitPure, edges, inferredTypes), getElemType(baseVal));
         }
       }
       if (typeof val === 'number') return this.formatFloat(val);
@@ -806,6 +844,30 @@ export class CppGenerator {
       return String(val);
     }
     return '0.0f';
+  }
+
+  /** Detect component-group keys on a vector constructor node. */
+  private detectComponentGroups(node: Node, dim: number): { key: string, startIdx: number, count: number }[] | null {
+    const compOrder = ['x', 'y', 'z', 'w'];
+    const validGroups = ['x', 'y', 'z', 'w', 'xy', 'yz', 'zw', 'xyz', 'yzw', 'xyzw'];
+    const groups: { key: string, startIdx: number, count: number }[] = [];
+
+    for (const key of validGroups) {
+      if (node[key] !== undefined && key.length > 1) {
+        groups.push({ key, startIdx: compOrder.indexOf(key[0]), count: key.length });
+      }
+    }
+    if (groups.length === 0) return null;
+
+    for (let i = 0; i < dim; i++) {
+      const c = compOrder[i];
+      if (node[c] !== undefined && !groups.some(g => g.startIdx <= i && i < g.startIdx + g.count)) {
+        groups.push({ key: c, startIdx: i, count: 1 });
+      }
+    }
+
+    groups.sort((a, b) => a.startIdx - b.startIdx);
+    return groups;
   }
 
   private resolveCoercedArgs(
@@ -933,6 +995,9 @@ export class CppGenerator {
       }
       case 'literal': {
         const v = node['val'];
+        const litType = node['type'];
+        if (litType === 'int') return `static_cast<int>(${typeof v === 'number' ? Math.trunc(v) : v})`;
+        if (litType === 'bool' || litType === 'boolean') return v ? '1.0f' : '0.0f';
         if (typeof v === 'number') return this.formatFloat(v);
         if (typeof v === 'boolean') return v ? '1.0f' : '0.0f';
         if (Array.isArray(v)) {
@@ -1092,13 +1157,60 @@ export class CppGenerator {
         return `std::array<float, 4>{static_cast<float>(${v}[0]), static_cast<float>(${v}[1]), static_cast<float>(${v}[2]), static_cast<float>(${v}[3])}`;
       }
 
-      case 'float2': return `std::array<float, 2>{${a('x')}, ${a('y')}}`;
-      case 'float3': return `std::array<float, 3>{${a('x')}, ${a('y')}, ${a('z')}}`;
-      case 'float4': return `std::array<float, 4>{${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}}`;
-
-      case 'int2': return `std::array<int, 2>{static_cast<int>(${a('x')}), static_cast<int>(${a('y')})}`;
-      case 'int3': return `std::array<int, 3>{static_cast<int>(${a('x')}), static_cast<int>(${a('y')}), static_cast<int>(${a('z')})}`;
-      case 'int4': return `std::array<int, 4>{static_cast<int>(${a('x')}), static_cast<int>(${a('y')}), static_cast<int>(${a('z')}), static_cast<int>(${a('w')})}`;
+      case 'float2':
+      case 'float3':
+      case 'float4':
+      case 'int2':
+      case 'int3':
+      case 'int4': {
+        const isInt = node.op.startsWith('int');
+        const dim = parseInt(node.op.replace(/^(float|int)/, ''));
+        const elemType = isInt ? 'int' : 'float';
+        const compOrder = ['x', 'y', 'z', 'w'].slice(0, dim);
+        const groups = this.detectComponentGroups(node, dim);
+        if (groups) {
+          // Expand component groups into individual element expressions
+          const elems: string[] = [];
+          for (const g of groups) {
+            const expr = a(g.key);
+            if (g.count === 1) {
+              elems.push(isInt ? `static_cast<int>(${expr})` : expr);
+            } else {
+              // Determine if source is scalar (broadcast) or vector (extract)
+              const rawVal = node[g.key];
+              let srcIsScalar = typeof rawVal === 'number' || typeof rawVal === 'boolean';
+              if (!srcIsScalar && typeof rawVal === 'string') {
+                // Check inferredTypes for the source
+                const baseRef = rawVal.includes('.') ? rawVal.substring(0, rawVal.indexOf('.')) : rawVal;
+                const srcType = inferredTypes?.get(baseRef) || '';
+                srcIsScalar = srcType === 'float' || srcType === 'int' || srcType === 'boolean';
+                // If it was a swizzle, the result might already be a vector
+                if (rawVal.includes('.')) {
+                  const swizzle = rawVal.substring(rawVal.indexOf('.') + 1);
+                  srcIsScalar = swizzle.length === 1;
+                }
+              }
+              if (srcIsScalar) {
+                // Broadcast scalar
+                for (let i = 0; i < g.count; i++) {
+                  elems.push(isInt ? `static_cast<int>(${expr})` : `${expr}`);
+                }
+              } else {
+                // Extract from vector
+                for (let i = 0; i < g.count; i++) {
+                  elems.push(isInt ? `static_cast<int>((${expr})[${i}])` : `(${expr})[${i}]`);
+                }
+              }
+            }
+          }
+          return `std::array<${elemType}, ${dim}>{${elems.join(', ')}}`;
+        }
+        // Default scalar-per-component
+        if (isInt) {
+          return `std::array<int, ${dim}>{${compOrder.map(c => `static_cast<int>(${a(c)})`).join(', ')}}`;
+        }
+        return `std::array<float, ${dim}>{${compOrder.map(c => a(c)).join(', ')}}`;
+      }
 
       case 'float3x3': {
         const vals = node['vals'];

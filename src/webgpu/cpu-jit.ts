@@ -44,6 +44,30 @@ export class CpuJitCompiler {
     }
   }
 
+  /** Detect component-group keys on a vector constructor node. Returns sorted groups or null if standard x/y/z/w form. */
+  private detectComponentGroups(node: Node, dim: number): { key: string, startIdx: number, count: number }[] | null {
+    const compOrder = ['x', 'y', 'z', 'w'];
+    const validGroups = ['x', 'y', 'z', 'w', 'xy', 'yz', 'zw', 'xyz', 'yzw', 'xyzw'];
+    const groups: { key: string, startIdx: number, count: number }[] = [];
+
+    for (const key of validGroups) {
+      if (node[key] !== undefined && key.length > 1) {
+        groups.push({ key, startIdx: compOrder.indexOf(key[0]), count: key.length });
+      }
+    }
+    if (groups.length === 0) return null;
+
+    for (let i = 0; i < dim; i++) {
+      const c = compOrder[i];
+      if (node[c] !== undefined && !groups.some(g => g.startIdx <= i && i < g.startIdx + g.count)) {
+        groups.push({ key: c, startIdx: i, count: 1 });
+      }
+    }
+
+    groups.sort((a, b) => a.startIdx - b.startIdx);
+    return groups;
+  }
+
   private hasResult(op: string): boolean {
     if (op.startsWith('math_') || op.startsWith('vec_') || op.startsWith('mat_') || op.startsWith('quat_')) return true;
     const valueOps = [
@@ -509,7 +533,19 @@ require('./intrinsics.js');
     const edge = edges.find(e => e.to === node.id && (e.portIn === key || (key === 'val' && e.portIn === 'value')) && e.type === 'data');
     if (edge) {
       const source = func.nodes.find(n => n.id === edge.from);
-      if (source) return this.compileExpression(source, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, false, emitPure, edges);
+      if (source) {
+        let baseExpr = this.compileExpression(source, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, false, emitPure, edges);
+        // Check for inline swizzle suffix on the original property value
+        const origVal = node[key];
+        if (typeof origVal === 'string' && origVal.includes('.')) {
+          const swizzle = origVal.substring(origVal.indexOf('.') + 1);
+          const compMap: Record<string, number> = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3 };
+          const indices = [...swizzle].map(c => compMap[c]);
+          if (indices.length === 1) return `(${baseExpr})[${indices[0]}]`;
+          return `[${indices.map(i => `(${baseExpr})[${i}]`).join(', ')}]`;
+        }
+        return baseExpr;
+      }
     }
 
     let val: any = undefined;
@@ -528,11 +564,26 @@ require('./intrinsics.js');
     if (val !== undefined) {
       const resolveString = (s: any) => {
         if (typeof s === 'string' && !['var', 'func', 'resource', 'buffer'].includes(key)) {
-          if (func.localVars.some(v => v.id === s)) return sanitizeId(s, 'var');
-          if (func.inputs.some(i => i.id === s)) return sanitizeId(s, 'input');
-          if (this.ir?.inputs.some((i: any) => i.id === s)) return `ctx.inputs.get('${s}')`;
-          const targetNode = func.nodes.find(n => n.id === s);
-          if (targetNode && targetNode.id !== node.id) return this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, false, emitPure, edges);
+          // Inline swizzle support: "nodeId.xyz"
+          let baseS = s;
+          let swizzle: string | undefined;
+          const dotIdx = s.indexOf('.');
+          if (dotIdx !== -1) {
+            baseS = s.substring(0, dotIdx);
+            swizzle = s.substring(dotIdx + 1);
+          }
+          const applySwizzle = (expr: string) => {
+            if (!swizzle) return expr;
+            const compMap: Record<string, number> = { x: 0, y: 1, z: 2, w: 3, r: 0, g: 1, b: 2, a: 3 };
+            const indices = [...swizzle].map(c => compMap[c]);
+            if (indices.length === 1) return `(${expr})[${indices[0]}]`;
+            return `[${indices.map(i => `(${expr})[${i}]`).join(', ')}]`;
+          };
+          if (func.localVars.some(v => v.id === baseS)) return applySwizzle(sanitizeId(baseS, 'var'));
+          if (func.inputs.some(i => i.id === baseS)) return applySwizzle(sanitizeId(baseS, 'input'));
+          if (this.ir?.inputs.some((i: any) => i.id === baseS)) return applySwizzle(`ctx.inputs.get('${baseS}')`);
+          const targetNode = func.nodes.find(n => n.id === baseS);
+          if (targetNode && targetNode.id !== node.id) return applySwizzle(this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, false, emitPure, edges));
         }
         return JSON.stringify(s);
       };
@@ -562,7 +613,11 @@ require('./intrinsics.js');
         if (func.inputs.some(i => i.id === varId)) return sanitizeId(varId, 'input');
         return `((id) => { const v = ctx.inputs.get(id); if (v !== undefined) return v; throw new Error("Variable '" + id + "' is not defined"); })('${varId}')`;
       }
-      case 'literal': return JSON.stringify(node['val']);
+      case 'literal': {
+        const litType = node['type'];
+        if (litType === 'int') return `Math.trunc(${JSON.stringify(node['val'])})`;
+        return JSON.stringify(node['val']);
+      }
       case 'loop_index': return `loop_${node['loop'].replace(/[^a-zA-Z0-9_]/g, '_')}`;
       case 'buffer_load': {
         const bufferId = node['buffer'];
@@ -849,12 +904,34 @@ require('./intrinsics.js');
       case 'static_cast_float3':
       case 'static_cast_float4': return `(${val()}).map(v => Number(v))`;
 
-      case 'float2': return `[${a('x')}, ${a('y')}]`;
-      case 'float3': return `[${a('x')}, ${a('y')}, ${a('z')}]`;
-      case 'float4': return `[${a('x')}, ${a('y')}, ${a('z')}, ${a('w')}]`;
-      case 'int2': return `[Math.trunc(${a('x')}), Math.trunc(${a('y')})]`;
-      case 'int3': return `[Math.trunc(${a('x')}), Math.trunc(${a('y')}), Math.trunc(${a('z')})]`;
-      case 'int4': return `[Math.trunc(${a('x')}), Math.trunc(${a('y')}), Math.trunc(${a('z')}), Math.trunc(${a('w')})]`;
+      case 'float2':
+      case 'float3':
+      case 'float4':
+      case 'int2':
+      case 'int3':
+      case 'int4': {
+        const isInt = node.op.startsWith('int');
+        const dim = parseInt(node.op.replace(/^(float|int)/, ''));
+        const compOrder = ['x', 'y', 'z', 'w'].slice(0, dim);
+        const groups = this.detectComponentGroups(node, dim);
+        if (groups) {
+          // Flatten component groups into individual components
+          const parts: string[] = [];
+          for (const g of groups) {
+            const expr = a(g.key);
+            if (g.count === 1) {
+              parts.push(isInt ? `Math.trunc(${expr})` : expr);
+            } else {
+              // Multi-component: spread if vector, broadcast if scalar
+              parts.push(`...((v) => typeof v === 'number' ? Array(${g.count}).fill(${isInt ? 'Math.trunc(v)' : 'v'}) : ${isInt ? `v.map(x => Math.trunc(x))` : 'v'})(${expr})`);
+            }
+          }
+          return `[${parts.join(', ')}]`;
+        }
+        // Default scalar-per-component
+        const args = compOrder.map(c => isInt ? `Math.trunc(${a(c)})` : a(c));
+        return `[${args.join(', ')}]`;
+      }
       case 'float3x3':
       case 'float4x4': {
         const size = node.op === 'float3x3' ? 9 : 16;

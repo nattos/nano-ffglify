@@ -189,13 +189,31 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   'int': [{ inputs: { val: 'int' }, output: 'int' }],
   'bool': [{ inputs: { val: 'boolean' }, output: 'boolean' }],
 
-  // Vector Constructors
-  'float2': [{ inputs: { x: 'float', y: 'float' }, output: 'float2' }],
-  'float3': [{ inputs: { x: 'float', y: 'float', z: 'float' }, output: 'float3' }],
-  'float4': [{ inputs: { x: 'float', y: 'float', z: 'float', w: 'float' }, output: 'float4' }],
-  'int2': [{ inputs: { x: 'int', y: 'int' }, output: 'int2' }],
-  'int3': [{ inputs: { x: 'int', y: 'int', z: 'int' }, output: 'int3' }],
-  'int4': [{ inputs: { x: 'int', y: 'int', z: 'int', w: 'int' }, output: 'int4' }],
+  // Vector Constructors (scalar-only first for backward compat, then wildcard for component groups)
+  'float2': [
+    { inputs: { x: 'float', y: 'float' }, output: 'float2' },
+    { inputs: { '*': 'any' }, output: 'float2' },
+  ],
+  'float3': [
+    { inputs: { x: 'float', y: 'float', z: 'float' }, output: 'float3' },
+    { inputs: { '*': 'any' }, output: 'float3' },
+  ],
+  'float4': [
+    { inputs: { x: 'float', y: 'float', z: 'float', w: 'float' }, output: 'float4' },
+    { inputs: { '*': 'any' }, output: 'float4' },
+  ],
+  'int2': [
+    { inputs: { x: 'int', y: 'int' }, output: 'int2' },
+    { inputs: { '*': 'any' }, output: 'int2' },
+  ],
+  'int3': [
+    { inputs: { x: 'int', y: 'int', z: 'int' }, output: 'int3' },
+    { inputs: { '*': 'any' }, output: 'int3' },
+  ],
+  'int4': [
+    { inputs: { x: 'int', y: 'int', z: 'int', w: 'int' }, output: 'int4' },
+    { inputs: { '*': 'any' }, output: 'int4' },
+  ],
 
   'vec_get_element': [
     { inputs: { vec: 'float2', index: 'int' }, output: 'float' },
@@ -254,7 +272,10 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
 
   // Matrix
   // Output Ops
-  'literal': [{ inputs: { val: 'any' }, output: 'any' }], // Can return any type
+  'literal': [
+    { inputs: { val: 'any' }, output: 'any' },
+    { inputs: { val: 'any', type: 'string' }, output: 'any' },
+  ],
 
   // Matrix
   'mat_identity': [{ inputs: { size: 'int' }, output: 'float4x4' }],

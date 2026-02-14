@@ -1104,7 +1104,12 @@ export class MslGenerator {
 
 
     switch (node.op) {
-      case 'literal':
+      case 'literal': {
+        const litType = node['type'];
+        if (litType === 'int') return `int(${Math.trunc(node['val'])})`;
+        if (litType === 'bool' || litType === 'boolean') return node['val'] ? '1.0f' : '0.0f';
+        return this.formatFloat(node['val']);
+      }
       case 'float':
         return this.formatFloat(node['val']);
       case 'int':
@@ -1129,12 +1134,27 @@ export class MslGenerator {
       }
 
       // Vector constructors
-      case 'float2': return `float2(${a('x')}, ${a('y')})`;
-      case 'float3': return `float3(${a('x')}, ${a('y')}, ${a('z')})`;
-      case 'float4': return `float4(${a('x')}, ${a('y')}, ${a('z')}, ${a('w')})`;
-      case 'int2': return `int2(int(${a('x')}), int(${a('y')}))`;
-      case 'int3': return `int3(int(${a('x')}), int(${a('y')}), int(${a('z')}))`;
-      case 'int4': return `int4(int(${a('x')}), int(${a('y')}), int(${a('z')}), int(${a('w')}))`;
+      case 'float2':
+      case 'float3':
+      case 'float4':
+      case 'int2':
+      case 'int3':
+      case 'int4': {
+        const isInt = node.op.startsWith('int');
+        const dim = parseInt(node.op.replace(/^(float|int)/, ''));
+        const mslType = node.op;
+        const compOrder = ['x', 'y', 'z', 'w'].slice(0, dim);
+        const groups = this.detectComponentGroups(node, dim);
+        if (groups) {
+          const argExprs = groups.map(g => a(g.key));
+          return `${mslType}(${argExprs.join(', ')})`;
+        }
+        // Default scalar-per-component
+        if (isInt) {
+          return `${mslType}(${compOrder.map(c => `int(${a(c)})`).join(', ')})`;
+        }
+        return `${mslType}(${compOrder.map(c => a(c)).join(', ')})`;
+      }
 
       // Quaternion constructors
       case 'quat': {
@@ -1540,21 +1560,28 @@ export class MslGenerator {
     if (edge) {
       const source = func.nodes.find(n => n.id === edge.from);
       if (source) {
+        // Check for inline swizzle suffix on the original property value
+        let edgeSwizzle = '';
+        const origVal = node[key];
+        if (typeof origVal === 'string' && origVal.includes('.')) {
+          edgeSwizzle = origVal.substring(origVal.indexOf('.'));
+        }
+
         // Prevent inlining of complex constructors that emit initializer lists (unless checking length)
         // struct_construct and array_construct emit { ... } which cannot be used in expressions directly
         if ((source.op === 'array_construct' || source.op === 'struct_construct') && node.op !== 'array_length') {
           emitPure(source.id);
-          return this.nodeResId(source.id);
+          return this.nodeResId(source.id) + edgeSwizzle;
         }
 
         // If the node has a result and is not a "pure" expr we want to inline (like literals usually), use the variable
         // However, we must ensure it's been emitted. Typically nodes are sorted.
         // For now, let's prefer variables for ops that are definitely emitted as variables.
         if (this.hasResult(source.op) && source.op !== 'literal') {
-          return this.nodeResId(source.id);
+          return this.nodeResId(source.id) + edgeSwizzle;
         }
 
-        return this.compileExpression(source, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+        return this.compileExpression(source, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes) + edgeSwizzle;
       }
     }
 
@@ -1573,17 +1600,50 @@ export class MslGenerator {
       return `float${len}(${elements})`;
     }
     if (typeof val === 'string') {
+      // Inline swizzle support: "nodeId.xyz"
+      let baseVal = val;
+      let swizzleSuffix = '';
+      const dotIdx = val.indexOf('.');
+      if (dotIdx !== -1) {
+        baseVal = val.substring(0, dotIdx);
+        swizzleSuffix = val.substring(dotIdx); // includes the '.'
+      }
+
       // Node reference
-      const refNode = func.nodes.find(n => n.id === val);
+      const refNode = func.nodes.find(n => n.id === baseVal);
       if (refNode) {
-        emitPure(val);
-        return this.nodeResId(val);
+        emitPure(baseVal);
+        return this.nodeResId(baseVal) + swizzleSuffix;
       }
 
       // Variable reference (input or local)
-      return this.getVariableExpr(val, func, varMap);
+      return this.getVariableExpr(baseVal, func, varMap) + swizzleSuffix;
     }
     return String(val);
+  }
+
+  /** Detect component-group keys on a vector constructor node. */
+  private detectComponentGroups(node: Node, dim: number): { key: string, startIdx: number, count: number }[] | null {
+    const compOrder = ['x', 'y', 'z', 'w'];
+    const validGroups = ['x', 'y', 'z', 'w', 'xy', 'yz', 'zw', 'xyz', 'yzw', 'xyzw'];
+    const groups: { key: string, startIdx: number, count: number }[] = [];
+
+    for (const key of validGroups) {
+      if (node[key] !== undefined && key.length > 1) {
+        groups.push({ key, startIdx: compOrder.indexOf(key[0]), count: key.length });
+      }
+    }
+    if (groups.length === 0) return null;
+
+    for (let i = 0; i < dim; i++) {
+      const c = compOrder[i];
+      if (node[c] !== undefined && !groups.some(g => g.startIdx <= i && i < g.startIdx + g.count)) {
+        groups.push({ key: c, startIdx: i, count: 1 });
+      }
+    }
+
+    groups.sort((a, b) => a.startIdx - b.startIdx);
+    return groups;
   }
 
   private hasResult(op: string): boolean {

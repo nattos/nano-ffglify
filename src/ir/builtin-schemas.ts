@@ -306,45 +306,86 @@ export const MathClampDef = defineOp<MathClampArgs>({
 });
 
 export const LiteralDef = defineOp<LiteralArgs>({
-  doc: "Constant literal value. The validator types ALL numeric literals as 'float', even integer values like 0 or 42. Use static_cast_int if you need a typed int.",
-  args: { val: { type: z.any(), doc: "The literal value (scalar, vector, matrix, array, etc.)", literalTypes: ['float', 'int', 'bool', 'string', 'float2', 'float3', 'float4', 'float3x3', 'float4x4', 'array', 'struct'] } }
+  doc: "Constant literal value. By default, numeric literals are typed as 'float'. Use the optional 'type' field to specify an explicit type (e.g. 'int', 'bool').",
+  args: {
+    val: { type: z.any(), doc: "The literal value (scalar, vector, matrix, array, etc.)", literalTypes: ['float', 'int', 'bool', 'string', 'float2', 'float3', 'float4', 'float3x3', 'float4x4', 'array', 'struct'] },
+    type: { type: z.string().optional(), doc: "Explicit type ('int', 'float', 'bool', 'float2', etc.)", optional: true, isIdentifier: true }
+  }
 });
 
 // --- Constructors ---
 export const Float2ConstructorDef = defineOp<Float2Args>({
-  doc: "Construct a float2.",
+  doc: "Construct a float2. Supports component-group keys: x, y, xy.",
   args: {
-    x: { type: FloatSchema, doc: "X", refable: true, literalTypes: ['float', 'int'] },
-    y: { type: FloatSchema, doc: "Y", refable: true, literalTypes: ['float', 'int'] }
+    x: { type: FloatSchema, doc: "X", refable: true, literalTypes: ['float', 'int'], optional: true },
+    y: { type: FloatSchema, doc: "Y", refable: true, literalTypes: ['float', 'int'], optional: true },
+    xy: { type: z.any(), doc: "XY (float2 or scalar broadcast)", refable: true, optional: true },
   }
 });
 
 export const Float3ConstructorDef = defineOp<Float3Args>({
-  doc: "Construct a float3.",
-  args: { x: { type: FloatSchema, doc: "X", refable: true }, y: { type: FloatSchema, doc: "Y", refable: true }, z: { type: FloatSchema, doc: "Z", refable: true } }
+  doc: "Construct a float3. Supports component-group keys: x, y, z, xy, yz, xyz.",
+  args: {
+    x: { type: FloatSchema, doc: "X", refable: true, optional: true },
+    y: { type: FloatSchema, doc: "Y", refable: true, optional: true },
+    z: { type: FloatSchema, doc: "Z", refable: true, optional: true },
+    xy: { type: z.any(), doc: "XY (float2 or scalar broadcast)", refable: true, optional: true },
+    yz: { type: z.any(), doc: "YZ (float2 or scalar broadcast)", refable: true, optional: true },
+    xyz: { type: z.any(), doc: "XYZ (float3 or scalar broadcast)", refable: true, optional: true },
+  }
 });
 
 export const Float4ConstructorDef = defineOp<Float4Args>({
-  doc: "Construct a float4.",
-  args: { x: { type: FloatSchema, doc: "X", refable: true }, y: { type: FloatSchema, doc: "Y", refable: true }, z: { type: FloatSchema, doc: "Z", refable: true }, w: { type: FloatSchema, doc: "W", refable: true } }
+  doc: "Construct a float4. Supports component-group keys: x, y, z, w, xy, yz, zw, xyz, yzw, xyzw.",
+  args: {
+    x: { type: FloatSchema, doc: "X", refable: true, optional: true },
+    y: { type: FloatSchema, doc: "Y", refable: true, optional: true },
+    z: { type: FloatSchema, doc: "Z", refable: true, optional: true },
+    w: { type: FloatSchema, doc: "W", refable: true, optional: true },
+    xy: { type: z.any(), doc: "XY (float2 or scalar broadcast)", refable: true, optional: true },
+    yz: { type: z.any(), doc: "YZ (float2 or scalar broadcast)", refable: true, optional: true },
+    zw: { type: z.any(), doc: "ZW (float2 or scalar broadcast)", refable: true, optional: true },
+    xyz: { type: z.any(), doc: "XYZ (float3 or scalar broadcast)", refable: true, optional: true },
+    yzw: { type: z.any(), doc: "YZW (float3 or scalar broadcast)", refable: true, optional: true },
+    xyzw: { type: z.any(), doc: "XYZW (float4 or scalar broadcast)", refable: true, optional: true },
+  }
 });
 
 export const Int2ConstructorDef = defineOp<Float2Args>({
-  doc: "Construct an int2.",
+  doc: "Construct an int2. Supports component-group keys: x, y, xy.",
   args: {
-    x: { type: IntSchema, doc: "X", refable: true, literalTypes: ['int', 'float'] },
-    y: { type: IntSchema, doc: "Y", refable: true, literalTypes: ['int', 'float'] }
+    x: { type: IntSchema, doc: "X", refable: true, literalTypes: ['int', 'float'], optional: true },
+    y: { type: IntSchema, doc: "Y", refable: true, literalTypes: ['int', 'float'], optional: true },
+    xy: { type: z.any(), doc: "XY (int2 or scalar broadcast)", refable: true, optional: true },
   }
 });
 
 export const Int3ConstructorDef = defineOp<Float3Args>({
-  doc: "Construct an int3.",
-  args: { x: { type: IntSchema, doc: "X", refable: true }, y: { type: IntSchema, doc: "Y", refable: true }, z: { type: IntSchema, doc: "Z", refable: true } }
+  doc: "Construct an int3. Supports component-group keys: x, y, z, xy, yz, xyz.",
+  args: {
+    x: { type: IntSchema, doc: "X", refable: true, optional: true },
+    y: { type: IntSchema, doc: "Y", refable: true, optional: true },
+    z: { type: IntSchema, doc: "Z", refable: true, optional: true },
+    xy: { type: z.any(), doc: "XY (int2 or scalar broadcast)", refable: true, optional: true },
+    yz: { type: z.any(), doc: "YZ (int2 or scalar broadcast)", refable: true, optional: true },
+    xyz: { type: z.any(), doc: "XYZ (int3 or scalar broadcast)", refable: true, optional: true },
+  }
 });
 
 export const Int4ConstructorDef = defineOp<Float4Args>({
-  doc: "Construct an int4.",
-  args: { x: { type: IntSchema, doc: "X", refable: true }, y: { type: IntSchema, doc: "Y", refable: true }, z: { type: IntSchema, doc: "Z", refable: true }, w: { type: IntSchema, doc: "W", refable: true } }
+  doc: "Construct an int4. Supports component-group keys: x, y, z, w, xy, yz, zw, xyz, yzw, xyzw.",
+  args: {
+    x: { type: IntSchema, doc: "X", refable: true, optional: true },
+    y: { type: IntSchema, doc: "Y", refable: true, optional: true },
+    z: { type: IntSchema, doc: "Z", refable: true, optional: true },
+    w: { type: IntSchema, doc: "W", refable: true, optional: true },
+    xy: { type: z.any(), doc: "XY (int2 or scalar broadcast)", refable: true, optional: true },
+    yz: { type: z.any(), doc: "YZ (int2 or scalar broadcast)", refable: true, optional: true },
+    zw: { type: z.any(), doc: "ZW (int2 or scalar broadcast)", refable: true, optional: true },
+    xyz: { type: z.any(), doc: "XYZ (int3 or scalar broadcast)", refable: true, optional: true },
+    yzw: { type: z.any(), doc: "YZW (int3 or scalar broadcast)", refable: true, optional: true },
+    xyzw: { type: z.any(), doc: "XYZW (int4 or scalar broadcast)", refable: true, optional: true },
+  }
 });
 
 // --- Vectors ---

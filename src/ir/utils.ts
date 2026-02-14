@@ -15,9 +15,12 @@ export function reconstructEdges(func: FunctionDef, doc?: IRDocument): Edge[] {
   const globalInputIds = new Set(doc?.inputs?.map(i => i.id) || []);
 
   // Helper to verify if a string is a valid reference within this function context
-  const isRefId = (id: any): id is string =>
-    typeof id === 'string' && id.length > 0 &&
-    (nodeIds.has(id) || inputIds.has(id) || localVarIds.has(id) || globalResourceIds.has(id) || globalInputIds.has(id));
+  // Supports inline swizzle syntax: "nodeId.xyz" resolves via the base ID
+  const isRefId = (id: any): id is string => {
+    if (typeof id !== 'string' || id.length === 0) return false;
+    const baseId = id.includes('.') ? id.substring(0, id.indexOf('.')) : id;
+    return nodeIds.has(baseId) || inputIds.has(baseId) || localVarIds.has(baseId) || globalResourceIds.has(baseId) || globalInputIds.has(baseId);
+  };
 
   const isNodeId = (id: any): id is string => typeof id === 'string' && id.length > 0 && nodeIds.has(id);
 
@@ -43,7 +46,8 @@ export function reconstructEdges(func: FunctionDef, doc?: IRDocument): Edge[] {
           } else if (refType === 'data' || refType === 'var' || refType === 'func' || refType === 'resource') {
             const processRef = (v: any, portSuffix: string = '') => {
               if (isRefId(v)) {
-                edges.push({ from: v, portOut: 'val', to: node.id, portIn: key + portSuffix, type: 'data' });
+                const baseId = typeof v === 'string' && v.includes('.') ? v.substring(0, v.indexOf('.')) : v;
+                edges.push({ from: baseId, portOut: 'val', to: node.id, portIn: key + portSuffix, type: 'data' });
               }
             };
 
@@ -63,7 +67,8 @@ export function reconstructEdges(func: FunctionDef, doc?: IRDocument): Edge[] {
           if (obj === null || obj === undefined) return;
           if (typeof obj === 'string') {
             if (isRefId(obj)) {
-              edges.push({ from: obj, portOut: 'val', to: node.id, portIn: path, type: 'data' });
+              const baseId = obj.includes('.') ? obj.substring(0, obj.indexOf('.')) : obj;
+              edges.push({ from: baseId, portOut: 'val', to: node.id, portIn: path, type: 'data' });
             }
           } else if (Array.isArray(obj)) {
             obj.forEach((item, i) => traverse(item, `${path}[${i}]`));
