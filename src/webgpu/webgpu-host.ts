@@ -6,7 +6,7 @@ import { RuntimeGlobals, RuntimeValue, RenderPipelineDef, ResourceState } from '
  */
 export interface IGpuExecutor {
   executeShader(funcId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue>, resources: Map<string, ResourceState>): Promise<void>;
-  executeDraw(targetId: string, vertexId: string, fragmentId: string, count: number, pipeline: RenderPipelineDef, resources: Map<string, ResourceState>): Promise<void>;
+  executeDraw(targetId: string, vertexId: string, fragmentId: string, count: number, pipeline: RenderPipelineDef, resources: Map<string, ResourceState>, args?: Record<string, RuntimeValue>): Promise<void>;
   executeSyncToCpu(resourceId: string, resources: Map<string, ResourceState>): void;
   executeWaitCpuSync(resourceId: string, resources: Map<string, ResourceState>): Promise<void>;
 }
@@ -49,7 +49,8 @@ export class WebGpuHost implements RuntimeGlobals {
   }
 
   async draw(targetId: string, vertexId: string, fragmentId: string, vertexCount: number, pipeline: RenderPipelineDef): Promise<void> {
-    await this.executor.executeDraw(targetId, vertexId, fragmentId, vertexCount, pipeline, this.resources);
+    const mergedArgs = { ...Object.fromEntries(this.inputs.entries()) };
+    await this.executor.executeDraw(targetId, vertexId, fragmentId, vertexCount, pipeline, this.resources, mergedArgs);
   }
 
   executeSyncToCpu(resId: string): void {

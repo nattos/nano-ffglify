@@ -945,7 +945,8 @@ struct EvalContext {
 
   // Draw call (render pipeline)
   void draw(size_t targetIdx, const char *vsFunc, const char *fsFunc,
-            int vertexCount) {
+            int vertexCount,
+            const std::vector<float> &args = {}) {
     if (metalBuffers.empty()) {
       syncToMetal();
     }
@@ -997,9 +998,18 @@ struct EvalContext {
         [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
     [encoder setRenderPipelineState:pipelineState];
 
+    // Bind global inputs buffer at binding 0 (shared with vertex/fragment)
+    if (!args.empty()) {
+      id<MTLBuffer> argsBuffer =
+          [device newBufferWithBytes:args.data()
+                              length:args.size() * sizeof(float)
+                             options:MTLResourceStorageModeShared];
+      [encoder setVertexBuffer:argsBuffer offset:0 atIndex:0];
+      [encoder setFragmentBuffer:argsBuffer offset:0 atIndex:0];
+    }
+
     // Bind resources (buffers and textures) to both vertex and fragment stages
-    // Bindings start at 1 (0 is reserved for potential uniforms, though
-    // currently unused in draw)
+    // Bindings start at 1 (0 is used for global inputs)
     for (size_t i = 0; i < resources.size(); ++i) {
       auto *res = resources[i];
       if (i < metalTextures.size() && metalTextures[i] != nil) {

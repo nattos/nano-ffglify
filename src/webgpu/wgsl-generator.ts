@@ -191,18 +191,21 @@ export class WgslGenerator {
     let inputLayout: BufferBlockLayout | undefined;
     const layout = new ShaderLayout(ir?.structs || []);
 
-    if (options.stage === 'compute' && options.inputBinding !== undefined) {
+    if (options.inputBinding !== undefined && (options.stage === 'compute' || nonBuiltinInputs.length > 0)) {
       const docInputs = [...nonBuiltinInputs];
-      // Inject dispatch size for bounds checking - now unconditional for compute
-      docInputs.push({ id: 'u_dispatch_size', type: 'vec3<u32>' });
 
-      // Standard built-ins supported via uniform/storage buffer
-      const standardBuiltins = ['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'];
-      standardBuiltins.forEach(b => {
-        if (this.allUsedBuiltins.has(b)) {
-          docInputs.push({ id: b, type: 'float' });
-        }
-      });
+      if (options.stage === 'compute') {
+        // Inject dispatch size for bounds checking - compute only
+        docInputs.push({ id: 'u_dispatch_size', type: 'vec3<u32>' });
+
+        // Standard built-ins supported via uniform/storage buffer
+        const standardBuiltins = ['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'];
+        standardBuiltins.forEach(b => {
+          if (this.allUsedBuiltins.has(b)) {
+            docInputs.push({ id: b, type: 'float' });
+          }
+        });
+      }
 
       // Use ShaderLayout to determine order (sort=true for efficient packing)
       // This guarantees the struct layout matches the buffer packing.
@@ -426,10 +429,10 @@ export class WgslGenerator {
         let decorators = '';
         if (m.builtin) {
           decorators += `@builtin(${m.builtin}) `;
-        } else if (options.stage !== 'compute') {
-          // Fragment/Vertex IO requires @location for all non-builtin members
-          // But only if we are in Vertex/Fragment stage. Compute doesn't support @location struct members.
-          decorators += `@location(${m.location !== undefined ? m.location : locationIdx++}) `;
+        } else if (options.stage !== 'compute' && m.location !== undefined) {
+          // Only add @location for members with explicit location property.
+          // Non-IO structs (e.g. buffer element types) must not have @location decorators.
+          decorators += `@location(${m.location}) `;
         }
         lines.push(`  ${decorators}${m.name} : ${type},`);
       }
@@ -674,8 +677,14 @@ export class WgslGenerator {
       const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
       const bufVar = this.getBufferVar(bufferId);
       const def = options.resourceDefs?.get(bufferId);
-      const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
-      lines.push(`${indent}${bufVar}.data[u32(${idx})] = ${type}(${val});`);
+      const dataType = def?.dataType;
+      const isStruct = dataType && (ir.structs ?? []).some(s => s.id === dataType);
+      if (isStruct) {
+        lines.push(`${indent}${bufVar}.data[u32(${idx})] = ${val};`);
+      } else {
+        const type = dataType ? this.resolveType(dataType) : 'f32';
+        lines.push(`${indent}${bufVar}.data[u32(${idx})] = ${type}(${val});`);
+      }
     } else if (node.op === 'call_func') {
       const targetFunc = ir.functions.find(f => f.id === node['func']);
       if (targetFunc) {
@@ -745,9 +754,15 @@ export class WgslGenerator {
       const val = this.resolveArg(node, 'value', func, options, ir, 'any', edges);
       const bufVar = this.getBufferVar(bufferId);
       const def = options.resourceDefs?.get(bufferId);
-      const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
+      const dataType = def?.dataType;
+      const isStruct = dataType && (ir.structs ?? []).some(s => s.id === dataType);
       lines.push(`${indent}if (u32(${idx}) < arrayLength(&${bufVar}.data)) {`);
-      lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
+      if (isStruct) {
+        lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${val};`);
+      } else {
+        const type = dataType ? this.resolveType(dataType) : 'f32';
+        lines.push(`${indent}  ${bufVar}.data[u32(${idx})] = ${type}(${val});`);
+      }
       lines.push(`${indent}}`);
     } else if (node.op === 'cmd_dispatch') {
       const targetId = node['func'] as string;
@@ -1112,7 +1127,12 @@ export class WgslGenerator {
       const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
       const bufVar = this.getBufferVar(bufferId);
       const def = options.resourceDefs?.get(bufferId);
-      const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
+      const dataType = def?.dataType;
+      const isStruct = dataType && (ir.structs ?? []).some(s => s.id === dataType);
+      if (isStruct) {
+        return `${bufVar}.data[u32(${idx})]`;
+      }
+      const type = dataType ? this.resolveType(dataType) : 'f32';
       return `${type}(${bufVar}.data[u32(${idx})])`;
     }
     if (node.op === 'color_mix') {

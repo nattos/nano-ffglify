@@ -552,9 +552,16 @@ export class MslGenerator {
       }
     }
 
-    // Add resource bindings (textures, buffers) similar to kernel
-    // But exclude b_globals since it's not supported for non-compute
-    // And exclude 'inputs' buffer - we expect data driven by vertex_id or stage_in
+    // Collect global inputs that might be accessed via var_get
+    const inputs = (this.ir?.inputs || []).filter(i => i.type !== 'texture2d');
+    const hasGlobalInputs = inputs.length > 0;
+
+    // Add global inputs buffer at binding 0 if there are global inputs
+    if (hasGlobalInputs) {
+      params.push('constant float* inputs [[buffer(0)]]');
+    }
+
+    // Add resource bindings (textures, buffers) starting at binding 1+
     for (const [resId, binding] of resourceBindings) {
       const res = this.ir?.resources.find(r => r.id === resId) ||
         this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d');
@@ -562,7 +569,8 @@ export class MslGenerator {
 
       if ('type' in res && res.type === 'buffer') {
         const elemType = this.irTypeToMsl((res as any).dataType || 'float');
-        params.push(`device ${elemType}* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
+        const access = isVertex ? 'const device' : 'device';
+        params.push(`${access} ${elemType}* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
       } else {
         const isWrite = false; // Render pipeline shaders usually read textures
         if (isWrite) {
@@ -576,25 +584,29 @@ export class MslGenerator {
 
     lines.push(`${stage} ${outputType} ${entryName}(${params.join(', ')}) {`);
 
-    // Preamble: unpack inputs to local vars
+    // Preamble: unpack stage-specific inputs
     if (isVertex) {
-      // For now, map vertex_id to first input if it's int/uint
       const vIdx = func.inputs?.[0];
       if (vIdx) {
         lines.push(`    ${this.irTypeToMsl(vIdx.type)} ${this.sanitizeId(vIdx.id)} = vid;`);
       }
     } else {
-      // Fragment: map stage_in members to inputs? Or just map the struct itself?
-      // Usually FS takes the struct as a whole.
-      // If the function expects separate inputs, we'd need to unpack stage_in.
-      // But since we control IR generation, let's assume valid IR passes struct.
       const sIn = func.inputs?.[0];
       if (sIn) {
         lines.push(`    ${this.irTypeToMsl(sIn.type)} ${this.sanitizeId(sIn.id)} = stage_in;`);
       }
     }
 
-    // No varMap needed for globals readback since we return values directly
+    // Unpack global inputs from flat float buffer (same as compute kernels)
+    if (hasGlobalInputs) {
+      let offset = 0;
+      for (const input of inputs) {
+        const irType = input.type || 'float';
+        const varName = this.sanitizeId(input.id);
+        offset = this.emitUnpackInput(varName, irType, offset, lines);
+      }
+    }
+
     const varMap = new Map<string, number>();
     const edges = reconstructEdges(func);
 

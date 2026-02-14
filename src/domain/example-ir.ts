@@ -582,14 +582,24 @@ export const RAYMARCH_SHADER: IRDocument = {
 export const PARTICLE_SHADER: IRDocument = {
   version: '1.0.0',
   meta: { name: 'Particle Simulation' },
-  comment: 'Compute-based particle simulation with vertex/fragment rendering. Demonstrates buffer read/write, cmd_draw with additive blending, hash noise, branchless selection via math_mix, and per-particle quad generation in vertex shader.',
+  comment: 'Compute-based particle simulation with vertex/fragment rendering. Demonstrates struct-typed buffers, aspect ratio correction, cmd_draw with additive blending, hash noise, branchless selection via math_mix, and per-particle quad generation in vertex shader.',
   entryPoint: 'fn_main_cpu',
 
   inputs: [
-    { id: 'particle_count', type: 'float', default: 1000, ui: { min: 1, max: 1000, widget: 'slider' }, comment: 'Number of active particles.' }
+    { id: 'particle_count', type: 'float', default: 1000, ui: { min: 1, max: 1000000, widget: 'slider' }, comment: 'Number of active particles (max 1M).' },
+    { id: 'viewport_size', type: 'float2', default: [512, 512], comment: 'Viewport dimensions for aspect ratio correction.' }
   ],
 
   structs: [
+    {
+      id: 'Particle',
+      members: [
+        { name: 'pos', type: 'float2' as DataType },
+        { name: 'vel', type: 'float2' as DataType },
+        { name: 'lifetime', type: 'float' as DataType },
+        { name: 'age', type: 'float' as DataType }
+      ]
+    },
     {
       id: 'VertexOutput',
       members: [
@@ -612,9 +622,9 @@ export const PARTICLE_SHADER: IRDocument = {
     {
       id: 'particles',
       type: 'buffer',
-      comment: 'Flat particle buffer: 1000 particles x stride 6 [px, py, vx, vy, lifetime, age]. Starts zeroed so age(0) >= lifetime(0) triggers immediate respawn.',
-      dataType: 'float',
-      size: { mode: 'fixed', value: 6000 },
+      comment: 'Struct-typed particle buffer: up to 1M Particle structs {pos, vel, lifetime, age}. Starts zeroed so age(0) >= lifetime(0) triggers immediate respawn.',
+      dataType: 'Particle',
+      size: { mode: 'fixed', value: 1000000 },
       persistence: {
         retain: true,
         clearOnResize: false,
@@ -658,7 +668,7 @@ export const PARTICLE_SHADER: IRDocument = {
     {
       id: 'fn_simulate_gpu',
       type: 'shader',
-      comment: 'Per-particle simulation: load state, physics with noise drift, branchless dead/alive selection via math_mix, store back. 1 thread per particle.',
+      comment: 'Per-particle simulation: load Particle struct, physics with noise drift and aspect correction, branchless dead/alive selection via math_mix, store back. 1 thread per particle.',
       inputs: [],
       outputs: [],
       localVars: [],
@@ -666,29 +676,19 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
         { id: 'dt', op: 'builtin_get', name: 'delta_time' },
         { id: 'time', op: 'builtin_get', name: 'time' },
+        { id: 'gid_x_f', op: 'static_cast_float', val: 'gid.x', comment: 'global_invocation_id is int3; cast to float for hash seed.' },
 
-        { id: 'c_addr', op: 'comment', comment: 'Buffer addressing: gid.x * 6 for stride-6 layout [px, py, vx, vy, lifetime, age].' },
-        { id: 'gid_x_f', op: 'static_cast_float', val: 'gid.x', comment: 'global_invocation_id is int3; cast to float for arithmetic.' },
-        { id: 'base_f', op: 'math_mul', a: 'gid_x_f', b: 6 },
-        { id: 'idx_0', op: 'static_cast_int', val: 'base_f' },
-        { id: 'off_1', op: 'math_add', a: 'base_f', b: 1 },
-        { id: 'idx_1', op: 'static_cast_int', val: 'off_1' },
-        { id: 'off_2', op: 'math_add', a: 'base_f', b: 2 },
-        { id: 'idx_2', op: 'static_cast_int', val: 'off_2' },
-        { id: 'off_3', op: 'math_add', a: 'base_f', b: 3 },
-        { id: 'idx_3', op: 'static_cast_int', val: 'off_3' },
-        { id: 'off_4', op: 'math_add', a: 'base_f', b: 4 },
-        { id: 'idx_4', op: 'static_cast_int', val: 'off_4' },
-        { id: 'off_5', op: 'math_add', a: 'base_f', b: 5 },
-        { id: 'idx_5', op: 'static_cast_int', val: 'off_5' },
+        { id: 'c_aspect', op: 'comment', comment: 'Aspect ratio: scale X velocity so equal magnitude = equal pixel distance.' },
+        { id: 'vp', op: 'var_get', var: 'viewport_size' },
+        { id: 'aspect', op: 'math_div', a: 'vp.x', b: 'vp.y' },
+        { id: 'inv_aspect', op: 'math_div', a: 1.0, b: 'aspect' },
 
-        { id: 'c_load', op: 'comment', comment: 'Load 6 fields: pos_x, pos_y, vel_x, vel_y, lifetime, age.' },
-        { id: 'ld_px', op: 'buffer_load', buffer: 'particles', index: 'idx_0' },
-        { id: 'ld_py', op: 'buffer_load', buffer: 'particles', index: 'idx_1' },
-        { id: 'ld_vx', op: 'buffer_load', buffer: 'particles', index: 'idx_2' },
-        { id: 'ld_vy', op: 'buffer_load', buffer: 'particles', index: 'idx_3' },
-        { id: 'ld_lt', op: 'buffer_load', buffer: 'particles', index: 'idx_4' },
-        { id: 'ld_age', op: 'buffer_load', buffer: 'particles', index: 'idx_5' },
+        { id: 'c_load', op: 'comment', comment: 'Load Particle struct from buffer.' },
+        { id: 'particle', op: 'buffer_load', buffer: 'particles', index: 'gid.x' },
+        { id: 'ld_pos', op: 'struct_extract', struct: 'particle', field: 'pos' },
+        { id: 'ld_vel', op: 'struct_extract', struct: 'particle', field: 'vel' },
+        { id: 'ld_lt', op: 'struct_extract', struct: 'particle', field: 'lifetime' },
+        { id: 'ld_age', op: 'struct_extract', struct: 'particle', field: 'age' },
 
         { id: 'is_dead', op: 'math_step', edge: 'ld_lt', x: 'ld_age', comment: 'step(lifetime, age) = 1.0 when dead. step(0,0)=1 so initially all particles respawn.' },
 
@@ -715,9 +715,10 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'sc_r5', op: 'math_mul', a: 'sin_r5', b: 43758.5453 },
         { id: 'r5', op: 'math_fract', val: 'sc_r5' },
 
-        { id: 'c_resp_val', op: 'comment', comment: 'Respawn values: random position [0,1], velocity [-0.1,0.1], lifetime [1,5]s.' },
+        { id: 'c_resp_val', op: 'comment', comment: 'Respawn values: random position [0,1], velocity [-0.1,0.1] (X scaled by 1/aspect), lifetime [1,5]s.' },
         { id: 'r3_c', op: 'math_sub', a: 'r3', b: 0.5 },
-        { id: 'resp_vx', op: 'math_mul', a: 'r3_c', b: 0.2 },
+        { id: 'resp_vx_raw', op: 'math_mul', a: 'r3_c', b: 0.2 },
+        { id: 'resp_vx', op: 'math_mul', a: 'resp_vx_raw', b: 'inv_aspect' },
         { id: 'r4_c', op: 'math_sub', a: 'r4', b: 0.5 },
         { id: 'resp_vy', op: 'math_mul', a: 'r4_c', b: 0.2 },
         { id: 'lt_scale', op: 'math_mul', a: 'r5', b: 4.0 },
@@ -734,19 +735,20 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'sc_d2', op: 'math_mul', a: 'sin_d2', b: 43758.5453 },
         { id: 'drift2', op: 'math_fract', val: 'sc_d2' },
 
-        { id: 'c_physics', op: 'comment', comment: 'Euler integration: velocity drift + gentle gravity, position update.' },
+        { id: 'c_physics', op: 'comment', comment: 'Euler integration: velocity drift (X scaled by 1/aspect) + gentle gravity, position update.' },
         { id: 'dvx_raw', op: 'math_sub', a: 'drift1', b: 0.5 },
-        { id: 'dvx', op: 'math_mul', a: 'dvx_raw', b: 'dt' },
+        { id: 'dvx_scaled', op: 'math_mul', a: 'dvx_raw', b: 'inv_aspect' },
+        { id: 'dvx', op: 'math_mul', a: 'dvx_scaled', b: 'dt' },
         { id: 'dvy_raw', op: 'math_sub', a: 'drift2', b: 0.5 },
         { id: 'dvy_drift', op: 'math_mul', a: 'dvy_raw', b: 'dt' },
         { id: 'gravity_dt', op: 'math_mul', a: 0.05, b: 'dt' },
         { id: 'dvy', op: 'math_sub', a: 'dvy_drift', b: 'gravity_dt' },
-        { id: 'alive_vx', op: 'math_add', a: 'ld_vx', b: 'dvx' },
-        { id: 'alive_vy', op: 'math_add', a: 'ld_vy', b: 'dvy' },
+        { id: 'alive_vx', op: 'math_add', a: 'ld_vel.x', b: 'dvx' },
+        { id: 'alive_vy', op: 'math_add', a: 'ld_vel.y', b: 'dvy' },
         { id: 'vx_dt', op: 'math_mul', a: 'alive_vx', b: 'dt' },
         { id: 'vy_dt', op: 'math_mul', a: 'alive_vy', b: 'dt' },
-        { id: 'alive_px', op: 'math_add', a: 'ld_px', b: 'vx_dt' },
-        { id: 'alive_py', op: 'math_add', a: 'ld_py', b: 'vy_dt' },
+        { id: 'alive_px', op: 'math_add', a: 'ld_pos.x', b: 'vx_dt' },
+        { id: 'alive_py', op: 'math_add', a: 'ld_pos.y', b: 'vy_dt' },
         { id: 'alive_age', op: 'math_add', a: 'ld_age', b: 'dt' },
 
         { id: 'c_select', op: 'comment', comment: 'Branchless dead/alive: mix(alive_val, respawn_val, is_dead). Both paths computed unconditionally.' },
@@ -757,18 +759,16 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'final_lt', op: 'math_mix', a: 'ld_lt', b: 'resp_lt', t: 'is_dead' },
         { id: 'final_age', op: 'math_mix', a: 'alive_age', b: 0.0, t: 'is_dead' },
 
-        { id: 'st_px', op: 'buffer_store', buffer: 'particles', index: 'idx_0', value: 'final_px', exec_out: 'st_py' },
-        { id: 'st_py', op: 'buffer_store', buffer: 'particles', index: 'idx_1', value: 'final_py', exec_out: 'st_vx' },
-        { id: 'st_vx', op: 'buffer_store', buffer: 'particles', index: 'idx_2', value: 'final_vx', exec_out: 'st_vy' },
-        { id: 'st_vy', op: 'buffer_store', buffer: 'particles', index: 'idx_3', value: 'final_vy', exec_out: 'st_lt' },
-        { id: 'st_lt', op: 'buffer_store', buffer: 'particles', index: 'idx_4', value: 'final_lt', exec_out: 'st_age' },
-        { id: 'st_age', op: 'buffer_store', buffer: 'particles', index: 'idx_5', value: 'final_age' },
+        { id: 'final_pos', op: 'float2', x: 'final_px', y: 'final_py' },
+        { id: 'final_vel', op: 'float2', x: 'final_vx', y: 'final_vy' },
+        { id: 'new_particle', op: 'struct_construct', type: 'Particle', values: { pos: 'final_pos', vel: 'final_vel', lifetime: 'final_lt', age: 'final_age' } },
+        { id: 'st_particle', op: 'buffer_store', buffer: 'particles', index: 'gid.x', value: 'new_particle' },
       ]
     },
     {
       id: 'fn_vertex',
       type: 'shader',
-      comment: 'Vertex shader: generates a small quad (2 triangles, 6 verts) per particle. Reads particle pos/age from buffer, outputs clip-space position and varyings for fragment shader.',
+      comment: 'Vertex shader: generates a small quad (2 triangles, 6 verts) per particle. Reads Particle struct from buffer, outputs clip-space position (aspect-corrected) and varyings for fragment shader.',
       inputs: [
         { id: 'v_idx', type: 'int' as DataType, builtin: 'vertex_index' as BuiltinName }
       ],
@@ -783,6 +783,7 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'c_index', op: 'comment', comment: 'Decompose vertex_index: particle_index = floor(vi/6), corner = vi % 6.' },
         { id: 'pidx_raw', op: 'math_div', a: 'vi_f', b: 6 },
         { id: 'pidx_f', op: 'math_floor', val: 'pidx_raw' },
+        { id: 'pidx_i', op: 'static_cast_int', val: 'pidx_f' },
         { id: 'corner_f', op: 'math_mod', a: 'vi_f', b: 6 },
         { id: 'corner_i', op: 'static_cast_int', val: 'corner_f' },
 
@@ -792,27 +793,24 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'qx', op: 'array_extract', array: 'quad_x', index: 'corner_i' },
         { id: 'qy', op: 'array_extract', array: 'quad_y', index: 'corner_i' },
 
-        { id: 'c_load', op: 'comment', comment: 'Load particle position and age from buffer.' },
-        { id: 'buf_base', op: 'math_mul', a: 'pidx_f', b: 6 },
-        { id: 'b_idx_0', op: 'static_cast_int', val: 'buf_base' },
-        { id: 'b_off_1', op: 'math_add', a: 'buf_base', b: 1 },
-        { id: 'b_idx_1', op: 'static_cast_int', val: 'b_off_1' },
-        { id: 'b_off_4', op: 'math_add', a: 'buf_base', b: 4 },
-        { id: 'b_idx_4', op: 'static_cast_int', val: 'b_off_4' },
-        { id: 'b_off_5', op: 'math_add', a: 'buf_base', b: 5 },
-        { id: 'b_idx_5', op: 'static_cast_int', val: 'b_off_5' },
+        { id: 'c_aspect', op: 'comment', comment: 'Aspect ratio from viewport size for square quads.' },
+        { id: 'vp', op: 'var_get', var: 'viewport_size' },
+        { id: 'aspect', op: 'math_div', a: 'vp.x', b: 'vp.y' },
+        { id: 'inv_aspect', op: 'math_div', a: 1.0, b: 'aspect' },
 
-        { id: 'p_px', op: 'buffer_load', buffer: 'particles', index: 'b_idx_0' },
-        { id: 'p_py', op: 'buffer_load', buffer: 'particles', index: 'b_idx_1' },
-        { id: 'p_lt', op: 'buffer_load', buffer: 'particles', index: 'b_idx_4' },
-        { id: 'p_age', op: 'buffer_load', buffer: 'particles', index: 'b_idx_5' },
+        { id: 'c_load', op: 'comment', comment: 'Load Particle struct from buffer.' },
+        { id: 'particle', op: 'buffer_load', buffer: 'particles', index: 'pidx_i' },
+        { id: 'p_pos', op: 'struct_extract', struct: 'particle', field: 'pos' },
+        { id: 'p_lt', op: 'struct_extract', struct: 'particle', field: 'lifetime' },
+        { id: 'p_age', op: 'struct_extract', struct: 'particle', field: 'age' },
 
-        { id: 'c_clip', op: 'comment', comment: 'Convert particle [0,1] position to clip space [-1,1], offset by quad corner. Quad half-size 0.01 in clip space ≈ 3px at 512px viewport.' },
-        { id: 'cx_raw', op: 'math_mul', a: 'p_px', b: 2.0 },
+        { id: 'c_clip', op: 'comment', comment: 'Convert particle [0,1] position to clip space [-1,1], offset by quad corner (X shrunk by 1/aspect for square quads).' },
+        { id: 'cx_raw', op: 'math_mul', a: 'p_pos.x', b: 2.0 },
         { id: 'clip_x', op: 'math_sub', a: 'cx_raw', b: 1.0 },
-        { id: 'cy_raw', op: 'math_mul', a: 'p_py', b: 2.0 },
+        { id: 'cy_raw', op: 'math_mul', a: 'p_pos.y', b: 2.0 },
         { id: 'clip_y', op: 'math_sub', a: 'cy_raw', b: 1.0 },
-        { id: 'ox', op: 'math_mul', a: 'qx', b: 0.01 },
+        { id: 'ox_raw', op: 'math_mul', a: 'qx', b: 0.01 },
+        { id: 'ox', op: 'math_mul', a: 'ox_raw', b: 'inv_aspect' },
         { id: 'oy', op: 'math_mul', a: 'qy', b: 0.01 },
         { id: 'final_x', op: 'math_add', a: 'clip_x', b: 'ox' },
         { id: 'final_y', op: 'math_add', a: 'clip_y', b: 'oy' },

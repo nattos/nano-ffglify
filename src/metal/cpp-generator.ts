@@ -740,7 +740,21 @@ export class CppGenerator {
       const allRes = this.getAllResources();
       const targetIdx = allRes.findIndex(r => r.id === target);
 
-      lines.push(`${indent}ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}));`);
+      // Build args for global inputs (accessible via var_get in vertex/fragment shaders)
+      const hasGlobalInputs = this.ir?.inputs && this.ir.inputs.filter(i => i.type !== 'texture2d').length > 0;
+      if (hasGlobalInputs) {
+        lines.push(`${indent}{`);
+        lines.push(`${indent}    std::vector<float> _shader_args;`);
+        for (const input of this.ir!.inputs!) {
+          if (input.type === 'texture2d') continue;
+          const irType = input.type || 'float';
+          this.emitGlobalInputFlattening(`${indent}    `, input.id, irType, lines, []);
+        }
+        lines.push(`${indent}    ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}), _shader_args);`);
+        lines.push(`${indent}}`);
+      } else {
+        lines.push(`${indent}ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}));`);
+      }
     } else if (this.hasResult(node.op)) {
       // Executable nodes with results (like call_func) need auto declarations
       const expr = this.compileExpression(node, func, allFunctions, true, emitPure, edges, inferredTypes);

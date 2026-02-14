@@ -257,7 +257,7 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
       device.queue.submit([encoder.finish()]);
     },
 
-    async executeDraw(targetId, vertexId, fragmentId, count, pipelineDef, resources) {
+    async executeDraw(targetId, vertexId, fragmentId, count, pipelineDef, resources, args) {
       const key = `${vertexId}|${fragmentId}`;
       const pipeline = renderPipelines.get(key);
       if (!pipeline) throw new Error("Render pipeline not found: " + key);
@@ -276,6 +276,46 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
       targetState.flags.gpuDirty = true;
 
       const entries = [];
+
+      // Inputs buffer (global inputs for vertex/fragment shaders)
+      if (info.inputLayout && args) {
+        const layout = info.inputLayout;
+        let requiredSize = layout.totalSize;
+
+        if (layout.hasRuntimeArray && layout.runtimeArray) {
+          const arr = args[layout.runtimeArray.name];
+          if (Array.isArray(arr)) {
+            requiredSize = layout.runtimeArray.offset + arr.length * layout.runtimeArray.stride;
+          }
+        }
+
+        requiredSize = Math.max(Math.ceil(requiredSize / 4) * 4, 16);
+        const bufferSize = requiredSize;
+        const buffer = new ArrayBuffer(bufferSize);
+        const view = new DataView(buffer);
+
+        for (const op of layout.ops) {
+          writeOp(view, op, args);
+        }
+
+        if (layout.runtimeArray) {
+          const arr = args[layout.runtimeArray.name];
+          if (Array.isArray(arr)) {
+            const { offset, stride, elementOp } = layout.runtimeArray;
+            for (let i = 0; i < arr.length; i++) {
+              writeOp(view, elementOp, arr[i], offset + i * stride);
+            }
+          }
+        }
+
+        const inputBuf = device.createBuffer({
+          size: bufferSize,
+          usage: 128 | 8 // STORAGE | COPY_DST
+        });
+        device.queue.writeBuffer(inputBuf, 0, buffer);
+        entries.push({ binding: info.inputBinding, resource: { buffer: inputBuf } });
+      }
+
       for (const resBind of info.resourceBindings) {
         if (resBind.id === targetId) continue;
         const state = resources.get(resBind.id);

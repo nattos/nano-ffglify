@@ -246,13 +246,13 @@ require('./intrinsics.js');
     // Emit Resource Precomputations
     lines.push(`  // Precompute Resource Layouts`);
     ir.resources.forEach(res => {
-      const info = precomputeResourceLayout(res);
+      const info = precomputeResourceLayout(res, ir.structs);
       lines.push(`  resourceInfos.set('${res.id}', ${JSON.stringify(info)});`);
     });
     // Also precompute for texture inputs
     ir.inputs.forEach(inp => {
       if (inp.type === 'texture2d') {
-        const info = precomputeResourceLayout({ ...inp, type: 'texture2d' });
+        const info = precomputeResourceLayout({ ...inp, type: 'texture2d' }, ir.structs);
         lines.push(`  resourceInfos.set('${inp.id}', ${JSON.stringify(info)});`);
       }
     });

@@ -110,7 +110,25 @@ function generateOp(offset: number, type: string, path: string[], helpers: Shade
   };
 }
 
-export function precomputeResourceLayout(def: any): PrecomputedResourceInfo {
+function getTypeFlatSize(type: string, structs?: StructDef[]): number {
+  switch (type) {
+    case 'float': case 'int': case 'bool': return 1;
+    case 'float2': case 'int2': return 2;
+    case 'float3': case 'int3': return 3;
+    case 'float4': case 'int4': return 4;
+    case 'float3x3': return 9;
+    case 'float4x4': return 16;
+    default: {
+      const structDef = structs?.find(s => s.id === type);
+      if (structDef) {
+        return structDef.members.reduce((sum, m) => sum + getTypeFlatSize(m.type, structs), 0);
+      }
+      return 1;
+    }
+  }
+}
+
+export function precomputeResourceLayout(def: any, structs?: StructDef[]): PrecomputedResourceInfo {
   if (def.type === 'texture2d') {
     const irFormat = def.format || 'rgba8';
     let format = 'rgba8unorm';
@@ -147,23 +165,30 @@ export function precomputeResourceLayout(def: any): PrecomputedResourceInfo {
     };
   } else {
     // Buffer
-    const dataType = (def.dataType || 'float').toLowerCase();
+    const dataType = def.dataType || 'float';
+    const dataTypeLower = dataType.toLowerCase();
     let typedArray: 'Float32Array' | 'Int32Array' | 'Uint32Array' = 'Float32Array';
     let isInteger = false;
     let componentCount = 1;
 
-    if (dataType.includes('int') && !dataType.includes('float')) {
-      isInteger = true;
-      if (dataType === 'bool') typedArray = 'Uint32Array';
-      else typedArray = 'Int32Array';
-    }
+    // Check if dataType is a struct
+    const structDef = structs?.find(s => s.id === dataType);
+    if (structDef) {
+      componentCount = getTypeFlatSize(dataType, structs);
+    } else {
+      if (dataTypeLower.includes('int') && !dataTypeLower.includes('float')) {
+        isInteger = true;
+        if (dataTypeLower === 'bool') typedArray = 'Uint32Array';
+        else typedArray = 'Int32Array';
+      }
 
-    if (dataType.includes('2')) componentCount = 2;
-    else if (dataType.includes('3')) componentCount = 3;
-    else if (dataType.includes('4')) componentCount = 4;
-    else if (dataType.includes('mat')) {
-      if (dataType.includes('3x3')) componentCount = 9;
-      else if (dataType.includes('4x4')) componentCount = 16;
+      if (dataTypeLower.includes('2')) componentCount = 2;
+      else if (dataTypeLower.includes('3')) componentCount = 3;
+      else if (dataTypeLower.includes('4')) componentCount = 4;
+      else if (dataTypeLower.includes('mat')) {
+        if (dataTypeLower.includes('3x3')) componentCount = 9;
+        else if (dataTypeLower.includes('4x4')) componentCount = 16;
+      }
     }
 
     return {

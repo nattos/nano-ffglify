@@ -5,6 +5,37 @@ import { PARTICLE_SHADER } from '../../domain/example-ir';
 
 const backends = cpuBackends;
 
+// Helper to extract particle fields from buffer data.
+// Three data representations:
+// 1. Struct objects (CPU JIT no-GPU): {pos: [x,y], vel: [x,y], lifetime, age}
+// 2. Arrays of 6 floats (GPU readback): [x, y, vx, vy, lifetime, age]
+// 3. Flat floats (CppMetal): stride 6 at data[index*6+offset]
+function getParticle(data: any[], index: number): { lt: number; age: number } {
+  const elem = data[index];
+  if (Array.isArray(elem)) {
+    // Array of 6 floats (GPU readback with componentCount=6)
+    return { lt: elem[4], age: elem[5] };
+  }
+  if (typeof elem === 'object' && elem !== null) {
+    // Struct object (CPU JIT)
+    return { lt: elem.lifetime, age: elem.age };
+  }
+  // Flat float layout (CppMetal): stride 6 = pos(2) + vel(2) + lifetime(1) + age(1)
+  return { lt: data[index * 6 + 4], age: data[index * 6 + 5] };
+}
+
+function hasNonZeroData(data: any[], count: number): boolean {
+  for (let i = 0; i < count && i < data.length; i++) {
+    const v = data[i];
+    if (typeof v === 'number' && v !== 0) return true;
+    if (Array.isArray(v) && v.some(x => x !== 0)) return true;
+    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      if (JSON.stringify(v) !== '{}') return true;
+    }
+  }
+  return false;
+}
+
 describe('Conformance: Integration - Particle Simulation', () => {
   if (backends.length === 0) {
     it.skip('Skipping tests (no compatible backend)', () => { });
@@ -17,6 +48,7 @@ describe('Conformance: Integration - Particle Simulation', () => {
     it(`should simulate and render particles [${backend.name}]`, async () => {
       const inputs = new Map<string, RuntimeValue>();
       inputs.set('particle_count', 10); // Small count for test speed
+      inputs.set('viewport_size', [512, 512]);
 
       const builtins = new Map<string, RuntimeValue>();
       builtins.set('time', 1.0);
@@ -28,23 +60,13 @@ describe('Conformance: Integration - Particle Simulation', () => {
       const particles = context.getResource('particles');
       expect(particles.data).toBeDefined();
 
-      const bufData = particles.data as number[];
-      let hasNonZero = false;
-      for (let i = 0; i < 60; i++) { // 10 particles * stride 6
-        if (bufData[i] !== 0) {
-          hasNonZero = true;
-          break;
-        }
-      }
-      expect(hasNonZero, 'Particle buffer should have non-zero data after simulation').toBe(true);
+      const bufData = particles.data as any[];
+      expect(hasNonZeroData(bufData, 60), 'Particle buffer should have non-zero data after simulation').toBe(true);
 
-      // Verify particle positions are in reasonable range [0, 1] for alive particles
+      // Verify particle fields are in reasonable range for alive particles
       for (let p = 0; p < 10; p++) {
-        const px = bufData[p * 6 + 0]; // pos_x
-        const py = bufData[p * 6 + 1]; // pos_y
-        const lt = bufData[p * 6 + 4]; // lifetime
-        const age = bufData[p * 6 + 5]; // age
-        // Freshly respawned particles should have pos in [0,1] and lifetime > 0
+        const { lt, age } = getParticle(bufData, p);
+        // Freshly respawned particles should have lifetime > 0
         expect(lt).toBeGreaterThan(0);
         expect(age).toBeGreaterThanOrEqual(0);
         expect(age).toBeLessThan(lt + 1); // age should be less than lifetime + margin

@@ -12,7 +12,7 @@ export class MockGpuExecutor implements IGpuExecutor {
     console.log(`[MockGpuExecutor] executeShader: ${funcId}`, { workgroups, args });
   }
 
-  async executeDraw(targetId: string, vertexId: string, fragmentId: string, count: number, pipeline: RenderPipelineDef, resources: Map<string, ResourceState>): Promise<void> {
+  async executeDraw(targetId: string, vertexId: string, fragmentId: string, count: number, pipeline: RenderPipelineDef, resources: Map<string, ResourceState>, args?: Record<string, RuntimeValue>): Promise<void> {
     console.log(`[MockGpuExecutor] executeDraw: ${targetId}`, { vertexId, fragmentId, count });
   }
 
@@ -42,7 +42,7 @@ export class MockWebGpuHost {
   }
 
   async draw(targetId: string, vertexId: string, fragmentId: string, vertexCount: number, pipeline: RenderPipelineDef): Promise<void> {
-    await this.executor.executeDraw(targetId, vertexId, fragmentId, vertexCount, pipeline, this.resources);
+    await this.executor.executeDraw(targetId, vertexId, fragmentId, vertexCount, pipeline, this.resources, {});
   }
 
   executeSyncToCpu(resId: string): void {

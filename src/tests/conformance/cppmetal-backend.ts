@@ -136,7 +136,14 @@ export const CppMetalBackend: TestBackend = {
       if (r.type === 'buffer') {
         const size = r['size'] && typeof r['size'] === 'object' && 'value' in r['size'] ? r['size'].value : 100;
         const dt = (r as any).dataType;
-        const stride = dt === 'float4' ? 4 : dt === 'float3' ? 3 : dt === 'float2' ? 2 : 1;
+        const structDef = ir.structs?.find(s => s.id === dt);
+        const stride = structDef
+          ? structDef.members.reduce((sum: number, m: any) => {
+              const t = m.type;
+              const s = t === 'float4' || t === 'int4' ? 4 : t === 'float3' || t === 'int3' ? 3 : t === 'float2' || t === 'int2' ? 2 : t === 'float3x3' ? 9 : t === 'float4x4' ? 16 : 1;
+              return sum + s;
+            }, 0)
+          : dt === 'float4' ? 4 : dt === 'float3' ? 3 : dt === 'float2' ? 2 : 1;
         return `B:${size}:${stride}`;
       }
       return '0';
