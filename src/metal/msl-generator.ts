@@ -1146,7 +1146,13 @@ export class MslGenerator {
         const compOrder = ['x', 'y', 'z', 'w'].slice(0, dim);
         const groups = this.detectComponentGroups(node, dim);
         if (groups) {
-          const argExprs = groups.map(g => a(g.key));
+          const argExprs = groups.map(g => {
+            const expr = a(g.key);
+            if (g.count === 1) return expr;
+            // Wrap multi-component groups in vector constructor for broadcast/identity
+            const vecType = isInt ? `int${g.count}` : `float${g.count}`;
+            return `${vecType}(${expr})`;
+          });
           return `${mslType}(${argExprs.join(', ')})`;
         }
         // Default scalar-per-component

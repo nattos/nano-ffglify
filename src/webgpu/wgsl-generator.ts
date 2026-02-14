@@ -911,9 +911,13 @@ export class WgslGenerator {
       // Detect component groups
       const groups = this.detectComponentGroups(node, dim);
       if (groups) {
-        const argExprs = groups.map(g =>
-          this.resolveArg(node, g.key, func, options, ir, g.count === 1 ? scalarType : `${scalarType}${g.count}`, edges)
-        );
+        const argExprs = groups.map(g => {
+          const expr = this.resolveArg(node, g.key, func, options, ir, g.count === 1 ? scalarType : `${scalarType}${g.count}`, edges);
+          if (g.count === 1) return expr;
+          // Wrap multi-component groups in vector constructor for broadcast/identity
+          const vecCast = isInt ? `vec${g.count}<i32>` : `vec${g.count}<f32>`;
+          return `${vecCast}(${expr})`;
+        });
         return `${wgslType}(${argExprs.join(', ')})`;
       }
 
