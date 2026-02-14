@@ -1,4 +1,4 @@
-import { IRDocument, TextureFormat } from "../ir/types";
+import { IRDocument, TextureFormat, DataType, BuiltinName } from "../ir/types";
 
 export const NOISE_SHADER: IRDocument = {
   version: '1.0.0',
@@ -579,9 +579,293 @@ export const RAYMARCH_SHADER: IRDocument = {
   ]
 };
 
+export const PARTICLE_SHADER: IRDocument = {
+  version: '1.0.0',
+  meta: { name: 'Particle Simulation' },
+  comment: 'Compute-based particle simulation with vertex/fragment rendering. Demonstrates buffer read/write, cmd_draw with additive blending, hash noise, branchless selection via math_mix, and per-particle quad generation in vertex shader.',
+  entryPoint: 'fn_main_cpu',
+
+  inputs: [
+    { id: 'particle_count', type: 'float', default: 1000, ui: { min: 1, max: 1000, widget: 'slider' }, comment: 'Number of active particles.' }
+  ],
+
+  structs: [
+    {
+      id: 'VertexOutput',
+      members: [
+        { name: 'pos', type: 'float4' as DataType, builtin: 'position' as BuiltinName },
+        { name: 'quad_uv', type: 'float2' as DataType, location: 0 },
+        { name: 'age_ratio', type: 'float' as DataType, location: 1 }
+      ]
+    }
+  ],
+
+  resources: [
+    {
+      id: 'output_tex',
+      type: 'texture2d',
+      format: TextureFormat.RGBA8,
+      size: { mode: 'viewport' },
+      isOutput: true,
+      persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
+    },
+    {
+      id: 'particles',
+      type: 'buffer',
+      comment: 'Flat particle buffer: 1000 particles x stride 6 [px, py, vx, vy, lifetime, age]. Starts zeroed so age(0) >= lifetime(0) triggers immediate respawn.',
+      dataType: 'float',
+      size: { mode: 'fixed', value: 6000 },
+      persistence: {
+        retain: true,
+        clearOnResize: false,
+        clearEveryFrame: false,
+        cpuAccess: false,
+      },
+    }
+  ],
+
+  functions: [
+    {
+      id: 'fn_main_cpu',
+      type: 'cpu',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      comment: 'CPU entry: dispatch particle simulation (N compute threads), then draw particle quads (N*6 vertices).',
+      nodes: [
+        { id: 'pc', op: 'var_get', var: 'particle_count' },
+        { id: 'pc_int', op: 'static_cast_int', val: 'pc' },
+        { id: 'dispatch_sim', op: 'cmd_dispatch', func: 'fn_simulate_gpu', dispatch: ['pc_int', 1, 1], exec_out: 'draw_particles' },
+        { id: 'vert_count_f', op: 'math_mul', a: 'pc', b: 6, comment: '6 vertices per particle (2 triangles per quad).' },
+        { id: 'vert_count', op: 'static_cast_int', val: 'vert_count_f' },
+        {
+          id: 'draw_particles',
+          op: 'cmd_draw',
+          target: 'output_tex',
+          vertex: 'fn_vertex',
+          fragment: 'fn_fragment',
+          count: 'vert_count',
+          pipeline: {
+            topology: 'triangle-list',
+            blend: {
+              color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+              alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }
+            }
+          }
+        }
+      ]
+    },
+    {
+      id: 'fn_simulate_gpu',
+      type: 'shader',
+      comment: 'Per-particle simulation: load state, physics with noise drift, branchless dead/alive selection via math_mix, store back. 1 thread per particle.',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      nodes: [
+        { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'dt', op: 'builtin_get', name: 'delta_time' },
+        { id: 'time', op: 'builtin_get', name: 'time' },
+
+        { id: 'c_addr', op: 'comment', comment: 'Buffer addressing: gid.x * 6 for stride-6 layout [px, py, vx, vy, lifetime, age].' },
+        { id: 'gid_x_f', op: 'static_cast_float', val: 'gid.x', comment: 'global_invocation_id is int3; cast to float for arithmetic.' },
+        { id: 'base_f', op: 'math_mul', a: 'gid_x_f', b: 6 },
+        { id: 'idx_0', op: 'static_cast_int', val: 'base_f' },
+        { id: 'off_1', op: 'math_add', a: 'base_f', b: 1 },
+        { id: 'idx_1', op: 'static_cast_int', val: 'off_1' },
+        { id: 'off_2', op: 'math_add', a: 'base_f', b: 2 },
+        { id: 'idx_2', op: 'static_cast_int', val: 'off_2' },
+        { id: 'off_3', op: 'math_add', a: 'base_f', b: 3 },
+        { id: 'idx_3', op: 'static_cast_int', val: 'off_3' },
+        { id: 'off_4', op: 'math_add', a: 'base_f', b: 4 },
+        { id: 'idx_4', op: 'static_cast_int', val: 'off_4' },
+        { id: 'off_5', op: 'math_add', a: 'base_f', b: 5 },
+        { id: 'idx_5', op: 'static_cast_int', val: 'off_5' },
+
+        { id: 'c_load', op: 'comment', comment: 'Load 6 fields: pos_x, pos_y, vel_x, vel_y, lifetime, age.' },
+        { id: 'ld_px', op: 'buffer_load', buffer: 'particles', index: 'idx_0' },
+        { id: 'ld_py', op: 'buffer_load', buffer: 'particles', index: 'idx_1' },
+        { id: 'ld_vx', op: 'buffer_load', buffer: 'particles', index: 'idx_2' },
+        { id: 'ld_vy', op: 'buffer_load', buffer: 'particles', index: 'idx_3' },
+        { id: 'ld_lt', op: 'buffer_load', buffer: 'particles', index: 'idx_4' },
+        { id: 'ld_age', op: 'buffer_load', buffer: 'particles', index: 'idx_5' },
+
+        { id: 'is_dead', op: 'math_step', edge: 'ld_lt', x: 'ld_age', comment: 'step(lifetime, age) = 1.0 when dead. step(0,0)=1 so initially all particles respawn.' },
+
+        { id: 'c_respawn', op: 'comment', comment: 'Hash noise for 5 respawn channels: fract(sin(seed + offset) * 43758.5453).' },
+        { id: 'seed_base', op: 'math_mul', a: 'gid_x_f', b: 127.1 },
+        { id: 'seed', op: 'math_add', a: 'seed_base', b: 'time' },
+        { id: 'sin_r1', op: 'math_sin', val: 'seed' },
+        { id: 'sc_r1', op: 'math_mul', a: 'sin_r1', b: 43758.5453 },
+        { id: 'r1', op: 'math_fract', val: 'sc_r1' },
+        { id: 'seed_r2', op: 'math_add', a: 'seed', b: 1.0 },
+        { id: 'sin_r2', op: 'math_sin', val: 'seed_r2' },
+        { id: 'sc_r2', op: 'math_mul', a: 'sin_r2', b: 43758.5453 },
+        { id: 'r2', op: 'math_fract', val: 'sc_r2' },
+        { id: 'seed_r3', op: 'math_add', a: 'seed', b: 2.0 },
+        { id: 'sin_r3', op: 'math_sin', val: 'seed_r3' },
+        { id: 'sc_r3', op: 'math_mul', a: 'sin_r3', b: 43758.5453 },
+        { id: 'r3', op: 'math_fract', val: 'sc_r3' },
+        { id: 'seed_r4', op: 'math_add', a: 'seed', b: 3.0 },
+        { id: 'sin_r4', op: 'math_sin', val: 'seed_r4' },
+        { id: 'sc_r4', op: 'math_mul', a: 'sin_r4', b: 43758.5453 },
+        { id: 'r4', op: 'math_fract', val: 'sc_r4' },
+        { id: 'seed_r5', op: 'math_add', a: 'seed', b: 4.0 },
+        { id: 'sin_r5', op: 'math_sin', val: 'seed_r5' },
+        { id: 'sc_r5', op: 'math_mul', a: 'sin_r5', b: 43758.5453 },
+        { id: 'r5', op: 'math_fract', val: 'sc_r5' },
+
+        { id: 'c_resp_val', op: 'comment', comment: 'Respawn values: random position [0,1], velocity [-0.1,0.1], lifetime [1,5]s.' },
+        { id: 'r3_c', op: 'math_sub', a: 'r3', b: 0.5 },
+        { id: 'resp_vx', op: 'math_mul', a: 'r3_c', b: 0.2 },
+        { id: 'r4_c', op: 'math_sub', a: 'r4', b: 0.5 },
+        { id: 'resp_vy', op: 'math_mul', a: 'r4_c', b: 0.2 },
+        { id: 'lt_scale', op: 'math_mul', a: 'r5', b: 4.0 },
+        { id: 'resp_lt', op: 'math_add', a: 'lt_scale', b: 1.0 },
+
+        { id: 'c_drift', op: 'comment', comment: 'Drift noise: separate hash family for per-frame velocity perturbation.' },
+        { id: 'drift_base', op: 'math_mul', a: 'gid_x_f', b: 73.7 },
+        { id: 'drift_seed', op: 'math_add', a: 'drift_base', b: 'time' },
+        { id: 'sin_d1', op: 'math_sin', val: 'drift_seed' },
+        { id: 'sc_d1', op: 'math_mul', a: 'sin_d1', b: 43758.5453 },
+        { id: 'drift1', op: 'math_fract', val: 'sc_d1' },
+        { id: 'drift_seed2', op: 'math_add', a: 'drift_seed', b: 37.0 },
+        { id: 'sin_d2', op: 'math_sin', val: 'drift_seed2' },
+        { id: 'sc_d2', op: 'math_mul', a: 'sin_d2', b: 43758.5453 },
+        { id: 'drift2', op: 'math_fract', val: 'sc_d2' },
+
+        { id: 'c_physics', op: 'comment', comment: 'Euler integration: velocity drift + gentle gravity, position update.' },
+        { id: 'dvx_raw', op: 'math_sub', a: 'drift1', b: 0.5 },
+        { id: 'dvx', op: 'math_mul', a: 'dvx_raw', b: 'dt' },
+        { id: 'dvy_raw', op: 'math_sub', a: 'drift2', b: 0.5 },
+        { id: 'dvy_drift', op: 'math_mul', a: 'dvy_raw', b: 'dt' },
+        { id: 'gravity_dt', op: 'math_mul', a: 0.05, b: 'dt' },
+        { id: 'dvy', op: 'math_sub', a: 'dvy_drift', b: 'gravity_dt' },
+        { id: 'alive_vx', op: 'math_add', a: 'ld_vx', b: 'dvx' },
+        { id: 'alive_vy', op: 'math_add', a: 'ld_vy', b: 'dvy' },
+        { id: 'vx_dt', op: 'math_mul', a: 'alive_vx', b: 'dt' },
+        { id: 'vy_dt', op: 'math_mul', a: 'alive_vy', b: 'dt' },
+        { id: 'alive_px', op: 'math_add', a: 'ld_px', b: 'vx_dt' },
+        { id: 'alive_py', op: 'math_add', a: 'ld_py', b: 'vy_dt' },
+        { id: 'alive_age', op: 'math_add', a: 'ld_age', b: 'dt' },
+
+        { id: 'c_select', op: 'comment', comment: 'Branchless dead/alive: mix(alive_val, respawn_val, is_dead). Both paths computed unconditionally.' },
+        { id: 'final_px', op: 'math_mix', a: 'alive_px', b: 'r1', t: 'is_dead' },
+        { id: 'final_py', op: 'math_mix', a: 'alive_py', b: 'r2', t: 'is_dead' },
+        { id: 'final_vx', op: 'math_mix', a: 'alive_vx', b: 'resp_vx', t: 'is_dead' },
+        { id: 'final_vy', op: 'math_mix', a: 'alive_vy', b: 'resp_vy', t: 'is_dead' },
+        { id: 'final_lt', op: 'math_mix', a: 'ld_lt', b: 'resp_lt', t: 'is_dead' },
+        { id: 'final_age', op: 'math_mix', a: 'alive_age', b: 0.0, t: 'is_dead' },
+
+        { id: 'st_px', op: 'buffer_store', buffer: 'particles', index: 'idx_0', value: 'final_px', exec_out: 'st_py' },
+        { id: 'st_py', op: 'buffer_store', buffer: 'particles', index: 'idx_1', value: 'final_py', exec_out: 'st_vx' },
+        { id: 'st_vx', op: 'buffer_store', buffer: 'particles', index: 'idx_2', value: 'final_vx', exec_out: 'st_vy' },
+        { id: 'st_vy', op: 'buffer_store', buffer: 'particles', index: 'idx_3', value: 'final_vy', exec_out: 'st_lt' },
+        { id: 'st_lt', op: 'buffer_store', buffer: 'particles', index: 'idx_4', value: 'final_lt', exec_out: 'st_age' },
+        { id: 'st_age', op: 'buffer_store', buffer: 'particles', index: 'idx_5', value: 'final_age' },
+      ]
+    },
+    {
+      id: 'fn_vertex',
+      type: 'shader',
+      comment: 'Vertex shader: generates a small quad (2 triangles, 6 verts) per particle. Reads particle pos/age from buffer, outputs clip-space position and varyings for fragment shader.',
+      inputs: [
+        { id: 'v_idx', type: 'int' as DataType, builtin: 'vertex_index' as BuiltinName }
+      ],
+      outputs: [
+        { id: 'out', type: 'VertexOutput' as DataType }
+      ],
+      localVars: [],
+      nodes: [
+        { id: 'vi', op: 'var_get', var: 'v_idx' },
+        { id: 'vi_f', op: 'static_cast_float', val: 'vi' },
+
+        { id: 'c_index', op: 'comment', comment: 'Decompose vertex_index: particle_index = floor(vi/6), corner = vi % 6.' },
+        { id: 'pidx_raw', op: 'math_div', a: 'vi_f', b: 6 },
+        { id: 'pidx_f', op: 'math_floor', val: 'pidx_raw' },
+        { id: 'corner_f', op: 'math_mod', a: 'vi_f', b: 6 },
+        { id: 'corner_i', op: 'static_cast_int', val: 'corner_f' },
+
+        { id: 'c_quad', op: 'comment', comment: 'Quad corner offsets: 6 vertices forming 2 triangles. UV ranges [-1,1].' },
+        { id: 'quad_x', op: 'array_construct', values: [-1, 1, -1, -1, 1, 1] },
+        { id: 'quad_y', op: 'array_construct', values: [-1, -1, 1, 1, -1, 1] },
+        { id: 'qx', op: 'array_extract', array: 'quad_x', index: 'corner_i' },
+        { id: 'qy', op: 'array_extract', array: 'quad_y', index: 'corner_i' },
+
+        { id: 'c_load', op: 'comment', comment: 'Load particle position and age from buffer.' },
+        { id: 'buf_base', op: 'math_mul', a: 'pidx_f', b: 6 },
+        { id: 'b_idx_0', op: 'static_cast_int', val: 'buf_base' },
+        { id: 'b_off_1', op: 'math_add', a: 'buf_base', b: 1 },
+        { id: 'b_idx_1', op: 'static_cast_int', val: 'b_off_1' },
+        { id: 'b_off_4', op: 'math_add', a: 'buf_base', b: 4 },
+        { id: 'b_idx_4', op: 'static_cast_int', val: 'b_off_4' },
+        { id: 'b_off_5', op: 'math_add', a: 'buf_base', b: 5 },
+        { id: 'b_idx_5', op: 'static_cast_int', val: 'b_off_5' },
+
+        { id: 'p_px', op: 'buffer_load', buffer: 'particles', index: 'b_idx_0' },
+        { id: 'p_py', op: 'buffer_load', buffer: 'particles', index: 'b_idx_1' },
+        { id: 'p_lt', op: 'buffer_load', buffer: 'particles', index: 'b_idx_4' },
+        { id: 'p_age', op: 'buffer_load', buffer: 'particles', index: 'b_idx_5' },
+
+        { id: 'c_clip', op: 'comment', comment: 'Convert particle [0,1] position to clip space [-1,1], offset by quad corner. Quad half-size 0.01 in clip space ≈ 3px at 512px viewport.' },
+        { id: 'cx_raw', op: 'math_mul', a: 'p_px', b: 2.0 },
+        { id: 'clip_x', op: 'math_sub', a: 'cx_raw', b: 1.0 },
+        { id: 'cy_raw', op: 'math_mul', a: 'p_py', b: 2.0 },
+        { id: 'clip_y', op: 'math_sub', a: 'cy_raw', b: 1.0 },
+        { id: 'ox', op: 'math_mul', a: 'qx', b: 0.01 },
+        { id: 'oy', op: 'math_mul', a: 'qy', b: 0.01 },
+        { id: 'final_x', op: 'math_add', a: 'clip_x', b: 'ox' },
+        { id: 'final_y', op: 'math_add', a: 'clip_y', b: 'oy' },
+        { id: 'pos', op: 'float4', x: 'final_x', y: 'final_y', z: 0.0, w: 1.0 },
+
+        { id: 'quad_uv', op: 'float2', x: 'qx', y: 'qy' },
+        { id: 'age_ratio', op: 'math_div', a: 'p_age', b: 'p_lt' },
+
+        { id: 'ret_struct', op: 'struct_construct', type: 'VertexOutput', values: { pos: 'pos', quad_uv: 'quad_uv', age_ratio: 'age_ratio' } },
+        { id: 'ret', op: 'func_return', val: 'ret_struct' }
+      ]
+    },
+    {
+      id: 'fn_fragment',
+      type: 'shader',
+      comment: 'Fragment shader: computes Gaussian falloff from quad UV and age fade. Additive blending accumulates overlapping particle contributions.',
+      inputs: [
+        { id: 'in', type: 'VertexOutput' as DataType }
+      ],
+      outputs: [
+        { id: 'color', type: 'float4' as DataType }
+      ],
+      localVars: [],
+      nodes: [
+        { id: 'get_in', op: 'var_get', var: 'in' },
+        { id: 'uv', op: 'struct_extract', struct: 'get_in', field: 'quad_uv' },
+        { id: 'ar', op: 'struct_extract', struct: 'get_in', field: 'age_ratio' },
+
+        { id: 'c_gauss', op: 'comment', comment: 'Gaussian falloff: exp(-4.5 * dist²) where UV spans [-1,1] across quad. σ≈1px at ~3px quad.' },
+        { id: 'ux2', op: 'math_mul', a: 'uv.x', b: 'uv.x' },
+        { id: 'uy2', op: 'math_mul', a: 'uv.y', b: 'uv.y' },
+        { id: 'dist2', op: 'math_add', a: 'ux2', b: 'uy2' },
+        { id: 'neg_d2', op: 'math_mul', a: 'dist2', b: -4.5 },
+        { id: 'falloff', op: 'math_exp', val: 'neg_d2' },
+
+        { id: 'c_age', op: 'comment', comment: 'Age fade: (1 - age_ratio)² — bright at birth, fades to zero at death.' },
+        { id: 'inv_age', op: 'math_sub', a: 1.0, b: 'ar' },
+        { id: 'brightness', op: 'math_mul', a: 'inv_age', b: 'inv_age' },
+
+        { id: 'fb', op: 'math_mul', a: 'falloff', b: 'brightness' },
+        { id: 'particle_col', op: 'float3', x: 1.0, y: 0.7, z: 0.3 },
+        { id: 'rgb', op: 'math_mul', a: 'particle_col', b: 'fb' },
+        { id: 'out_color', op: 'float4', xyz: 'rgb', w: 'fb', comment: 'Alpha = combined falloff for softer edges under additive blending.' },
+        { id: 'ret', op: 'func_return', val: 'out_color' }
+      ]
+    }
+  ]
+};
+
 export const ALL_EXAMPLES = {
   noise_shader: NOISE_SHADER,
   effect_shader: EFFECT_SHADER,
   mixer_shader: MIXER_SHADER,
   raymarch_shader: RAYMARCH_SHADER,
+  particle_shader: PARTICLE_SHADER,
 };

@@ -233,7 +233,9 @@ export class WgslGenerator {
           const structName = `Buffer_${resId}`;
           finalLines.push(`struct ${structName} { data: array<${type}> }`);
           const bufVar = this.getBufferVar(resId);
-          finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> ${bufVar} : ${structName};`);
+          // Vertex shaders only allow read-only storage buffers in WebGPU
+          const bufAccess = options.stage === 'vertex' ? 'read' : 'read_write';
+          finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, ${bufAccess}> ${bufVar} : ${structName};`);
         } else if (def.type === 'texture2d') {
           resourceTypes.set(resId, 'texture2d');
           // Identify if USED as storage IN THIS MODULE (pre-calculated based on reachable functions)
@@ -819,7 +821,9 @@ export class WgslGenerator {
     if (arg) {
       if (arg.builtin) return `l_${varId}`;
       const isEntry = options.entryPointId === func.id;
-      if (isEntry && options.inputBinding !== undefined) {
+      // In fragment shaders, struct-type inputs (e.g. VertexOutput) come as function parameters from the rasterizer, not from the inputs buffer
+      const isFragStruct = options.stage === 'fragment' && (options.fullIr?.structs ?? []).some((s: any) => s.id === arg.type);
+      if (isEntry && options.inputBinding !== undefined && !isFragStruct) {
         const expr = `b_inputs.${varId}`;
         return arg.type === 'bool' ? `bool(${expr})` : expr;
       }
@@ -1387,8 +1391,8 @@ export class WgslGenerator {
       return `mix(${arg('a')}, ${arg('b')}, ${arg('t')})`;
     }
 
-    if (op === 'math_step') return `step(${arg('edge')}, ${arg('val')})`;
-    if (op === 'math_smoothstep') return `smoothstep(${arg('edge0')}, ${arg('edge1')}, ${arg('val')})`;
+    if (op === 'math_step') return `step(${arg('edge')}, ${arg('x')})`;
+    if (op === 'math_smoothstep') return `smoothstep(${arg('edge0')}, ${arg('edge1')}, ${arg('x')})`;
 
     // Rounding
     if (op === 'math_fract') return `fract(${arg('val')})`;

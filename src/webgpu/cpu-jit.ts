@@ -182,7 +182,7 @@ require('./intrinsics.js');
 
     // 1. Identify all shaders
     const shaders = new Map<string, { code: string; metadata: CompilationMetadata }>();
-    const renderPipelines = new Map<string, { vsCode: string, fsCode: string, metadata: CompilationMetadata, vertexId: Node }>();
+    const renderPipelines = new Map<string, { vsCode: string, fsCode: string, metadata: CompilationMetadata, vertexId: Node, pipelineDef?: any }>();
 
     // We use WgslGenerator to generate WGSL strings at compile time.
     const gen = new WgslGenerator();
@@ -228,7 +228,8 @@ require('./intrinsics.js');
               vsCode: WgslGenerator.resolveImports(vsRes),
               fsCode: WgslGenerator.resolveImports(fsRes),
               metadata: vsRes.metadata,
-              vertexId: n['vertex']
+              vertexId: n['vertex'],
+              pipelineDef: n['pipeline']
             });
           }
         }
@@ -281,10 +282,12 @@ require('./intrinsics.js');
       lines.push(`     const fsCode = ${JSON.stringify(data.fsCode)};`);
       lines.push(`     const vsModule = device.createShaderModule({ code: vsCode });`);
       lines.push(`     const fsModule = device.createShaderModule({ code: fsCode });`);
+      const targetObj: any = { format: 'rgba8unorm' };
+      if (data.pipelineDef?.blend) targetObj.blend = data.pipelineDef.blend;
       lines.push(`     const pipeline = await device.createRenderPipelineAsync({`);
       lines.push(`        layout: 'auto',`);
       lines.push(`        vertex: { module: vsModule, entryPoint: 'main' },`);
-      lines.push(`        fragment: { module: fsModule, entryPoint: 'main', targets: [{ format: 'rgba8unorm' }] }`); // Format hardcoded for now
+      lines.push(`        fragment: { module: fsModule, entryPoint: 'main', targets: [${JSON.stringify(targetObj)}] }`);
       lines.push(`     });`);
       lines.push(`     renderPipelines.set('${key}', pipeline);`);
 
@@ -823,11 +826,11 @@ require('./intrinsics.js');
         return `((a, b, t) => _applyBinary(_applyBinary(a, _applyBinary(1, t, (x, y) => x - y), (x, y) => x * y), _applyBinary(b, t, (x, y) => x * y), (x, y) => x + y))(${aExp}, ${bExp}, ${tExp})`;
       }
       case 'math_step': {
-        const [edge, x] = this.resolveCoercedArgs(node, ['edge', 'val'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        const [edge, x] = this.resolveCoercedArgs(node, ['edge', 'x'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         return `_applyBinary(${edge}, ${x}, (e, x) => x < e ? 0 : 1)`;
       }
       case 'math_smoothstep': {
-        const [e0, e1, v] = this.resolveCoercedArgs(node, ['edge0', 'edge1', 'val'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        const [e0, e1, v] = this.resolveCoercedArgs(node, ['edge0', 'edge1', 'x'], 'unify', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         return `((v, edge0, edge1) => _applyUnary(_applyBinary(_applyBinary(v, edge0, (x, e) => (x - e)), _applyBinary(edge1, edge0, (e1, e0) => (e1 - e0)), (n, d) => Math.max(0, Math.min(1, n / d))), t => t * t * (3 - 2 * t)))(${v}, ${e0}, ${e1})`;
       }
 

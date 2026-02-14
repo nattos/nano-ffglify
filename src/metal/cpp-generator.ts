@@ -1054,9 +1054,9 @@ export class CppGenerator {
       case 'math_min': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `std::min(${argA}, ${argB})`; }
       case 'math_max': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `std::max(${argA}, ${argB})`; }
       case 'math_atan2': { const [argA, argB] = this.resolveCoercedArgs(node, ['a', 'b'], 'float', func, allFunctions, emitPure, edges, inferredTypes); return `atan2(${argA}, ${argB})`; }
-      case 'math_step': { const [edge, v] = this.resolveCoercedArgs(node, ['edge', 'val'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `((${v}) >= (${edge}) ? 1.0f : 0.0f)`; }
+      case 'math_step': { const [edge, v] = this.resolveCoercedArgs(node, ['edge', 'x'], 'unify', func, allFunctions, emitPure, edges, inferredTypes); return `((${v}) >= (${edge}) ? 1.0f : 0.0f)`; }
       case 'math_smoothstep': {
-        const [e0, e1, v] = this.resolveCoercedArgs(node, ['edge0', 'edge1', 'val'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
+        const [e0, e1, v] = this.resolveCoercedArgs(node, ['edge0', 'edge1', 'x'], 'unify', func, allFunctions, emitPure, edges, inferredTypes);
         return `clamp_val(((${v}) - (${e0})) / ((${e1}) - (${e0})), 0.0f, 1.0f) * (clamp_val(((${v}) - (${e0})) / ((${e1}) - (${e0})), 0.0f, 1.0f) * (3.0f - 2.0f * clamp_val(((${v}) - (${e0})) / ((${e1}) - (${e0})), 0.0f, 1.0f)))`;
       }
 
