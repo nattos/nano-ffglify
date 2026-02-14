@@ -13,7 +13,8 @@
 #include <unordered_map>
 #include <vector>
 void WriteLog(const std::string &msg) {
-  // Silent in production
+  std::ofstream fs("/tmp/ffgl_diag.txt", std::ios::app);
+  if (fs.is_open()) fs << "[Log] " << msg << std::endl;
 }
 
 extern "C" {
@@ -186,7 +187,8 @@ public:
   void Initialise() {
     InitGLFuncs(); // Ensure pointers are loaded
 
-    float verts[] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+    // V coords flipped (0→1, 1→0) to correct Metal↔OpenGL IOSurface coordinate mismatch
+    float verts[] = {-1, -1, 0, 1, 1, -1, 1, 1, 1, 1, 1, 0, -1, 1, 0, 0};
 
     if (glGenVertexArraysFunc) {
       glGenVertexArraysFunc(1, &vao);
@@ -357,6 +359,9 @@ public:
 
 public:
   NanoPlugin() : CFFGLPlugin() {
+    // Explicitly initialize hostTime (FFGL SDK does NOT guarantee initialization)
+    hostTime = 0.0;
+
     SetMinInputs(MIN_INPUTS);
     SetMaxInputs(MAX_INPUTS);
 
@@ -582,7 +587,78 @@ public:
     }
 
     setup_resources(ctx, &outputState, inputPtrs);
+
+    // Inject time builtins from FFGL host
+    // FFGL hostTime is in milliseconds — convert to seconds
+    double currentHostTime = hostTime / 1000.0;
+    if (!_timeInitialized) {
+      _startHostTime = currentHostTime;
+      _prevHostTime = currentHostTime;
+      _timeInitialized = true;
+    }
+    double rawDelta = currentHostTime - _prevHostTime;
+    // Clamp delta_time to prevent diffusion explosion from time jumps
+    double clampedDelta = std::max(0.0, std::min(rawDelta, 0.1));
+    ctx.inputs["time"] = static_cast<float>(currentHostTime - _startHostTime);
+    ctx.inputs["delta_time"] = static_cast<float>(clampedDelta);
+    _prevHostTime = currentHostTime;
+
     func_main(ctx);
+    // No CPU wait needed — Metal queue ordering ensures compute finishes
+    // before the blit, and IOSurface handles Metal→OpenGL synchronization.
+    ctx.blitStagingToExternal();
+
+    // Diagnostic logging (first N frames)
+    static int diagFrame = 0;
+    if (diagFrame < 10) {
+      std::ofstream diag("/tmp/ffgl_diag.txt", std::ios::app);
+      if (diag.is_open()) {
+        diag << "=== Frame " << diagFrame << " ===" << std::endl;
+        diag << std::setprecision(10)
+             << "hostTime=" << currentHostTime
+             << " relTime=" << (currentHostTime - _startHostTime)
+             << " rawDelta=" << rawDelta
+             << " clampedDelta=" << clampedDelta << std::endl;
+        diag << "scale=" << ctx.inputs["scale"] << std::endl;
+
+#ifdef INTERNAL_RESOURCE_COUNT
+        for (int ri = 0; ri < INTERNAL_RESOURCE_COUNT; ++ri) {
+          auto& res = _internalResources[ri];
+          diag << "InternalRes[" << ri << "]: data.size()=" << res.data.size()
+               << " width=" << res.width << " height=" << res.height
+               << " retained=" << (res.retainedMetalBuffer ? "yes" : "no")
+               << std::endl;
+          if (res.retainedMetalBuffer) {
+            float* ptr = (float*)[res.retainedMetalBuffer contents];
+            size_t bufLen = [res.retainedMetalBuffer length] / sizeof(float);
+            int negCount = 0, posCount = 0, nanCount = 0;
+            float minVal = 1e30f, maxVal = -1e30f;
+            for (size_t j = 0; j < bufLen; ++j) {
+              float v = ptr[j];
+              if (std::isnan(v)) { nanCount++; continue; }
+              if (v <= 0) negCount++; else posCount++;
+              minVal = std::min(minVal, v);
+              maxVal = std::max(maxVal, v);
+            }
+            diag << "  bufLen=" << bufLen
+                 << " neg=" << negCount << " pos=" << posCount
+                 << " nan=" << nanCount
+                 << " min=" << minVal << " max=" << maxVal << std::endl;
+            diag << "  first10:";
+            for (size_t j = 0; j < 10 && j < bufLen; ++j) {
+              diag << " " << ptr[j];
+            }
+            diag << std::endl;
+            // Sample center (16,16,16) = index 16*1024 + 16*32 + 16 = 16912
+            if (bufLen > 16912) {
+              diag << "  center(16,16,16)=" << ptr[16912] << std::endl;
+            }
+          }
+        }
+#endif
+      }
+      diagFrame++;
+    }
 
     // Final blit output -> host
     {
@@ -639,6 +715,10 @@ private:
   std::vector<std::unique_ptr<InteropTexture>> _inputInterops;
 
   std::vector<ResourceState> _internalResources;
+
+  double _startHostTime = 0;
+  double _prevHostTime = 0;
+  bool _timeInitialized = false;
 };
 
 // Include generated code

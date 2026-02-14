@@ -469,6 +469,7 @@ struct ResourceState {
   size_t height = 0;
   bool isExternal = false;
   id<MTLTexture> externalTexture = nil;
+  id<MTLBuffer> retainedMetalBuffer = nil; // Persistent GPU buffer across frames
 
   // Store a vector at the given index (vec stored as contiguous floats)
   template <size_t N>
@@ -515,19 +516,65 @@ struct EvalContext {
   std::vector<int> texHeights;
   std::vector<id<MTLTexture>> metalTextures;
 
+  // Staging textures: for external (IOSurface-backed) textures that may lack
+  // MTLTextureUsageShaderWrite, we create internal staging textures with full
+  // usage and blit results to the external texture after GPU work completes.
+  std::vector<id<MTLTexture>> stagingTextures;
+
   // Sampler configuration per texture: 0=repeat, 1=clamp
   std::vector<int> texWrapModes;
   std::vector<id<MTLSamplerState>> metalSamplers;
 
   // Deferred synchronization support
   id<MTLCommandBuffer> pendingCmdBuffer = nil;
+  bool skipCpuReadback = false;
 
   void waitForPendingCommands() {
     if (pendingCmdBuffer) {
       [pendingCmdBuffer waitUntilCompleted];
       pendingCmdBuffer = nil;
     }
-    syncFromMetal();
+    // Blit staging textures to external (IOSurface) textures
+    blitStagingToExternal();
+    if (!skipCpuReadback) {
+      syncFromMetal();
+    }
+  }
+
+  // Copy staging texture contents to external (IOSurface-backed) textures.
+  // This is needed because IOSurface textures may lack ShaderWrite usage,
+  // so we render into a staging texture and blit the result.
+  void blitStagingToExternal() {
+    bool needsBlit = false;
+    for (size_t i = 0; i < resources.size(); ++i) {
+      if (i < stagingTextures.size() && stagingTextures[i] != nil &&
+          resources[i]->isExternal && resources[i]->externalTexture) {
+        needsBlit = true;
+        break;
+      }
+    }
+    if (!needsBlit) return;
+
+    id<MTLCommandBuffer> cmdBuffer = [commandQueue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [cmdBuffer blitCommandEncoder];
+    for (size_t i = 0; i < resources.size(); ++i) {
+      if (i < stagingTextures.size() && stagingTextures[i] != nil &&
+          resources[i]->isExternal && resources[i]->externalTexture) {
+        int w = stagingTextures[i].width;
+        int h = stagingTextures[i].height;
+        [blit copyFromTexture:stagingTextures[i]
+                  sourceSlice:0
+                  sourceLevel:0
+                 sourceOrigin:MTLOriginMake(0, 0, 0)
+                   sourceSize:MTLSizeMake(w, h, 1)
+                    toTexture:resources[i]->externalTexture
+             destinationSlice:0
+             destinationLevel:0
+            destinationOrigin:MTLOriginMake(0, 0, 0)];
+      }
+    }
+    [blit endEncoding];
+    [cmdBuffer commit];
   }
 
   ResourceState *getResource(size_t idx) {
@@ -757,6 +804,8 @@ struct EvalContext {
     metalBuffers.clear();
     metalTextures.clear();
     metalTextures.resize(resources.size(), nil);
+    stagingTextures.clear();
+    stagingTextures.resize(resources.size(), nil);
     metalSamplers.clear();
     metalSamplers.resize(resources.size(), nil);
 
@@ -764,8 +813,22 @@ struct EvalContext {
       auto *res = resources[i];
       if (i < isTextureResource.size() && isTextureResource[i]) {
         if (res->isExternal && res->externalTexture) {
-          // Use existing external Metal texture
-          metalTextures[i] = res->externalTexture;
+          // External (IOSurface-backed) textures may lack ShaderWrite usage.
+          // Create a staging texture with full usage for compute/render work,
+          // then blit to the external texture after GPU commands complete.
+          int w = res->externalTexture.width;
+          int h = res->externalTexture.height;
+          MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
+          desc.textureType = MTLTextureType2D;
+          desc.pixelFormat = res->externalTexture.pixelFormat;
+          desc.width = w;
+          desc.height = h;
+          desc.usage = MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead |
+                       MTLTextureUsageRenderTarget;
+          desc.storageMode = MTLStorageModeShared;
+          id<MTLTexture> staging = [device newTextureWithDescriptor:desc];
+          metalTextures[i] = staging;        // Bind staging for shader work
+          stagingTextures[i] = staging;       // Track for blit-to-external
         } else {
           // Create a Metal texture for texture resources
           MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
@@ -822,20 +885,68 @@ struct EvalContext {
                         length:sizeof(float)
                        options:MTLResourceStorageModeShared]);
       } else {
-        size_t byteSize = res->data.size() * sizeof(float);
-        id<MTLBuffer> buffer =
-            [device newBufferWithBytes:res->data.data()
-                                length:byteSize
-                               options:MTLResourceStorageModeShared];
-        metalBuffers.push_back(buffer);
+        if (res->retainedMetalBuffer != nil) {
+          // Reuse persistent GPU buffer (data stays on GPU across frames)
+          metalBuffers.push_back(res->retainedMetalBuffer);
+        } else {
+          size_t byteSize = res->data.size() * sizeof(float);
+          id<MTLBuffer> buffer =
+              [device newBufferWithBytes:res->data.data()
+                                  length:byteSize
+                                 options:MTLResourceStorageModeShared];
+          metalBuffers.push_back(buffer);
+          res->retainedMetalBuffer = buffer;
+        }
         metalTextures.push_back(nil);
       }
     }
+
+    // Blit external input textures into their staging textures so shaders
+    // can read input data. (Output textures are written by shaders and
+    // blitted back to external in blitStagingToExternal.)
+    blitExternalToStaging();
+  }
+
+  // Copy external (IOSurface) input textures into staging textures before
+  // shader execution, so shaders can read input data with full access.
+  void blitExternalToStaging() {
+    bool needsBlit = false;
+    for (size_t i = 0; i < resources.size(); ++i) {
+      if (i < stagingTextures.size() && stagingTextures[i] != nil &&
+          resources[i]->isExternal && resources[i]->externalTexture) {
+        needsBlit = true;
+        break;
+      }
+    }
+    if (!needsBlit) return;
+
+    id<MTLCommandBuffer> cmdBuffer = [commandQueue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [cmdBuffer blitCommandEncoder];
+    for (size_t i = 0; i < resources.size(); ++i) {
+      if (i < stagingTextures.size() && stagingTextures[i] != nil &&
+          resources[i]->isExternal && resources[i]->externalTexture) {
+        int w = resources[i]->externalTexture.width;
+        int h = resources[i]->externalTexture.height;
+        [blit copyFromTexture:resources[i]->externalTexture
+                  sourceSlice:0
+                  sourceLevel:0
+                 sourceOrigin:MTLOriginMake(0, 0, 0)
+                   sourceSize:MTLSizeMake(w, h, 1)
+                    toTexture:stagingTextures[i]
+             destinationSlice:0
+             destinationLevel:0
+            destinationOrigin:MTLOriginMake(0, 0, 0)];
+      }
+    }
+    [blit endEncoding];
+    [cmdBuffer commit];
+    [cmdBuffer waitUntilCompleted];
   }
 
   // Sync Metal buffers and textures back to CPU
   void syncFromMetal() {
     for (size_t i = 0; i < resources.size(); ++i) {
+      if (resources[i]->isExternal) continue;
       if (i < metalTextures.size() && metalTextures[i] != nil) {
         // Read back texture data as RGBA8 bytes, convert to floats
         int w = texWidths[i];
@@ -915,15 +1026,10 @@ struct EvalContext {
     }
 
     // Bind resource buffers, textures, and samplers (starting at binding 1)
+    // Always use metalTextures (which are staging textures for external resources)
     for (size_t i = 0; i < resources.size(); ++i) {
-      auto *res = resources[i];
       if (i < metalTextures.size() && metalTextures[i] != nil) {
-        if (res->isExternal && res->externalTexture) {
-          [encoder setTexture:res->externalTexture atIndex:i + 1];
-        } else {
-          [encoder setTexture:metalTextures[i] atIndex:i + 1];
-        }
-        // Bind sampler at same index for read-access textures
+        [encoder setTexture:metalTextures[i] atIndex:i + 1];
         if (i < metalSamplers.size() && metalSamplers[i] != nil) {
           [encoder setSamplerState:metalSamplers[i] atIndex:i + 1];
         }
@@ -1009,17 +1115,11 @@ struct EvalContext {
     }
 
     // Bind resources (buffers and textures) to both vertex and fragment stages
-    // Bindings start at 1 (0 is used for global inputs)
+    // Always use metalTextures (staging textures for external resources)
     for (size_t i = 0; i < resources.size(); ++i) {
-      auto *res = resources[i];
       if (i < metalTextures.size() && metalTextures[i] != nil) {
-        if (res->isExternal && res->externalTexture) {
-          [encoder setVertexTexture:res->externalTexture atIndex:i + 1];
-          [encoder setFragmentTexture:res->externalTexture atIndex:i + 1];
-        } else {
-          [encoder setVertexTexture:metalTextures[i] atIndex:i + 1];
-          [encoder setFragmentTexture:metalTextures[i] atIndex:i + 1];
-        }
+        [encoder setVertexTexture:metalTextures[i] atIndex:i + 1];
+        [encoder setFragmentTexture:metalTextures[i] atIndex:i + 1];
         if (i < metalSamplers.size() && metalSamplers[i] != nil) {
           [encoder setVertexSamplerState:metalSamplers[i] atIndex:i + 1];
           [encoder setFragmentSamplerState:metalSamplers[i] atIndex:i + 1];

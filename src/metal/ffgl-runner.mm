@@ -67,7 +67,7 @@ std::string base64_encode(unsigned char const *bytes_to_encode,
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     if (argc < 2) {
-      std::cerr << "{\"error\": \"Usage: ffgl-runner <path-to-bundle>\"}"
+      std::cerr << "{\"error\": \"Usage: ffgl-runner <path-to-bundle> [width height] [frames]\"}"
                 << std::endl;
       return 1;
     }
@@ -164,9 +164,13 @@ int main(int argc, const char *argv[]) {
     // Defines viewport size for the instance
     int width = 640;
     int height = 480;
+    int numFrames = 1;
     if (argc >= 4) {
       width = std::stoi(argv[2]);
       height = std::stoi(argv[3]);
+    }
+    if (argc >= 5) {
+      numFrames = std::stoi(argv[4]);
     }
 
     FFGLViewportStruct viewport = {0, 0, (FFUInt32)width, (FFUInt32)height};
@@ -283,8 +287,16 @@ int main(int argc, const char *argv[]) {
     else
       std::cerr << "Runner GL Version: NULL" << std::endl;
 
-    plugMain(FF_PROCESS_OPENGL, (FFMixed){.PointerValue = &processStruct},
-             instanceID);
+    // Run multiple frames with time progression (simulates Resolume)
+    double dt = 1.0 / 60.0; // 60fps
+    for (int frame = 0; frame < numFrames; frame++) {
+      double t = frame * dt;
+      plugMain(FF_SET_TIME, (FFMixed){.PointerValue = &t}, instanceID);
+      plugMain(FF_PROCESS_OPENGL, (FFMixed){.PointerValue = &processStruct},
+               instanceID);
+      glFlush(); // Ensure each frame's GL work is flushed
+    }
+    std::cerr << "Processed " << numFrames << " frame(s)" << std::endl;
 
     // 8. Readback and Encode
     std::vector<unsigned char> pixels(width * height * 4);

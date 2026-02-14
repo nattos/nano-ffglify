@@ -236,10 +236,20 @@ export class CppGenerator {
       lines.push(`    ctx.texHeights.push_back(_internalResources[${idx}].height);`);
 
       if (r['size'] !== undefined) {
-        const sizeExpr = typeof r['size'] === 'number' ? String(r['size']) : '0';
+        let sizeExpr = '0';
+        if (typeof r['size'] === 'number') {
+          sizeExpr = String(r['size']);
+        } else if (r['size'] && typeof r['size'] === 'object' && r['size'].mode === 'fixed' && typeof r['size'].value === 'number') {
+          sizeExpr = String(r['size'].value);
+        }
         if (sizeExpr !== '0') {
+          const clearValue = r.persistence?.clearValue;
           lines.push(`    if (_internalResources[${idx}].data.empty()) {`);
-          lines.push(`        _internalResources[${idx}].data.resize(${sizeExpr});`);
+          if (clearValue !== undefined && typeof clearValue === 'number') {
+            lines.push(`        _internalResources[${idx}].data.assign(${sizeExpr}, ${this.formatFloat(clearValue)});`);
+          } else {
+            lines.push(`        _internalResources[${idx}].data.resize(${sizeExpr});`);
+          }
           lines.push('    }');
         }
       }

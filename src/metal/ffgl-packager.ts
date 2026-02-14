@@ -57,7 +57,7 @@ export function generateMetalCompileCmds(shaderPath: string, outputDir: string):
   return [
     `# Compile Metal Shader: ${shaderName}`,
     `mkdir -p "${outputDir}"`,
-    `xcrun -sdk macosx metal -c "${shaderPath}" -o "${airPath}"`,
+    `xcrun -sdk macosx metal -fno-fast-math -c "${shaderPath}" -o "${airPath}"`,
     `xcrun -sdk macosx metallib "${airPath}" -o "${metallibPath}"`
   ];
 }
