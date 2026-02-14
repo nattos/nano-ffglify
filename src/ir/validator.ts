@@ -394,6 +394,31 @@ const resolveNodeType = (
     }
   }
 
+  // Reject mixed int/float vector args in binary math/comparison ops.
+  // These match via Pass 2 coercion but cause backend compilation failures
+  // (e.g. Metal does not allow implicit int2↔float2 conversion).
+  const BINARY_VEC_STRICT_OPS = new Set([
+    'math_add', 'math_sub', 'math_mul', 'math_div', 'math_mod',
+    'math_pow', 'math_min', 'math_max', 'math_atan2',
+    'math_gt', 'math_lt', 'math_ge', 'math_le', 'math_eq', 'math_neq',
+  ]);
+  if (matchedSig && BINARY_VEC_STRICT_OPS.has(node.op)) {
+    const aType = inputTypes['a'];
+    const bType = inputTypes['b'];
+    if (aType && bType && aType !== 'any' && bType !== 'any') {
+      const isIntVec = (t: string) => /^int[234]$/.test(t);
+      const isFloatVec = (t: string) => /^float[234]$/.test(t);
+      if ((isIntVec(aType) && isFloatVec(bType)) || (isFloatVec(aType) && isIntVec(bType))) {
+        const dim = aType.replace(/^(float|int)/, '');
+        errors.push({
+          nodeId, functionId,
+          message: `Type mismatch in '${node.op}': cannot implicitly convert between '${aType}' and '${bType}'. Use static_cast_float${dim} or static_cast_int${dim}.`,
+          severity: 'error'
+        });
+      }
+    }
+  }
+
   if (matchedSig) {
     if (node.op === 'var_set' && inputTypes['val'] && inputTypes['val'] !== 'any') {
       cache.set(nodeId, inputTypes['val']);

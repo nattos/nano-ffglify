@@ -153,6 +153,57 @@ describe('Validator Coercion Rules', () => {
     expect(hasMismatch).toBe(true);
   });
 
+  describe('Mixed int/float vector rejection', () => {
+    it('should FAIL validation for math_div(int2, float2)', () => {
+      const ir = createIR([
+        { id: 'f2', op: 'float2', x: 1.0, y: 2.0 },
+        { id: 'i2', op: 'static_cast_int2', val: 'f2' },
+        { id: 'div', op: 'math_div', a: 'i2', b: 'f2' }
+      ]);
+      const errors = validateIR(ir);
+      expect(errors.length).toBeGreaterThanOrEqual(1);
+      const mixedErr = errors.find(e => e.message.includes('cannot implicitly convert'));
+      expect(mixedErr).toBeDefined();
+      expect(mixedErr!.message).toContain('int2');
+      expect(mixedErr!.message).toContain('float2');
+      expect(mixedErr!.nodeId).toBe('div');
+    });
+
+    it('should FAIL validation for math_add(int3, float3)', () => {
+      const ir = createIR([
+        { id: 'f3', op: 'float3', x: 1.0, y: 2.0, z: 3.0 },
+        { id: 'i3', op: 'static_cast_int3', val: 'f3' },
+        { id: 'add', op: 'math_add', a: 'i3', b: 'f3' }
+      ]);
+      const errors = validateIR(ir);
+      expect(errors.length).toBeGreaterThanOrEqual(1);
+      const mixedErr = errors.find(e => e.message.includes('cannot implicitly convert'));
+      expect(mixedErr).toBeDefined();
+      expect(mixedErr!.message).toContain('int3');
+      expect(mixedErr!.message).toContain('float3');
+    });
+
+    it('should allow math_mul(float2, float2) (homogeneous)', () => {
+      const ir = createIR([
+        { id: 'fa', op: 'float2', x: 1.0, y: 2.0 },
+        { id: 'fb', op: 'float2', x: 3.0, y: 4.0 },
+        { id: 'mul', op: 'math_mul', a: 'fa', b: 'fb' }
+      ]);
+      const errors = validateIR(ir);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should allow math_add(float3, scalar float) (broadcasting)', () => {
+      const ir = createIR([
+        { id: 'v3', op: 'float3', x: 1.0, y: 2.0, z: 3.0 },
+        { id: 's', op: 'literal', val: 2.0 },
+        { id: 'add', op: 'math_add', a: 'v3', b: 's' }
+      ]);
+      const errors = validateIR(ir);
+      expect(errors).toHaveLength(0);
+    });
+  });
+
   describe('Struct and Array Inference', () => {
     it('should infer struct_construct type from its type property', () => {
       const ir = createIR([
