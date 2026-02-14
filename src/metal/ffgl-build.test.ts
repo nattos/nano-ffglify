@@ -63,7 +63,9 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     fs.writeFileSync(path.join(generatedDir, 'logic.cpp'), cppCode);
 
     const mslGen = new MslGenerator();
-    const { code: mslCode } = mslGen.compileLibrary(NOISE_SHADER, shaderFunctions.map(s => s.id));
+    const stages = new Map<string, 'compute' | 'vertex' | 'fragment'>();
+    shaderFunctions.forEach(f => { if (f.stage) stages.set(f.id, f.stage); });
+    const { code: mslCode } = mslGen.compileLibrary(NOISE_SHADER, shaderFunctions.map(s => s.id), { stages });
     const shaderPath = path.join(generatedDir, 'shaders.metal');
     fs.writeFileSync(shaderPath, mslCode);
 
@@ -210,8 +212,10 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     fs.writeFileSync(path.join(generatedDir, 'logic.cpp'), cppCode);
 
     const mslGen = new MslGenerator();
+    const stages2 = new Map<string, 'compute' | 'vertex' | 'fragment'>();
+    shaderFunctions.forEach(f => { if (f.stage) stages2.set(f.id, f.stage); });
     // @ts-ignore
-    const { code: mslCode } = mslGen.compileLibrary(MIXER_SHADER, shaderFunctions.map(s => s.id));
+    const { code: mslCode } = mslGen.compileLibrary(MIXER_SHADER, shaderFunctions.map(s => s.id), { stages: stages2 });
     const shaderPath = path.join(generatedDir, 'shaders.metal');
     fs.writeFileSync(shaderPath, mslCode);
 

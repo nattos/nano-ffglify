@@ -288,9 +288,10 @@ int main(int argc, const char *argv[]) {
       std::cerr << "Runner GL Version: NULL" << std::endl;
 
     // Run multiple frames with time progression (simulates Resolume)
-    double dt = 1.0 / 60.0; // 60fps
+    // Resolume sends hostTime in milliseconds, so use ms here too
+    double dt_ms = 1000.0 / 60.0; // 60fps in milliseconds
     for (int frame = 0; frame < numFrames; frame++) {
-      double t = frame * dt;
+      double t = frame * dt_ms;
       plugMain(FF_SET_TIME, (FFMixed){.PointerValue = &t}, instanceID);
       plugMain(FF_PROCESS_OPENGL, (FFMixed){.PointerValue = &processStruct},
                instanceID);

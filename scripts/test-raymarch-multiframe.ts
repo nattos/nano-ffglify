@@ -46,7 +46,9 @@ const cppGen = new CppGenerator();
 const { code: cppCode, shaderFunctions } = cppGen.compile(RAYMARCH_SHADER, 'fn_main_cpu');
 fs.writeFileSync(path.join(generatedDir, 'logic.cpp'), cppCode);
 const mslGen = new MslGenerator();
-const { code: mslCode } = mslGen.compileLibrary(RAYMARCH_SHADER, shaderFunctions.map(s => s.id));
+const stages = new Map<string, 'compute' | 'vertex' | 'fragment'>();
+shaderFunctions.forEach(f => { if (f.stage) stages.set(f.id, f.stage); });
+const { code: mslCode } = mslGen.compileLibrary(RAYMARCH_SHADER, shaderFunctions.map(s => s.id), { stages });
 fs.writeFileSync(path.join(generatedDir, 'shaders.metal'), mslCode);
 console.log('Code generated.');
 

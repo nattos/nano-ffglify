@@ -197,6 +197,13 @@ export class CppGenerator {
         def = def[0] !== undefined ? def[0] : 0.0;
       }
       lines.push(`    SetParamInfo(${idx}, "${label}", FF_TYPE_STANDARD, ${this.formatFloat(def as any)});`);
+      if (p.ui?.min !== undefined && p.ui?.max !== undefined) {
+        lines.push(`    SetParamRange(${idx}, ${this.formatFloat(p.ui.min)}, ${this.formatFloat(p.ui.max)});`);
+      }
+      // FF_TYPE_STANDARD clamps defaultFloatVal to 0-1. Override with the real
+      // default so FF_INSTANTIATE_GL sends the correct value via SetFloatParameter.
+      lines.push(`    { auto* pi = FindParamInfo(${idx}); if (pi) pi->defaultFloatVal = ${this.formatFloat(def as any)}; }`);
+      lines.push(`    _params[${idx}] = ${this.formatFloat(def as any)};`);
     });
     lines.push('}');
     lines.push('');
@@ -236,19 +243,35 @@ export class CppGenerator {
       lines.push(`    ctx.texHeights.push_back(_internalResources[${idx}].height);`);
 
       if (r['size'] !== undefined) {
-        let sizeExpr = '0';
+        let elementCount = 0;
         if (typeof r['size'] === 'number') {
-          sizeExpr = String(r['size']);
+          elementCount = r['size'];
         } else if (r['size'] && typeof r['size'] === 'object' && r['size'].mode === 'fixed' && typeof r['size'].value === 'number') {
-          sizeExpr = String(r['size'].value);
+          elementCount = r['size'].value;
         }
-        if (sizeExpr !== '0') {
+        if (elementCount > 0) {
+          // Compute stride from struct definition or dataType
+          let stride = 1;
+          const dt = (r as any).dataType;
+          if (dt && ir.structs) {
+            const structDef = ir.structs.find(s => s.id === dt);
+            if (structDef) {
+              stride = structDef.members.reduce((sum: number, m: any) => {
+                const t = m.type;
+                const s = t === 'float4' || t === 'int4' ? 4 : t === 'float3' || t === 'int3' ? 3 : t === 'float2' || t === 'int2' ? 2 : t === 'float3x3' ? 9 : t === 'float4x4' ? 16 : 1;
+                return sum + s;
+              }, 0);
+            } else {
+              stride = dt === 'float4' ? 4 : dt === 'float3' ? 3 : dt === 'float2' ? 2 : 1;
+            }
+          }
+          const totalFloats = elementCount * stride;
           const clearValue = r.persistence?.clearValue;
           lines.push(`    if (_internalResources[${idx}].data.empty()) {`);
           if (clearValue !== undefined && typeof clearValue === 'number') {
-            lines.push(`        _internalResources[${idx}].data.assign(${sizeExpr}, ${this.formatFloat(clearValue)});`);
+            lines.push(`        _internalResources[${idx}].data.assign(${totalFloats}, ${this.formatFloat(clearValue)});`);
           } else {
-            lines.push(`        _internalResources[${idx}].data.resize(${sizeExpr});`);
+            lines.push(`        _internalResources[${idx}].data.resize(${totalFloats});`);
           }
           lines.push('    }');
         }

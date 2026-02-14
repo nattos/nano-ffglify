@@ -260,7 +260,9 @@ export async function packageFFGLPlugin(vfs: IVirtualFileSystem, options: Packag
   vfs.writeFile(`${relGen}/logic.cpp`, cppCode);
 
   const mslGen = new MslGenerator();
-  const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map((s: any) => s.id));
+  const stages = new Map<string, 'compute' | 'vertex' | 'fragment'>();
+  shaderFunctions.forEach((f: any) => { if (f.stage) stages.set(f.id, f.stage); });
+  const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map((s: any) => s.id), { stages });
   vfs.writeFile(`${relGen}/shaders.metal`, mslCode);
 
   // 3. Generate Build Script
