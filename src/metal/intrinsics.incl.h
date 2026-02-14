@@ -527,18 +527,14 @@ struct EvalContext {
 
   // Deferred synchronization support
   id<MTLCommandBuffer> pendingCmdBuffer = nil;
-  bool skipCpuReadback = false;
 
   void waitForPendingCommands() {
     if (pendingCmdBuffer) {
       [pendingCmdBuffer waitUntilCompleted];
       pendingCmdBuffer = nil;
     }
-    // Blit staging textures to external (IOSurface) textures
     blitStagingToExternal();
-    if (!skipCpuReadback) {
-      syncFromMetal();
-    }
+    syncFromMetal();
   }
 
   // Copy staging texture contents to external (IOSurface-backed) textures.
@@ -571,10 +567,16 @@ struct EvalContext {
              destinationSlice:0
              destinationLevel:0
             destinationOrigin:MTLOriginMake(0, 0, 0)];
+#if TARGET_OS_OSX
+        // IOSurface-backed textures use managed storage on macOS.
+        // Synchronize to make GPU writes visible to GL via shared memory.
+        [blit synchronizeTexture:resources[i]->externalTexture slice:0 level:0];
+#endif
       }
     }
     [blit endEncoding];
     [cmdBuffer commit];
+    [cmdBuffer waitUntilCompleted];
   }
 
   ResourceState *getResource(size_t idx) {

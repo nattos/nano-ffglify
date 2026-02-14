@@ -2,8 +2,6 @@
 #include <array>
 #include <cmath>
 #include <dlfcn.h>
-#include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -12,10 +10,6 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
-void WriteLog(const std::string &msg) {
-  std::ofstream fs("/tmp/ffgl_diag.txt", std::ios::app);
-  if (fs.is_open()) fs << "[Log] " << msg << std::endl;
-}
 
 extern "C" {
 void RegisterMetalTextureForGL(unsigned int glHandle, void *mtlTexturePtr);
@@ -30,7 +24,6 @@ void RegisterMetalTextureForGL(unsigned int glHandle, void *mtlTexturePtr);
 #include <FFGL.h>
 #include <FFGLLib.h>
 #include <FFGLPluginSDK.h>
-#include <fstream>
 
 // =====================
 // Custom OpenGL Helpers (Replacing ffglex)
@@ -101,7 +94,6 @@ void InitGLFuncs() {
           RTLD_DEFAULT, "glVertexAttribPointerARB");
   }
 
-  WriteLog("InitGLFuncs loaded symbols");
 }
 
 struct ScopedShader {
@@ -160,7 +152,6 @@ public:
     GLint status;
     glGetProgramiv(program, GL_LINK_STATUS, &status);
     if (status != GL_TRUE) {
-      WriteLog("Shader Link Failed");
     }
     return status == GL_TRUE;
   }
@@ -193,11 +184,9 @@ public:
     if (glGenVertexArraysFunc) {
       glGenVertexArraysFunc(1, &vao);
     } else {
-      WriteLog("ERROR: glGenVertexArrays not found!");
     }
 
     if (vao == 0) {
-      WriteLog("VAO Generation Failed");
       return;
     }
 
@@ -220,7 +209,6 @@ public:
 
     GLenum err = glGetError();
     if (err != GL_NO_ERROR)
-      WriteLog("Error setting Pos attrib: " + std::to_string(err));
 
     if (glEnableVertexAttribArrayFunc)
       glEnableVertexAttribArrayFunc(1);
@@ -234,20 +222,17 @@ public:
 
     err = glGetError();
     if (err != GL_NO_ERROR)
-      WriteLog("Error setting UV attrib: " + std::to_string(err));
 
     if (glBindVertexArrayFunc)
       glBindVertexArrayFunc(0);
   }
   void Draw() {
     if (vao == 0)
-      WriteLog("Draw called with VAO=0");
+      return;
     if (glBindVertexArrayFunc) {
       glBindVertexArrayFunc(vao);
       glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
       glBindVertexArrayFunc(0);
-    } else {
-      WriteLog("ERROR: glBindVertexArray not found in Draw!");
     }
   }
   void Free() {
@@ -439,8 +424,6 @@ public:
   }
 
   FFResult ProcessOpenGL(ProcessOpenGLStruct *pGL) override {
-    WriteLog("ProcessOpenGL called. numInputs: " +
-             std::to_string(pGL->numInputTextures));
     if (pGL->numInputTextures < 1 && PLUGIN_TYPE != FF_SOURCE) {
       return FF_SUCCESS;
     }
@@ -448,18 +431,6 @@ public:
     // Use current viewport size for internal output orchestration
     unsigned int targetWidth = _currentViewport.width;
     unsigned int targetHeight = _currentViewport.height;
-
-    static int logCount = 0;
-    if (logCount < 5) {
-      char buf[256];
-      snprintf(buf, sizeof(buf),
-               "[Plugin] ProcessOpenGL: %dx%d, Inputs: %u, HostFBO: %u",
-               targetWidth, targetHeight, pGL->numInputTextures, pGL->HostFBO);
-      std::ofstream fs("/tmp/ffgl_test.txt", std::ios::app);
-      if (fs.is_open())
-        fs << buf << std::endl;
-      // logCount incremented later below
-    }
 
     // Updated: using C++ unique_ptr instead of ObjC alloc init
     if (!_interopTexture || _interopTexture->getWidth() != targetWidth ||
@@ -480,20 +451,6 @@ public:
     glDepthMask(GL_FALSE);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
-    // Log extended state for debugging
-    {
-      char buf[512];
-      snprintf(buf, sizeof(buf),
-               "[Plugin] ProcessOpenGL call %d, numInputs=%d, HostFBO=%d, "
-               "viewport=%dx%d",
-               logCount, pGL->numInputTextures, pGL->HostFBO, targetWidth,
-               targetHeight);
-      std::ofstream fs("/tmp/ffgl_test.txt", std::ios::app);
-      if (fs.is_open())
-        fs << buf << std::endl;
-      logCount++;
-    }
-
     // 1. Manage input interops using ACTIVE dimensions to avoid stretch
     if (_inputInterops.size() < pGL->numInputTextures) {
       _inputInterops.resize(pGL->numInputTextures);
@@ -505,17 +462,6 @@ public:
         // Use ACTIVE width/height for our internal Metal processing
         unsigned int activeW = pInput->Width;
         unsigned int activeH = pInput->Height;
-
-        {
-          char buf[256];
-          snprintf(buf, sizeof(buf),
-                   "  Input%d: Handle=%d, Size=%dx%d, HWSize=%dx%d", i,
-                   pInput->Handle, pInput->Width, pInput->Height,
-                   pInput->HardwareWidth, pInput->HardwareHeight);
-          std::ofstream fs("/tmp/ffgl_test.txt", std::ios::app);
-          if (fs.is_open())
-            fs << buf << std::endl;
-        }
 
         if (!_inputInterops[i] || _inputInterops[i]->getWidth() != activeW ||
             _inputInterops[i]->getHeight() != activeH) {
@@ -604,81 +550,23 @@ public:
     _prevHostTime = currentHostTime;
 
     func_main(ctx);
-    // No CPU wait needed — Metal queue ordering ensures compute finishes
-    // before the blit, and IOSurface handles Metal→OpenGL synchronization.
     ctx.blitStagingToExternal();
 
-    // Diagnostic logging (first N frames)
-    static int diagFrame = 0;
-    if (diagFrame < 10) {
-      std::ofstream diag("/tmp/ffgl_diag.txt", std::ios::app);
-      if (diag.is_open()) {
-        diag << "=== Frame " << diagFrame << " ===" << std::endl;
-        diag << std::setprecision(10)
-             << "hostTime=" << currentHostTime
-             << " relTime=" << (currentHostTime - _startHostTime)
-             << " rawDelta=" << rawDelta
-             << " clampedDelta=" << clampedDelta << std::endl;
-        diag << "scale=" << ctx.inputs["scale"] << std::endl;
-
-#ifdef INTERNAL_RESOURCE_COUNT
-        for (int ri = 0; ri < INTERNAL_RESOURCE_COUNT; ++ri) {
-          auto& res = _internalResources[ri];
-          diag << "InternalRes[" << ri << "]: data.size()=" << res.data.size()
-               << " width=" << res.width << " height=" << res.height
-               << " retained=" << (res.retainedMetalBuffer ? "yes" : "no")
-               << std::endl;
-          if (res.retainedMetalBuffer) {
-            float* ptr = (float*)[res.retainedMetalBuffer contents];
-            size_t bufLen = [res.retainedMetalBuffer length] / sizeof(float);
-            int negCount = 0, posCount = 0, nanCount = 0;
-            float minVal = 1e30f, maxVal = -1e30f;
-            for (size_t j = 0; j < bufLen; ++j) {
-              float v = ptr[j];
-              if (std::isnan(v)) { nanCount++; continue; }
-              if (v <= 0) negCount++; else posCount++;
-              minVal = std::min(minVal, v);
-              maxVal = std::max(maxVal, v);
-            }
-            diag << "  bufLen=" << bufLen
-                 << " neg=" << negCount << " pos=" << posCount
-                 << " nan=" << nanCount
-                 << " min=" << minVal << " max=" << maxVal << std::endl;
-            diag << "  first10:";
-            for (size_t j = 0; j < 10 && j < bufLen; ++j) {
-              diag << " " << ptr[j];
-            }
-            diag << std::endl;
-            // Sample center (16,16,16) = index 16*1024 + 16*32 + 16 = 16912
-            if (bufLen > 16912) {
-              diag << "  center(16,16,16)=" << ptr[16912] << std::endl;
-            }
-          }
-        }
-#endif
-      }
-      diagFrame++;
-    }
-
-    // Final blit output -> host
+    // Blit IOSurface output to host FBO
     {
-      native_gl::ScopedFBO fboBinding(pGL->HostFBO);
-      glViewport(0, 0, targetWidth, targetHeight);
+      GLint prevReadFBO = 0, prevDrawFBO = 0;
+      glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFBO);
+      glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFBO);
 
-      native_gl::ScopedShader shaderBinding(_blitShader.program);
-      native_gl::ScopedSampler activateSampler(0);
-      native_gl::ScopedTexture textureBinding(
-          GL_TEXTURE_RECTANGLE, _interopTexture->getOpenGLTexture());
+      glBindFramebuffer(GL_READ_FRAMEBUFFER, _interopTexture->getOpenGLFBO());
+      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, pGL->HostFBO);
+      glBlitFramebuffer(
+          0, 0, targetWidth, targetHeight,
+          0, 0, targetWidth, targetHeight,
+          GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
-      glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-      glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-      _blitShader.SetInt("InputTexture", 0);
-      FFGLTexCoords maxCoords =
-          (FFGLTexCoords){(float)_interopTexture->getWidth(),
-                          (float)_interopTexture->getHeight()};
-      _blitShader.SetVec2("MaxUV", maxCoords.s, maxCoords.t);
-      _screenQuad.Draw();
+      glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFBO);
+      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFBO);
     }
 
     return FF_SUCCESS;
