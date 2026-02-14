@@ -586,8 +586,7 @@ export const PARTICLE_SHADER: IRDocument = {
   entryPoint: 'fn_main_cpu',
 
   inputs: [
-    { id: 'particle_count', type: 'float', default: 1000, ui: { min: 1, max: 1000000, widget: 'slider' }, comment: 'Number of active particles (max 1M).' },
-    { id: 'viewport_size', type: 'float2', default: [512, 512], comment: 'Viewport dimensions for aspect ratio correction.' }
+    { id: 'particle_count', type: 'float', default: 1000, ui: { min: 1, max: 1000000, widget: 'slider' }, comment: 'Number of active particles (max 1M).' }
   ],
 
   structs: [
@@ -678,9 +677,11 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'time', op: 'builtin_get', name: 'time' },
         { id: 'gid_x_f', op: 'static_cast_float', val: 'gid.x', comment: 'global_invocation_id is int3; cast to float for hash seed.' },
 
-        { id: 'c_aspect', op: 'comment', comment: 'Aspect ratio: scale X velocity so equal magnitude = equal pixel distance.' },
-        { id: 'vp', op: 'var_get', var: 'viewport_size' },
-        { id: 'aspect', op: 'math_div', a: 'vp.x', b: 'vp.y' },
+        { id: 'c_aspect', op: 'comment', comment: 'Aspect ratio from output texture size: scale X velocity so equal magnitude = equal pixel distance.' },
+        { id: 'os', op: 'resource_get_size', resource: 'output_tex' },
+        { id: 'os_x', op: 'static_cast_float', val: 'os.x' },
+        { id: 'os_y', op: 'static_cast_float', val: 'os.y' },
+        { id: 'aspect', op: 'math_div', a: 'os_x', b: 'os_y' },
         { id: 'inv_aspect', op: 'math_div', a: 1.0, b: 'aspect' },
 
         { id: 'c_load', op: 'comment', comment: 'Load Particle struct from buffer.' },
@@ -793,9 +794,11 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'qx', op: 'array_extract', array: 'quad_x', index: 'corner_i' },
         { id: 'qy', op: 'array_extract', array: 'quad_y', index: 'corner_i' },
 
-        { id: 'c_aspect', op: 'comment', comment: 'Aspect ratio from viewport size for square quads.' },
-        { id: 'vp', op: 'var_get', var: 'viewport_size' },
-        { id: 'aspect', op: 'math_div', a: 'vp.x', b: 'vp.y' },
+        { id: 'c_aspect', op: 'comment', comment: 'Aspect ratio from output_size builtin for square quads.' },
+        { id: 'os', op: 'builtin_get', name: 'output_size' },
+        { id: 'os_x', op: 'static_cast_float', val: 'os.x' },
+        { id: 'os_y', op: 'static_cast_float', val: 'os.y' },
+        { id: 'aspect', op: 'math_div', a: 'os_x', b: 'os_y' },
         { id: 'inv_aspect', op: 'math_div', a: 1.0, b: 'aspect' },
 
         { id: 'c_load', op: 'comment', comment: 'Load Particle struct from buffer.' },

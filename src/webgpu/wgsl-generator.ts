@@ -207,6 +207,11 @@ export class WgslGenerator {
         });
       }
 
+      // output_size: available for all shader stages (compute, vertex, fragment)
+      if (this.allUsedBuiltins.has('output_size')) {
+        docInputs.push({ id: 'output_size', type: 'vec3<i32>' });
+      }
+
       // Use ShaderLayout to determine order (sort=true for efficient packing)
       // This guarantees the struct layout matches the buffer packing.
       // Use std430 for storage buffers (Inputs)
@@ -296,7 +301,8 @@ export class WgslGenerator {
 
     const hasInputs = options.inputBinding !== undefined && (
       (options.stage === 'compute') || // Always have u_dispatch_size in compute
-      nonBuiltinInputs.length > 0
+      nonBuiltinInputs.length > 0 ||
+      this.allUsedBuiltins.has('output_size')
     );
     const finalWorkgroupSize = options.workgroupSize || (options.stage === 'compute' ? [16, 16, 1] as [number, number, number] : [1, 1, 1] as [number, number, number]);
 
@@ -1219,6 +1225,7 @@ export class WgslGenerator {
       else if (name === 'position') expr = 'Position';
       else if (name === 'vertex_index') expr = 'VertexIndex';
       else if (name === 'instance_index') expr = 'InstanceIndex';
+      else if (name === 'output_size') expr = 'b_inputs.output_size';
       else if (['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'].includes(name)) expr = `b_inputs.${name}`;
 
       // Built-ins in WGSL are often u32 or vecN<u32>.

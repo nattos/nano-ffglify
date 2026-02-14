@@ -884,6 +884,26 @@ export const validateStructs = (doc: IRDocument, errors: LogicValidationError[])
   doc.structs?.forEach(s => checkStruct(s.id));
 };
 
+/**
+ * Collect all resource IDs referenced by a shader function (and functions it calls).
+ */
+const collectFunctionResources = (funcId: string, allFunctions: FunctionDef[], visited = new Set<string>()): Set<string> => {
+  if (visited.has(funcId)) return new Set();
+  visited.add(funcId);
+  const func = allFunctions.find(f => f.id === funcId);
+  if (!func) return new Set();
+  const resources = new Set<string>();
+  for (const node of func.nodes) {
+    if (node.op === 'resource_get_size' && typeof node['resource'] === 'string') resources.add(node['resource']);
+    if ((node.op === 'texture_load' || node.op === 'texture_sample' || node.op === 'texture_store') && typeof node['tex'] === 'string') resources.add(node['tex']);
+    if ((node.op === 'buffer_load' || node.op === 'buffer_store') && typeof node['buffer'] === 'string') resources.add(node['buffer']);
+    if (node.op === 'call_func' && typeof node['func'] === 'string') {
+      collectFunctionResources(node['func'], allFunctions, visited).forEach(r => resources.add(r));
+    }
+  }
+  return resources;
+};
+
 const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<string>, errors: LogicValidationError[]) => {
   if (!func || !Array.isArray(func.nodes)) {
     errors.push({ functionId: func?.id || 'unknown', message: 'Function definition missing or invalid: nodes array is required', severity: 'error' });
@@ -1065,4 +1085,29 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
       }
     }
   });
+
+  // Render target conflict detection for cmd_draw nodes
+  if (func.type === 'cpu') {
+    func.nodes.forEach(node => {
+      if (node.op === 'cmd_draw') {
+        const targetId = node['target'] as string;
+        const vertexId = node['vertex'] as string;
+        const fragmentId = node['fragment'] as string;
+        if (!targetId) return;
+        const shaderFuncIds = [vertexId, fragmentId].filter(Boolean);
+        const referencedResources = new Set<string>();
+        for (const fid of shaderFuncIds) {
+          collectFunctionResources(fid, doc.functions).forEach(r => referencedResources.add(r));
+        }
+        if (referencedResources.has(targetId)) {
+          errors.push({
+            nodeId: node.id,
+            functionId: func.id,
+            message: `Render target '${targetId}' cannot be accessed as a resource in vertex/fragment shaders. Use 'builtin_get output_size' for dimensions.`,
+            severity: 'error'
+          });
+        }
+      }
+    });
+  }
 };

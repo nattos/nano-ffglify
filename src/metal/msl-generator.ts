@@ -556,8 +556,20 @@ export class MslGenerator {
     const inputs = (this.ir?.inputs || []).filter(i => i.type !== 'texture2d');
     const hasGlobalInputs = inputs.length > 0;
 
-    // Add global inputs buffer at binding 0 if there are global inputs
-    if (hasGlobalInputs) {
+    // Pre-detect if output_size is used by any function in the shader
+    let needsOutputSize = false;
+    for (const f of allFunctions) {
+      for (const node of f.nodes) {
+        if (node.op === 'builtin_get' && node['name'] === 'output_size') {
+          needsOutputSize = true;
+          break;
+        }
+      }
+      if (needsOutputSize) break;
+    }
+
+    // Add global inputs buffer at binding 0 if there are global inputs or output_size
+    if (hasGlobalInputs || needsOutputSize) {
       params.push('constant float* inputs [[buffer(0)]]');
     }
 
@@ -598,13 +610,18 @@ export class MslGenerator {
     }
 
     // Unpack global inputs from flat float buffer (same as compute kernels)
+    let inputOffset = 0;
     if (hasGlobalInputs) {
-      let offset = 0;
       for (const input of inputs) {
         const irType = input.type || 'float';
         const varName = this.sanitizeId(input.id);
-        offset = this.emitUnpackInput(varName, irType, offset, lines);
+        inputOffset = this.emitUnpackInput(varName, irType, inputOffset, lines);
       }
+    }
+
+    // Unpack output_size (int3) from 3 floats at end of flat buffer
+    if (needsOutputSize) {
+      lines.push(`    int3 v_output_size = int3(int(inputs[${inputOffset}]), int(inputs[${inputOffset + 1}]), int(inputs[${inputOffset + 2}]));`);
     }
 
     const varMap = new Map<string, number>();
@@ -694,15 +711,48 @@ export class MslGenerator {
       lines.push('    uint3 gid [[thread_position_in_grid]]) {');
     }
 
+    // Detect if output_size is used by any function in the shader
+    let needsOutputSize = false;
+    for (const f of allFunctions) {
+      for (const node of f.nodes) {
+        if (node.op === 'builtin_get' && node['name'] === 'output_size') {
+          needsOutputSize = true;
+          break;
+        }
+      }
+      if (needsOutputSize) break;
+    }
+
     // Emit input unpacking preamble - reconstruct typed locals from flat float buffer
-    if (hasShaderInputs) {
-      lines.push('    device float* inputs = b_globals;');
+    if (hasShaderInputs || needsOutputSize) {
+      if (!hasShaderInputs) {
+        lines.push('    device float* inputs = b_globals;');
+      } else {
+        lines.push('    device float* inputs = b_globals;');
+      }
       let offset = 0;
-      for (const input of inputs) {
-        const irType = input.type || 'float';
-        const varName = this.sanitizeId(input.id);
-        offset = this.emitUnpackInput(varName, irType, offset, lines);
-        if (offset < 0) break;
+      if (hasShaderInputs) {
+        for (const input of inputs) {
+          const irType = input.type || 'float';
+          const varName = this.sanitizeId(input.id);
+          offset = this.emitUnpackInput(varName, irType, offset, lines);
+          if (offset < 0) break;
+        }
+      }
+
+      // CPU-allowed builtins are packed after inputs — skip over them
+      const allUsedBuiltins = new Set<string>();
+      for (const f of allFunctions) {
+        for (const node of f.nodes) {
+          if (node.op === 'builtin_get') allUsedBuiltins.add(node['name'] as string);
+        }
+      }
+      const cpuBuiltins = [...allUsedBuiltins].filter(b => BUILTIN_CPU_ALLOWED.includes(b));
+      offset += cpuBuiltins.length; // Each CPU builtin is 1 float
+
+      // Unpack output_size (int3) from 3 floats at end of flat buffer
+      if (needsOutputSize) {
+        lines.push(`    int3 v_output_size = int3(int(inputs[${offset}]), int(inputs[${offset + 1}]), int(inputs[${offset + 2}]));`);
       }
     }
 
@@ -1539,6 +1589,9 @@ export class MslGenerator {
         }
         if (name === 'normalized_global_invocation_id') {
           return 'float3(gid) / float3(tpg)';
+        }
+        if (name === 'output_size') {
+          return 'v_output_size';
         }
         if (BUILTIN_CPU_ALLOWED.includes(name)) {
           const offset = varMap.get(name);

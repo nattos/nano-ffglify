@@ -48,7 +48,6 @@ describe('Conformance: Integration - Particle Simulation', () => {
     it(`should simulate and render particles [${backend.name}]`, async () => {
       const inputs = new Map<string, RuntimeValue>();
       inputs.set('particle_count', 10); // Small count for test speed
-      inputs.set('viewport_size', [512, 512]);
 
       const builtins = new Map<string, RuntimeValue>();
       builtins.set('time', 1.0);

@@ -693,8 +693,9 @@ export class CppGenerator {
       // Collect CPU-allowed builtins used by the target shader
       const shaderAnalysis = this.functionAnalysis.get(targetFunc);
       const usedBuiltins = shaderAnalysis ? [...shaderAnalysis.usedBuiltins].filter(b => BUILTIN_CPU_ALLOWED.includes(b)) : [];
+      const needsOutputSize = shaderAnalysis ? shaderAnalysis.usedBuiltins.has('output_size') : false;
 
-      if (hasExplicitInputs || hasGlobalInputs || usedBuiltins.length > 0) {
+      if (hasExplicitInputs || hasGlobalInputs || usedBuiltins.length > 0 || needsOutputSize) {
         lines.push(`${indent}{`);
         lines.push(`${indent}    std::vector<float> _shader_args;`);
 
@@ -726,6 +727,13 @@ export class CppGenerator {
           lines.push(`${indent}    _shader_args.push_back(ctx.getInput("${b}"));`);
         }
 
+        // Inject output_size (dispatch dimensions for compute shaders)
+        if (needsOutputSize) {
+          lines.push(`${indent}    _shader_args.push_back(static_cast<float>(${dimX}));`);
+          lines.push(`${indent}    _shader_args.push_back(static_cast<float>(${dimY}));`);
+          lines.push(`${indent}    _shader_args.push_back(static_cast<float>(${dimZ}));`);
+        }
+
         lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
         lines.push(`${indent}}`);
       } else {
@@ -740,16 +748,32 @@ export class CppGenerator {
       const allRes = this.getAllResources();
       const targetIdx = allRes.findIndex(r => r.id === target);
 
+      // Check if any shader in the draw pipeline uses output_size
+      const vertexAnalysis = this.functionAnalysis.get(vertex);
+      const fragmentAnalysis = this.functionAnalysis.get(fragment);
+      const drawNeedsOutputSize = (vertexAnalysis?.usedBuiltins.has('output_size') || fragmentAnalysis?.usedBuiltins.has('output_size')) ?? false;
+
       // Build args for global inputs (accessible via var_get in vertex/fragment shaders)
       const hasGlobalInputs = this.ir?.inputs && this.ir.inputs.filter(i => i.type !== 'texture2d').length > 0;
-      if (hasGlobalInputs) {
+      if (hasGlobalInputs || drawNeedsOutputSize) {
         lines.push(`${indent}{`);
         lines.push(`${indent}    std::vector<float> _shader_args;`);
-        for (const input of this.ir!.inputs!) {
-          if (input.type === 'texture2d') continue;
-          const irType = input.type || 'float';
-          this.emitGlobalInputFlattening(`${indent}    `, input.id, irType, lines, []);
+        if (hasGlobalInputs) {
+          for (const input of this.ir!.inputs!) {
+            if (input.type === 'texture2d') continue;
+            const irType = input.type || 'float';
+            this.emitGlobalInputFlattening(`${indent}    `, input.id, irType, lines, []);
+          }
         }
+
+        // Inject output_size (render target dimensions for vertex/fragment shaders)
+        if (drawNeedsOutputSize) {
+          lines.push(`${indent}    auto& _target_res = ctx.resources[${targetIdx}];`);
+          lines.push(`${indent}    _shader_args.push_back(static_cast<float>(_target_res->width));`);
+          lines.push(`${indent}    _shader_args.push_back(static_cast<float>(_target_res->height));`);
+          lines.push(`${indent}    _shader_args.push_back(1.0f);`);
+        }
+
         lines.push(`${indent}    ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}), _shader_args);`);
         lines.push(`${indent}}`);
       } else {

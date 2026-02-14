@@ -604,7 +604,8 @@ export const BUILTIN_TYPES: Record<string, string> = {
   'delta_time': 'float',
   'bpm': 'float',
   'beat_number': 'float',
-  'beat_delta': 'float'
+  'beat_delta': 'float',
+  'output_size': 'int3'
 };
 
 export const BUILTIN_CPU_ALLOWED = [
@@ -631,12 +632,13 @@ export const BuiltinNameSchema = z.enum([
   'delta_time',
   'bpm',
   'beat_number',
-  'beat_delta'
+  'beat_delta',
+  'output_size'
 ]);
 
 export interface BuiltinGetArgs { name: string;[key: string]: any; }
 export const BuiltinGetDef = defineOp<BuiltinGetArgs>({
-  doc: "Get a GPU/Shader built-in variable. Compute builtins (global_invocation_id, local_invocation_id, workgroup_id, num_workgroups) are int3, NOT float3. normalized_global_invocation_id is float3 = float3(gid) / float3(grid_size), useful for UV coordinates. CPU-allowed builtins (time, delta_time, bpm, beat_number, beat_delta) are auto-injected as shader args by cmd_dispatch.",
+  doc: "Get a GPU/Shader built-in variable. Compute builtins (global_invocation_id, local_invocation_id, workgroup_id, num_workgroups) are int3, NOT float3. normalized_global_invocation_id is float3 = float3(gid) / float3(grid_size), useful for UV coordinates. output_size is int3: dispatch grid dimensions for compute shaders, render target dimensions for vertex/fragment shaders. CPU-allowed builtins (time, delta_time, bpm, beat_number, beat_delta) are auto-injected as shader args by cmd_dispatch.",
   args: { name: { type: BuiltinNameSchema, doc: "Built-in name (see BUILTIN_TYPES for return types)", refType: 'builtin', isIdentifier: true } }
 });
 

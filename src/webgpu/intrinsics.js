@@ -180,7 +180,7 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
       if (info.inputLayout) {
         const layout = info.inputLayout;
         let requiredSize = layout.totalSize;
-        const inputs = { ...args, u_dispatch_size: normalizedDim };
+        const inputs = { ...args, u_dispatch_size: normalizedDim, output_size: normalizedDim };
 
         if (layout.hasRuntimeArray && layout.runtimeArray) {
           const arr = inputs[layout.runtimeArray.name];
@@ -277,13 +277,17 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
 
       const entries = [];
 
+      // Inject output_size for vertex/fragment shaders (render target dimensions)
+      const outputSize = [targetState.width, targetState.height, 1];
+      const inputArgs = { ...(args || {}), output_size: outputSize };
+
       // Inputs buffer (global inputs for vertex/fragment shaders)
-      if (info.inputLayout && args) {
+      if (info.inputLayout && inputArgs) {
         const layout = info.inputLayout;
         let requiredSize = layout.totalSize;
 
         if (layout.hasRuntimeArray && layout.runtimeArray) {
-          const arr = args[layout.runtimeArray.name];
+          const arr = inputArgs[layout.runtimeArray.name];
           if (Array.isArray(arr)) {
             requiredSize = layout.runtimeArray.offset + arr.length * layout.runtimeArray.stride;
           }
@@ -295,11 +299,11 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
         const view = new DataView(buffer);
 
         for (const op of layout.ops) {
-          writeOp(view, op, args);
+          writeOp(view, op, inputArgs);
         }
 
         if (layout.runtimeArray) {
-          const arr = args[layout.runtimeArray.name];
+          const arr = inputArgs[layout.runtimeArray.name];
           if (Array.isArray(arr)) {
             const { offset, stride, elementOp } = layout.runtimeArray;
             for (let i = 0; i < arr.length; i++) {
