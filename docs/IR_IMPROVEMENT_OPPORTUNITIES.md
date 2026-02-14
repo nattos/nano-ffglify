@@ -1,6 +1,6 @@
 # IR & Backend Improvement Opportunities
 
-Tracked opportunities for making the IR more expressive, the generated code leaner, and the backends more consistent. Each item is categorized and roughly prioritized within its section.
+Tracked opportunities for making the IR more expressive, the generated code leaner, and the backends more consistent. Each item is categorized and roughly prioritized within its section. Difficulty is rated in T-shirt sizes: **XS** (< 1 hr), **S** (half day), **M** (1-2 days), **L** (3-5 days), **XL** (1+ week).
 
 ---
 
@@ -8,7 +8,7 @@ Tracked opportunities for making the IR more expressive, the generated code lean
 
 Inefficiencies in generated code caused by missing IR features or overly conservative code generation.
 
-### O1: Relaxed division mode
+### O1: Relaxed division mode [S]
 
 **Current**: Every `math_div` emits a `safe_div` wrapper that branches on `b != 0`. MSL emits 8 overloaded `safe_div` helpers; WGSL inlines a conditional; CPU-JIT does the same.
 
@@ -16,7 +16,7 @@ Inefficiencies in generated code caused by missing IR features or overly conserv
 
 **Files**: `msl-generator.ts:362-368`, `wgsl-generator.ts:1260-1265`, `cpu-jit.ts`
 
-### O2: Redundant `u32()` / `f32()` index casts in WGSL
+### O2: Redundant `u32()` / `f32()` index casts in WGSL [M]
 
 **Current**: All vector/matrix element access wraps the index in `u32()`, and all vector component constructors wrap args in `f32()`, regardless of whether the expression already has the correct type.
 
@@ -29,7 +29,7 @@ vec3<f32>(f32(already_a_float), f32(...), f32(...))
 
 **Files**: `wgsl-generator.ts:886-891` (vector construction), `wgsl-generator.ts:1109-1121` (element access)
 
-### O3: Unconditional buffer bounds checking
+### O3: Unconditional buffer bounds checking [S]
 
 **Current**: Every `buffer_store` in WGSL wraps the write in an `if (u32(idx) < arrayLength(...))` guard. Every `buffer_load` similarly.
 
@@ -37,7 +37,7 @@ vec3<f32>(f32(already_a_float), f32(...), f32(...))
 
 **Files**: `wgsl-generator.ts:652, 664, 735-736`
 
-### O4: Dead helper elimination in MSL
+### O4: Dead helper elimination in MSL [S]
 
 **Current**: The MSL generator unconditionally emits ~40 helper functions (`safe_div` x8, `cmp_*` x24, `msl_select` x7, `msl_is_*` x12, `safe_cast_int`), even if the shader uses none of them.
 
@@ -45,11 +45,11 @@ vec3<f32>(f32(already_a_float), f32(...), f32(...))
 
 **Files**: `msl-generator.ts:362-444`
 
-### O5: Literal int arithmetic forces float round-trip
+### O5: Literal int arithmetic forces float round-trip [M]
 
 **Current**: The validator types all numeric literals as `float`. So `math_mul(int_var, 1024)` is resolved as `float * float`, and the WGSL coercion system may emit unnecessary `f32()` casts. The raymarch shader works around this by doing index math in float and casting back to int at the end.
 
-**Proposal**: Related to S4 (typed literals). If the IR could express `1024` as an int literal, the entire float-index-then-cast-back pattern disappears, saving ~2 nodes per flat index computation and eliminating potential precision issues for large indices.
+**Proposal**: Related to S2 (typed literals). If the IR could express `1024` as an int literal, the entire float-index-then-cast-back pattern disappears, saving ~2 nodes per flat index computation and eliminating potential precision issues for large indices.
 
 **Files**: `ir/validator.ts` (processArg), `wgsl-generator.ts` (resolveCoercedArgs)
 
@@ -59,7 +59,7 @@ vec3<f32>(f32(already_a_float), f32(...), f32(...))
 
 IR patterns that are unnecessarily verbose; new ops or features that would make IRs leaner.
 
-### S1: `flat_index_3d` built-in op
+### S1: `flat_index_3d` built-in op [S]
 
 **Current**: Computing a flat buffer index from 3D coordinates takes 7-9 nodes per index:
 ```
@@ -70,7 +70,7 @@ The raymarch evolve shader repeats this pattern 7 times (self + 6 neighbors), to
 
 **Proposal**: Add `flat_index_3d(coords, size_x, size_y)` that computes `z * size_x * size_y + y * size_x + x` in a single node. Accepts int3 or float3 coords (with implicit floor+cast for float3). Generators emit a single expression.
 
-### S2: Typed literals
+### S2: Typed literals [M]
 
 **Current**: All numeric literals in IR are typed as `float` by the validator, even `0` or `1024`. This forces the two-pass signature matching in the validator and causes WGSL coercion issues when mixing int variables with literal constants.
 
@@ -80,25 +80,99 @@ The raymarch evolve shader repeats this pattern 7 times (self + 6 neighbors), to
 ```
 The validator would respect the declared type instead of always inferring `float`. Untyped literals keep the current `float` default for backward compatibility.
 
-### S3: Scalar-to-vector broadcast op
+### S3: Flexible vector constructor variants [L]
 
-**Current**: Constructing a uniform vector like `float3(0.5, 0.5, 0.5)` requires either a literal node + float3 with repeated refs, or three separate literal expressions. Generators can't detect this pattern.
+**Current**: Vector constructors (`float2`, `float3`, `float4`, `int2`, `int3`, `int4`) only accept individual scalar component keys (`x`, `y`, `z`, `w`). Constructing a vector from sub-vectors or broadcasting a scalar requires extra nodes:
 
-**Proposal**: Add `vec_broadcast(val, type)` or detect when all components of a `float3`/`float4` reference the same node and emit `vec3<f32>(val)` instead of `vec3<f32>(val, val, val)`. Minor code size savings, but makes IR intent clearer.
+```json
+// Broadcast: need to repeat the same ref 3 times
+{ "id": "half", "op": "literal", "val": 0.5 },
+{ "id": "v", "op": "float3", "x": "half", "y": "half", "z": "half" }
 
-### S4: `vec_swizzle` already handles reorder — document it
+// Combine xy + z: need 2 swizzle nodes + constructor
+{ "id": "sx", "op": "vec_swizzle", "val": "src", "channels": "x" },
+{ "id": "sy", "op": "vec_swizzle", "val": "src", "channels": "y" },
+{ "id": "v", "op": "float3", "x": "sx", "y": "sy", "z": 1.0 }
+```
 
-**Current**: `vec_swizzle` with multi-character channels like `'yzx'` already produces a reordered vector. But the IR examples don't use this — they swizzle individual components and reassemble via `float3(y, x, z)`.
+**Proposal**: Allow vector constructors to accept any contiguous component-key combination that covers all components exactly once. The key names encode which components they fill. The validator checks complete coverage and correct source types.
 
-**Proposal**: This is mostly a documentation/example issue. The existing `vec_swizzle` with `channels: 'yzx'` should work. Verify all backends handle multi-channel swizzle→new-vector correctly and update examples to use it.
+For `float3`:
+```json
+{ "op": "float3", "x": ..., "y": ..., "z": ... }    // 3 scalars (current)
+{ "op": "float3", "xy": ..., "z": ... }               // vec2 + scalar
+{ "op": "float3", "x": ..., "yz": ... }               // scalar + vec2
+{ "op": "float3", "xyz": ... }                         // vec3 (copy/cast) or scalar (broadcast)
+```
 
-### S5: Neighbor offset helper for grid simulations
+For `float4`:
+```json
+{ "op": "float4", "x": ..., "y": ..., "z": ..., "w": ... }  // 4 scalars
+{ "op": "float4", "xy": ..., "zw": ... }                      // 2x vec2
+{ "op": "float4", "xyz": ..., "w": ... }                      // vec3 + scalar
+{ "op": "float4", "x": ..., "yzw": ... }                      // scalar + vec3
+{ "op": "float4", "xyzw": ... }                               // vec4 or scalar broadcast
+```
+
+Broadcast is the special case where a single-component key covers all slots (e.g., `xyz` referencing a scalar → `vec3<f32>(val)`). This subsumes the old broadcast proposal entirely.
+
+**Code generation** is straightforward — each backend already knows how to emit multi-arg constructors (`vec3<f32>(a.xy, b)` in WGSL, `float3(a.xy, b)` in MSL, etc.).
+
+**Composes with S4** (inline swizzles): `{ "op": "float3", "xy": "gid.xy", "z": 1.0 }` constructs a float3 from swizzled components in a single node — no intermediate `vec_swizzle` nodes needed.
+
+### S4: Inline swizzles in refables [L]
+
+**Current**: Extracting components from a vector requires explicit `vec_swizzle` nodes:
+
+```json
+{ "id": "gx", "op": "vec_swizzle", "val": "gid", "channels": "x" },
+{ "id": "gy", "op": "vec_swizzle", "val": "gid", "channels": "y" },
+{ "id": "sum", "op": "math_add", "a": "gx", "b": "gy" }
+```
+
+This is verbose — the evolve shader has ~10 `vec_swizzle` nodes just for extracting x/y/z from grid coordinates and neighbor offsets.
+
+**Proposal**: Allow any refable (node reference) to include an inline swizzle suffix using `.` notation:
+
+```json
+{ "id": "sum", "op": "math_add", "a": "gid.x", "b": "gid.y" }
+{ "id": "uv", "op": "float2", "xy": "gid.xy" }
+{ "id": "shuffled", "op": "float3", "xyz": "pos.zyx" }
+```
+
+**Validation rules**:
+- The `.` character is **reserved** and cannot appear in node IDs. The validator rejects any node whose `id` contains `.`.
+- When a refable contains `.`, the validator splits on the first `.`: `node_id.swizzle`.
+- The validator resolves `node_id`, verifies it produces a vector type, and checks that each swizzle character (`x`/`y`/`z`/`w` or `r`/`g`/`b`/`a`) is valid for the source vector's dimension.
+- The inferred type of the swizzled ref follows standard rules: single channel → scalar, multi-channel → vector of that length.
+
+**Code generation**: Each backend emits the natural swizzle syntax for the target language:
+- WGSL: `n_gid.xy`
+- MSL: `n_gid.xy`
+- C++: component extraction or swizzle helper
+- CPU-JIT: array indexing
+
+**Impact**: This eliminates most `vec_swizzle` nodes from IRs. Combined with S3 (flexible constructors), patterns like "extract xy from one vector, combine with a scalar z" collapse from 3 nodes to 1:
+
+```json
+// Before (3 nodes):
+{ "id": "gx", "op": "vec_swizzle", "val": "gid", "channels": "x" },
+{ "id": "gy", "op": "vec_swizzle", "val": "gid", "channels": "y" },
+{ "id": "uv", "op": "float3", "x": "gx", "y": "gy", "z": 1.0 }
+
+// After (1 node):
+{ "id": "uv", "op": "float3", "xy": "gid.xy", "z": 1.0 }
+```
+
+This also solves the **shuffle problem** — reordering components is just `"xyz": "pos.zyx"` — with no explicit shuffle/swizzle node required.
+
+### S5: Neighbor offset helper for grid simulations [S]
 
 **Current**: The evolve shader computes 6 neighbor indices by manually clamping each axis ±1 and recomputing flat indices from scratch. This accounts for ~40 nodes.
 
 **Proposal**: A `grid_neighbor(gid, axis, direction, grid_size)` op, or more practically, a `clamp_offset(val, offset, min, max)` convenience op that combines `val + offset` and `clamp(result, min, max)` into one node. Even without a dedicated op, a helper function in the IR (`call_func` to a utility) could reduce repetition.
 
-### S6: Missing int-vector dot product
+### S6: Missing int-vector dot product [XS]
 
 **Current**: No `vec_dot` signature for `int3 * int3 -> int`. The flat index pattern `z*1024 + y*32 + x` is really `dot(int3(x,y,z), int3(1, 32, 1024))`. With an int dot product, this becomes a single node.
 
@@ -110,7 +184,7 @@ The validator would respect the declared type instead of always inferring `float
 
 Behavioral differences between backends (WGSL/WebGPU, MSL/Metal, C++/CPU, CPU-JIT/JS).
 
-### I1: Float modulo — `%` vs `fmod()`
+### I1: Float modulo — `%` vs `fmod()` [XS]
 
 **Current**: MSL explicitly checks the inferred type and uses `%` for ints, `fmod()` for floats. WGSL uses `%` for everything (which is valid in WGSL but has different semantics from `fmod` for negative values). CPU-JIT uses JS `%`.
 
@@ -118,7 +192,7 @@ Behavioral differences between backends (WGSL/WebGPU, MSL/Metal, C++/CPU, CPU-JI
 
 **Files**: `msl-generator.ts:1230-1237`, `wgsl-generator.ts` (math_mod case)
 
-### I2: Division by zero behavior
+### I2: Division by zero behavior [M]
 
 **Current**: WGSL generator detects literal `/ 0` at codegen time and emits `get_inf()`. MSL and C++ emit plain `/` which is UB for integers and returns `±inf`/`NaN` for floats (platform-dependent). CPU-JIT returns JS `Infinity`/`NaN`.
 
@@ -126,7 +200,7 @@ Behavioral differences between backends (WGSL/WebGPU, MSL/Metal, C++/CPU, CPU-JI
 
 **Files**: `wgsl-generator.ts:1260-1265` (literal check), `msl-generator.ts:1202`
 
-### I3: Vector constructor type coercion
+### I3: Vector constructor type coercion [S]
 
 **Current**: WGSL wraps all vector constructor args in explicit `f32()` casts. MSL does not — it relies on implicit C++ constructor overloading. C++ generator uses explicit `float()` casts.
 
@@ -139,7 +213,7 @@ This hasn't caused test failures yet but is fragile.
 
 **Files**: `wgsl-generator.ts:886-891`, `msl-generator.ts:1132-1134`
 
-### I4: Comparison operators return type
+### I4: Comparison operators return type [M]
 
 **Current**: MSL uses helper functions that return `float` (0.0 or 1.0) for scalar comparisons and `floatN` for vector comparisons. WGSL comparisons return `bool`/`vecN<bool>` natively but the generator converts to float for IR compatibility.
 
@@ -147,13 +221,13 @@ This hasn't caused test failures yet but is fragile.
 
 **Files**: `msl-generator.ts:371-394` (cmp helpers), `wgsl-generator.ts` (comparison handling)
 
-### I5: `mat_inverse` fallback
+### I5: `mat_inverse` fallback [S]
 
 **Current**: If a matrix is singular, `mat_inverse` returns the input matrix unchanged (MSL) vs zeros (CPU-JIT) vs undefined (WGSL, platform-dependent). The conformance test (`12-runtime-edge-cases.test.ts`) checks for 0, suggesting zeros is the intended behavior.
 
 **Proposal**: Document and enforce a consistent fallback (return zero matrix) across all backends.
 
-### I6: Fast-math differences
+### I6: Fast-math differences [S]
 
 **Current**: Metal fast-math is explicitly disabled (`compileOptions.fastMathEnabled = NO`). WGSL relies on browser/driver behavior. C++ uses default compiler settings.
 
@@ -161,7 +235,7 @@ This hasn't caused test failures yet but is fragile.
 
 **Files**: `cpp-harness.mm` (Metal compile options)
 
-### I7: Integer overflow / wrapping
+### I7: Integer overflow / wrapping [M]
 
 **Current**: MSL uses a `safe_cast_int` helper that wraps on overflow: `if (v >= 2147483648.0f) return int(v - 4294967296.0f)`. WGSL relies on native `i32()` truncation. CPU-JIT uses JS `|0` or `Math.trunc`. C++ has UB for signed integer overflow.
 
