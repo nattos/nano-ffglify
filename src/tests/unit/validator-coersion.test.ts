@@ -67,7 +67,7 @@ describe('Validator Coercion Rules', () => {
 
   it('should allow vector broadcasting (Supported)', () => {
     const ir = createIR([
-      { id: 'v3', op: 'array_construct', values: [1, 2, 3] }, // float3
+      { id: 'v3', op: 'float3', x: 1, y: 2, z: 3 }, // float3
       { id: 's', op: 'literal', val: 2.0 }, // float
       // math_mul supports (vec, scalar)
       { id: 'mul', op: 'math_mul', a: 'v3', b: 's' }
