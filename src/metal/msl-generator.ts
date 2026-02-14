@@ -660,10 +660,27 @@ export class MslGenerator {
       }
     }
 
+    // Check if normalized_global_invocation_id is used anywhere
+    let needsThreadsPerGrid = false;
+    for (const f of allFunctions) {
+      for (const node of f.nodes) {
+        if (node.op === 'builtin_get' && node['name'] === 'normalized_global_invocation_id') {
+          needsThreadsPerGrid = true;
+          break;
+        }
+      }
+      if (needsThreadsPerGrid) break;
+    }
+
     const kernelName = options.kernelName || 'main_kernel';
     lines.push(`kernel void ${kernelName}(`);
     lines.push(`    ${bufferParams.join(',\n    ')},`);
-    lines.push('    uint3 gid [[thread_position_in_grid]]) {');
+    if (needsThreadsPerGrid) {
+      lines.push('    uint3 gid [[thread_position_in_grid]],');
+      lines.push('    uint3 tpg [[threads_per_grid]]) {');
+    } else {
+      lines.push('    uint3 gid [[thread_position_in_grid]]) {');
+    }
 
     // Emit input unpacking preamble - reconstruct typed locals from flat float buffer
     if (hasShaderInputs) {
@@ -1507,6 +1524,9 @@ export class MslGenerator {
         const name = node['name'] as string;
         if (name === 'global_invocation_id') {
           return 'int3(gid)';
+        }
+        if (name === 'normalized_global_invocation_id') {
+          return 'float3(gid) / float3(tpg)';
         }
         if (BUILTIN_CPU_ALLOWED.includes(name)) {
           const offset = varMap.get(name);

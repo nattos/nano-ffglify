@@ -659,6 +659,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
 
     // Mock values for interpreter context (as fallback)
     if (name === 'global_invocation_id') return [0, 0, 0] as VectorValue;
+    if (name === 'normalized_global_invocation_id') return [0, 0, 0] as VectorValue;
     if (name === 'local_invocation_id') return [0, 0, 0] as VectorValue;
     if (name === 'workgroup_id') return [0, 0, 0] as VectorValue;
     if (name === 'local_invocation_index') return 0;

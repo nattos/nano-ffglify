@@ -28,6 +28,7 @@ describe('Conformance: Built-in Variables', () => {
         { name: 'workgroup_id', type: 'int3' },
         { name: 'local_invocation_index', type: 'int' },
         { name: 'num_workgroups', type: 'int3' },
+        { name: 'normalized_global_invocation_id', type: 'float3' },
         { name: 'frag_coord', type: 'float4' },
         { name: 'front_facing', type: 'bool' }, // Use 'bool' for local variable type
       ];

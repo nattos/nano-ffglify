@@ -107,6 +107,7 @@ export class InterpretedExecutor {
           for (let y = 0; y < dim[1]; y++) {
             for (let x = 0; x < dim[0]; x++) {
               this.context.builtins.set('global_invocation_id', [x, y, z]);
+              this.context.builtins.set('normalized_global_invocation_id', [x / dim[0], y / dim[1], z / dim[2]]);
               this.context.builtins.set('local_invocation_id', [x, y, z]);
               this.context.builtins.set('workgroup_id', [0, 0, 0]);
               this.context.builtins.set('local_invocation_index', 0);

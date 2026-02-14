@@ -74,6 +74,12 @@ export class WgslGenerator {
       });
     }
 
+    // normalized_global_invocation_id requires gid and num_workgroups to compute
+    if (this.allUsedBuiltins.has('normalized_global_invocation_id')) {
+      this.allUsedBuiltins.add('global_invocation_id');
+      this.allUsedBuiltins.add('num_workgroups');
+    }
+
     const fullIr: IRDocument = {
       version: '1.0',
       meta: { name: 'generated' },
@@ -255,16 +261,18 @@ export class WgslGenerator {
     // 2.5. Inputs Buffer
 
     // Global built-ins
-    const builtins = ['global_invocation_id', 'local_invocation_id', 'workgroup_id', 'local_invocation_index', 'num_workgroups', 'position', 'frag_coord', 'front_facing', 'sample_index', 'vertex_index', 'instance_index'];
+    const builtins = ['global_invocation_id', 'local_invocation_id', 'workgroup_id', 'local_invocation_index', 'num_workgroups', 'normalized_global_invocation_id', 'position', 'frag_coord', 'front_facing', 'sample_index', 'vertex_index', 'instance_index'];
     const builtinTypes: Record<string, string> = {
       'global_invocation_id': 'vec3<u32>', 'local_invocation_id': 'vec3<u32>', 'workgroup_id': 'vec3<u32>',
-      'local_invocation_index': 'u32', 'num_workgroups': 'vec3<u32>', 'position': 'vec4<f32>',
+      'local_invocation_index': 'u32', 'num_workgroups': 'vec3<u32>', 'normalized_global_invocation_id': 'vec3<f32>',
+      'position': 'vec4<f32>',
       'frag_coord': 'vec4<f32>', 'front_facing': 'bool', 'sample_index': 'u32', 'vertex_index': 'u32', 'instance_index': 'u32'
     };
     const builtinVarNames: Record<string, string> = {
       'global_invocation_id': 'GlobalInvocationID', 'local_invocation_id': 'LocalInvocationID',
       'workgroup_id': 'WorkgroupID', 'local_invocation_index': 'LocalInvocationIndex',
-      'num_workgroups': 'NumWorkgroups', 'position': 'Position', 'frag_coord': 'FragCoord',
+      'num_workgroups': 'NumWorkgroups', 'normalized_global_invocation_id': 'NormalizedGlobalInvocationID',
+      'position': 'Position', 'frag_coord': 'FragCoord',
       'front_facing': 'FrontFacing', 'sample_index': 'SampleIndex', 'vertex_index': 'VertexIndex', 'instance_index': 'InstanceIndex'
     };
 
@@ -518,6 +526,10 @@ export class WgslGenerator {
         if (this.allUsedBuiltins.has('workgroup_id')) lines.push(`  WorkgroupID = wid;`);
         if (this.allUsedBuiltins.has('local_invocation_index')) lines.push(`  LocalInvocationIndex = lidx;`);
         if (this.allUsedBuiltins.has('num_workgroups')) lines.push(`  NumWorkgroups = nw;`);
+        if (this.allUsedBuiltins.has('normalized_global_invocation_id')) {
+          const wg = options.workgroupSize || [16, 16, 1];
+          lines.push(`  NormalizedGlobalInvocationID = vec3<f32>(gid) / vec3<f32>(nw * vec3<u32>(${wg[0]}u, ${wg[1]}u, ${wg[2]}u));`);
+        }
 
         this.emitPlaceholders(lines, options, nonBuiltinInputs.length > 0, emittedFunctions);
 
@@ -1177,6 +1189,7 @@ export class WgslGenerator {
       else if (name === 'workgroup_id') expr = 'WorkgroupID';
       else if (name === 'local_invocation_index') expr = 'LocalInvocationIndex';
       else if (name === 'num_workgroups') expr = 'NumWorkgroups';
+      else if (name === 'normalized_global_invocation_id') expr = 'NormalizedGlobalInvocationID';
       else if (name === 'frag_coord') expr = 'FragCoord';
       else if (name === 'front_facing') expr = 'FrontFacing';
       else if (name === 'position') expr = 'Position';

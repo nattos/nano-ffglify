@@ -43,14 +43,12 @@ export const NOISE_SHADER: IRDocument = {
       localVars: [],
       comment: 'Compute kernel: hash-based noise with time animation.',
       nodes: [
-        { id: 'c_coords', op: 'comment', comment: 'Pixel coordinates to normalized UV. global_invocation_id is int3; cast int2→float2 for arithmetic.' },
+        { id: 'c_coords', op: 'comment', comment: 'normalized_global_invocation_id gives float3(gid)/float3(grid_size). Swizzle .xy for UV.' },
         { id: 'in_gid', op: 'builtin_get', name: 'global_invocation_id' },
-        { id: 'tex_dims', op: 'resource_get_size', resource: 'output_tex' },
-        { id: 'gid_f', op: 'static_cast_float2', val: 'in_gid.xy' },
-        { id: 'uv', op: 'math_div', a: 'gid_f', b: 'tex_dims' },
+        { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
 
         { id: 'val_scale', op: 'var_get', var: 'scale', comment: 'Global inputs accessed via var_get.' },
-        { id: 'scaled_uv', op: 'math_mul', a: 'uv', b: 'val_scale' },
+        { id: 'scaled_uv', op: 'math_mul', a: 'nuv.xy', b: 'val_scale' },
 
         { id: 'c_anim', op: 'comment', comment: 'Animate by offsetting UV with builtin time.' },
         { id: 'val_time', op: 'builtin_get', name: 'time' },
@@ -111,11 +109,9 @@ export const EFFECT_SHADER: IRDocument = {
       comment: 'Compute kernel: per-pixel grayscale desaturation.',
       nodes: [
         { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
-        { id: 'size', op: 'resource_get_size', resource: 'output_tex' },
-        { id: 'gid_f', op: 'static_cast_float2', val: 'gid.xy' },
-        { id: 'uv', op: 'math_div', a: 'gid_f', b: 'size' },
+        { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
 
-        { id: 'color', op: 'texture_sample', tex: 'input_visual', coords: 'uv' },
+        { id: 'color', op: 'texture_sample', tex: 'input_visual', coords: 'nuv.xy' },
 
         { id: 'c_gray', op: 'comment', comment: 'Grayscale via perceptual luminance weights (BT.709).' },
         { id: 'lum_coeffs', op: 'float3', x: 0.2126, y: 0.7152, z: 0.0722 },
@@ -174,12 +170,10 @@ export const MIXER_SHADER: IRDocument = {
       comment: 'Compute kernel: per-pixel blend of two textures.',
       nodes: [
         { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
-        { id: 'size', op: 'resource_get_size', resource: 'output_mix' },
-        { id: 'gid_f', op: 'static_cast_float2', val: 'gid.xy' },
-        { id: 'uv', op: 'math_div', a: 'gid_f', b: 'size' },
+        { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
 
-        { id: 'col_a', op: 'texture_sample', tex: 'tex_a', coords: 'uv' },
-        { id: 'col_b', op: 'texture_sample', tex: 'tex_b', coords: 'uv' },
+        { id: 'col_a', op: 'texture_sample', tex: 'tex_a', coords: 'nuv.xy' },
+        { id: 'col_b', op: 'texture_sample', tex: 'tex_b', coords: 'nuv.xy' },
 
         { id: 'val_opacity', op: 'var_get', var: 'opacity' },
         { id: 'mixed', op: 'math_mix', a: 'col_a', b: 'col_b', t: 'val_opacity', comment: 'Linear blend: mix(A, B, opacity)' },
@@ -377,12 +371,11 @@ export const RAYMARCH_SHADER: IRDocument = {
         { id: 'hit', type: 'float', initialValue: 0.0 }
       ],
       nodes: [
-        { id: 'c_setup', op: 'comment', comment: 'Setup: screen coords, UV, aspect ratio. Cast int2→float2 for arithmetic.' },
+        { id: 'c_setup', op: 'comment', comment: 'Setup: screen coords, UV, aspect ratio. normalized_global_invocation_id gives [0,1] UV directly.' },
         { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
         { id: 'size', op: 'resource_get_size', resource: 'output_ray' },
-        { id: 'gid_f', op: 'static_cast_float2', val: 'gid.xy' },
-        { id: 'uv_raw', op: 'math_div', a: 'gid_f', b: 'size' },
-        { id: 'uv_2', op: 'math_mul', a: 'uv_raw', b: 2.0 },
+        { id: 'uv_2', op: 'math_mul', a: 'nuv.xy', b: 2.0 },
         { id: 'uv', op: 'math_sub', a: 'uv_2', b: 1.0 },
         { id: 'aspect', op: 'math_div', a: 'size.x', b: 'size.y' },
 

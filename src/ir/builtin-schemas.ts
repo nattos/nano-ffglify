@@ -593,6 +593,7 @@ export const BUILTIN_TYPES: Record<string, string> = {
   'workgroup_id': 'int3',
   'local_invocation_index': 'int',
   'num_workgroups': 'int3',
+  'normalized_global_invocation_id': 'float3',
   'frag_coord': 'float4',
   'front_facing': 'boolean',
   'sample_index': 'int',
@@ -619,6 +620,7 @@ export const BuiltinNameSchema = z.enum([
   'workgroup_id',
   'local_invocation_index',
   'num_workgroups',
+  'normalized_global_invocation_id',
   'frag_coord',
   'front_facing',
   'sample_index',
@@ -634,7 +636,7 @@ export const BuiltinNameSchema = z.enum([
 
 export interface BuiltinGetArgs { name: string;[key: string]: any; }
 export const BuiltinGetDef = defineOp<BuiltinGetArgs>({
-  doc: "Get a GPU/Shader built-in variable. Compute builtins (global_invocation_id, local_invocation_id, workgroup_id, num_workgroups) are int3, NOT float3. CPU-allowed builtins (time, delta_time, bpm, beat_number, beat_delta) are auto-injected as shader args by cmd_dispatch.",
+  doc: "Get a GPU/Shader built-in variable. Compute builtins (global_invocation_id, local_invocation_id, workgroup_id, num_workgroups) are int3, NOT float3. normalized_global_invocation_id is float3 = float3(gid) / float3(grid_size), useful for UV coordinates. CPU-allowed builtins (time, delta_time, bpm, beat_number, beat_delta) are auto-injected as shader args by cmd_dispatch.",
   args: { name: { type: BuiltinNameSchema, doc: "Built-in name (see BUILTIN_TYPES for return types)", refType: 'builtin', isIdentifier: true } }
 });
 
