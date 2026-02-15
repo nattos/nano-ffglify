@@ -567,16 +567,11 @@ struct EvalContext {
              destinationSlice:0
              destinationLevel:0
             destinationOrigin:MTLOriginMake(0, 0, 0)];
-#if TARGET_OS_OSX
-        // IOSurface-backed textures use managed storage on macOS.
-        // Synchronize to make GPU writes visible to GL via shared memory.
-        [blit synchronizeTexture:resources[i]->externalTexture slice:0 level:0];
-#endif
       }
     }
     [blit endEncoding];
     [cmdBuffer commit];
-    [cmdBuffer waitUntilCompleted];
+    [cmdBuffer waitUntilScheduled];
   }
 
   ResourceState *getResource(size_t idx) {
@@ -942,7 +937,6 @@ struct EvalContext {
     }
     [blit endEncoding];
     [cmdBuffer commit];
-    [cmdBuffer waitUntilCompleted];
   }
 
   // Sync Metal buffers and textures back to CPU
