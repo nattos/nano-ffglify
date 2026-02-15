@@ -274,7 +274,7 @@ export async function packageFFGLPlugin(vfs: IVirtualFileSystem, options: Packag
 
   // FFGL Compile Steps
   const bundleName = name.replace(/\s+/g, '');
-  const bundlePath = `${relBuild}/${bundleName}.bundle`;
+  const bundlePath = `../${bundleName}.bundle`;
   const ffglCmds = generateFFGLPluginCmds({
     name,
     pluginId,

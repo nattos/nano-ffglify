@@ -292,7 +292,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     // 4. Verify
     // The packager derived bundle name: "Simple Noise Generator" -> "SimpleNoiseGenerator.bundle"
     // and puts it in the 'build' folder (see ffgl-packager.ts)
-    const finalBundlePath = path.join(stageDir, 'build/SimpleNoiseGenerator.bundle');
+    const finalBundlePath = path.join(stageDir, '../SimpleNoiseGenerator.bundle');
     expect(fs.existsSync(finalBundlePath)).toBe(true);
 
     // Run it

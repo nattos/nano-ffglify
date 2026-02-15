@@ -207,9 +207,6 @@ public:
     else
       glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * 4, 0);
 
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR)
-
     if (glEnableVertexAttribArrayFunc)
       glEnableVertexAttribArrayFunc(1);
     else
@@ -219,9 +216,6 @@ public:
       glVertexAttribPointerFunc(1, 2, GL_FLOAT, GL_FALSE, 4 * 4, (void *)8);
     else
       glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * 4, (void *)8);
-
-    err = glGetError();
-    if (err != GL_NO_ERROR)
 
     if (glBindVertexArrayFunc)
       glBindVertexArrayFunc(0);
@@ -560,8 +554,9 @@ public:
 
       glBindFramebuffer(GL_READ_FRAMEBUFFER, _interopTexture->getOpenGLFBO());
       glBindFramebuffer(GL_DRAW_FRAMEBUFFER, pGL->HostFBO);
+      // Source Y is flipped: IOSurface has Metal's top-left origin, GL expects bottom-left.
       glBlitFramebuffer(
-          0, 0, targetWidth, targetHeight,
+          0, targetHeight, targetWidth, 0,
           0, 0, targetWidth, targetHeight,
           GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
