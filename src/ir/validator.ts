@@ -57,6 +57,7 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
 export interface FunctionAnalysis {
   inferredTypes: InferredTypes;
   usedBuiltins: Set<string>;
+  usedResourceSizes: Set<string>;
 }
 
 export const inferFunctionTypes = (func: FunctionDef, ir: IRDocument): InferredTypes => {
@@ -75,7 +76,14 @@ export const analyzeFunction = (func: FunctionDef, ir: IRDocument): FunctionAnal
   func.nodes.forEach(node => {
     resolveNodeType(node.id, func, ir, cache, resourceIds, errors, edges, usedBuiltins);
   });
-  return { inferredTypes: cache, usedBuiltins };
+  // Collect resources queried by resource_get_size
+  const usedResourceSizes = new Set<string>();
+  for (const node of func.nodes) {
+    if (node.op === 'resource_get_size' && typeof node['resource'] === 'string') {
+      usedResourceSizes.add(node['resource'] as string);
+    }
+  }
+  return { inferredTypes: cache, usedBuiltins, usedResourceSizes };
 };
 
 export const validateIR = (doc: IRDocument): LogicValidationError[] => {

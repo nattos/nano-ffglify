@@ -469,7 +469,8 @@ struct ResourceState {
   size_t height = 0;
   bool isExternal = false;
   id<MTLTexture> externalTexture = nil;
-  id<MTLBuffer> retainedMetalBuffer = nil; // Persistent GPU buffer across frames
+  id<MTLBuffer> retainedMetalBuffer = nil;   // Persistent GPU buffer across frames
+  id<MTLTexture> retainedStagingTexture = nil; // Cached staging texture for external textures
 
   // Store a vector at the given index (vec stored as contiguous floats)
   template <size_t N>
@@ -616,6 +617,8 @@ struct EvalContext {
       } else {
         res->data.resize(totalFloats, 0.0f);
       }
+      res->retainedMetalBuffer = nil; // Invalidate GPU buffer — size changed
+      metalBuffers.clear();           // Force syncToMetal() on next dispatch
       actionLog.push_back({"resize", "", newSize, 1});
     }
   }
@@ -637,6 +640,8 @@ struct EvalContext {
       } else {
         res->data.resize(total, 0.0f);
       }
+      res->retainedMetalBuffer = nil; // Invalidate GPU buffer — size changed
+      metalBuffers.clear();           // Force syncToMetal() on next dispatch
       actionLog.push_back({"resize", "", w, h});
     }
   }
@@ -660,6 +665,8 @@ struct EvalContext {
           res->data[i * elemSize + j] = pattern[j];
         }
       }
+      res->retainedMetalBuffer = nil; // Invalidate GPU buffer — size changed
+      metalBuffers.clear();           // Force syncToMetal() on next dispatch
       actionLog.push_back({"resize", "", w, h});
     }
   }
@@ -815,17 +822,26 @@ struct EvalContext {
           // then blit to the external texture after GPU commands complete.
           int w = res->externalTexture.width;
           int h = res->externalTexture.height;
-          MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
-          desc.textureType = MTLTextureType2D;
-          desc.pixelFormat = res->externalTexture.pixelFormat;
-          desc.width = w;
-          desc.height = h;
-          desc.usage = MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead |
-                       MTLTextureUsageRenderTarget;
-          desc.storageMode = MTLStorageModeShared;
-          id<MTLTexture> staging = [device newTextureWithDescriptor:desc];
-          metalTextures[i] = staging;        // Bind staging for shader work
-          stagingTextures[i] = staging;       // Track for blit-to-external
+          // Reuse cached staging texture if dimensions match
+          if (res->retainedStagingTexture != nil &&
+              (int)res->retainedStagingTexture.width == w &&
+              (int)res->retainedStagingTexture.height == h) {
+            metalTextures[i] = res->retainedStagingTexture;
+            stagingTextures[i] = res->retainedStagingTexture;
+          } else {
+            MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
+            desc.textureType = MTLTextureType2D;
+            desc.pixelFormat = res->externalTexture.pixelFormat;
+            desc.width = w;
+            desc.height = h;
+            desc.usage = MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead |
+                         MTLTextureUsageRenderTarget;
+            desc.storageMode = MTLStorageModeShared;
+            id<MTLTexture> staging = [device newTextureWithDescriptor:desc];
+            metalTextures[i] = staging;
+            stagingTextures[i] = staging;
+            res->retainedStagingTexture = staging;
+          }
         } else {
           // Create a Metal texture for texture resources
           MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
@@ -882,6 +898,13 @@ struct EvalContext {
                         length:sizeof(float)
                        options:MTLResourceStorageModeShared]);
       } else {
+        // Safety check: invalidate retained buffer if size doesn't match
+        if (res->retainedMetalBuffer != nil) {
+          size_t expectedSize = res->data.size() * sizeof(float);
+          if (res->retainedMetalBuffer.length != expectedSize) {
+            res->retainedMetalBuffer = nil;
+          }
+        }
         if (res->retainedMetalBuffer != nil) {
           // Reuse persistent GPU buffer (data stays on GPU across frames)
           metalBuffers.push_back(res->retainedMetalBuffer);

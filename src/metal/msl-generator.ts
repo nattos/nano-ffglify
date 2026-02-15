@@ -39,6 +39,8 @@ export interface MslCompilationResult {
 
 export class MslGenerator {
   private ir?: IRDocument;
+  // Maps resource ID → MSL variable name for dynamically-passed buffer sizes
+  private currentBufferSizeVars = new Map<string, string>();
 
   compile(ir: IRDocument, entryPointId: string, options: MslOptions = {}): MslCompilationResult {
     this.ir = ir;
@@ -340,6 +342,40 @@ export class MslGenerator {
     return result;
   }
 
+  /**
+   * Collect buffer resources queried by resource_get_size across all shader functions.
+   * Returns sorted list matching C++ generator's resource ordering.
+   */
+  private collectBufferSizeResources(allFunctions: FunctionDef[]): string[] {
+    const merged = new Set<string>();
+    for (const func of allFunctions) {
+      for (const node of func.nodes) {
+        if (node.op === 'resource_get_size' && typeof node['resource'] === 'string') {
+          const resId = node['resource'] as string;
+          // Only include buffer resources (textures use runtime Metal calls)
+          const resDef = this.ir?.resources.find(r => r.id === resId);
+          if (resDef && resDef.type === 'buffer') {
+            merged.add(resId);
+          }
+        }
+      }
+    }
+    // Sort by resource order (outputs first, then texture inputs, then non-outputs)
+    const allRes = this.getAllResources();
+    return [...merged].sort((a, b) =>
+      allRes.findIndex(r => r.id === a) - allRes.findIndex(r => r.id === b)
+    );
+  }
+
+  private getAllResources(): { id: string, type: string }[] {
+    if (!this.ir) return [];
+    return [
+      ...this.ir.resources.filter(r => r.isOutput),
+      ...this.ir.inputs.filter(i => i.type === 'texture2d'),
+      ...this.ir.resources.filter(r => !r.isOutput)
+    ];
+  }
+
   private emitStructs(structs: StructDef[], lines: string[]) {
     if (structs.length === 0) return;
 
@@ -568,8 +604,11 @@ export class MslGenerator {
       if (needsOutputSize) break;
     }
 
-    // Add global inputs buffer at binding 0 if there are global inputs or output_size
-    if (hasGlobalInputs || needsOutputSize) {
+    // Pre-collect buffer size resources to determine if we need inputs buffer
+    const stageBufferSizeResources = this.collectBufferSizeResources(allFunctions);
+
+    // Add global inputs buffer at binding 0 if there are global inputs, output_size, or buffer sizes
+    if (hasGlobalInputs || needsOutputSize || stageBufferSizeResources.length > 0) {
       params.push('constant float* inputs [[buffer(0)]]');
     }
 
@@ -622,6 +661,17 @@ export class MslGenerator {
     // Unpack output_size (int3) from 3 floats at end of flat buffer
     if (needsOutputSize) {
       lines.push(`    int3 v_output_size = int3(int(inputs[${inputOffset}]), int(inputs[${inputOffset + 1}]), int(inputs[${inputOffset + 2}]));`);
+      inputOffset += 3;
+    }
+
+    // Unpack dynamic buffer sizes (float2 per buffer: width, height)
+    const bufferSizeResources = this.collectBufferSizeResources(allFunctions);
+    this.currentBufferSizeVars.clear();
+    for (const resId of bufferSizeResources) {
+      const varName = `v_res_size_${this.sanitizeId(resId)}`;
+      lines.push(`    float2 ${varName} = float2(inputs[${inputOffset}], inputs[${inputOffset + 1}]);`);
+      this.currentBufferSizeVars.set(resId, varName);
+      inputOffset += 2;
     }
 
     const varMap = new Map<string, number>();
@@ -723,13 +773,12 @@ export class MslGenerator {
       if (needsOutputSize) break;
     }
 
+    // Collect buffer resources queried by resource_get_size
+    const bufferSizeResources = this.collectBufferSizeResources(allFunctions);
+
     // Emit input unpacking preamble - reconstruct typed locals from flat float buffer
-    if (hasShaderInputs || needsOutputSize) {
-      if (!hasShaderInputs) {
-        lines.push('    device float* inputs = b_globals;');
-      } else {
-        lines.push('    device float* inputs = b_globals;');
-      }
+    if (hasShaderInputs || needsOutputSize || bufferSizeResources.length > 0) {
+      lines.push('    device float* inputs = b_globals;');
       let offset = 0;
       if (hasShaderInputs) {
         for (const input of inputs) {
@@ -753,7 +802,19 @@ export class MslGenerator {
       // Unpack output_size (int3) from 3 floats at end of flat buffer
       if (needsOutputSize) {
         lines.push(`    int3 v_output_size = int3(int(inputs[${offset}]), int(inputs[${offset + 1}]), int(inputs[${offset + 2}]));`);
+        offset += 3;
       }
+
+      // Unpack dynamic buffer sizes (float2 per buffer: width, height)
+      this.currentBufferSizeVars.clear();
+      for (const resId of bufferSizeResources) {
+        const varName = `v_res_size_${this.sanitizeId(resId)}`;
+        lines.push(`    float2 ${varName} = float2(inputs[${offset}], inputs[${offset + 1}]);`);
+        this.currentBufferSizeVars.set(resId, varName);
+        offset += 2;
+      }
+    } else {
+      this.currentBufferSizeVars.clear();
     }
 
     // Remove duplicate edges decl if present
@@ -1420,7 +1481,11 @@ export class MslGenerator {
           const texName = `${this.sanitizeId(resId)}_tex`;
           return `float2(${texName}.get_width(), ${texName}.get_height())`;
         }
-        // For buffers or fixed-size resources, resolve from IR metadata
+        // Use dynamically-passed buffer size if available (from CPU via flat inputs)
+        if (this.currentBufferSizeVars.has(resId)) {
+          return this.currentBufferSizeVars.get(resId)!;
+        }
+        // Fallback: resolve from IR metadata (static)
         const size = resDef && 'size' in resDef && typeof resDef.size === 'object' && 'value' in resDef.size
           ? resDef.size.value : 1;
         if (Array.isArray(size)) {

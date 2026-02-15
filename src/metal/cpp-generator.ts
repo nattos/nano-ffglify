@@ -314,6 +314,42 @@ export class CppGenerator {
   }
 
   /**
+   * Collect buffer resources queried by resource_get_size across one or more shader functions.
+   * Returns sorted list matching resource ordering for deterministic flat buffer layout.
+   */
+  private collectBufferSizeResources(...funcIds: string[]): string[] {
+    const allRes = this.getAllResources();
+    const merged = new Set<string>();
+    for (const funcId of funcIds) {
+      const analysis = this.functionAnalysis.get(funcId);
+      if (analysis?.usedResourceSizes) {
+        // Include sizes from the target shader and all functions it calls
+        for (const resId of analysis.usedResourceSizes) {
+          merged.add(resId);
+        }
+      }
+      // Also scan called helper functions transitively
+      const funcDef = this.ir?.functions.find(f => f.id === funcId);
+      if (funcDef) {
+        for (const node of funcDef.nodes) {
+          if (node.op === 'call_func' && typeof node['func'] === 'string') {
+            const helperAnalysis = this.functionAnalysis.get(node['func'] as string);
+            if (helperAnalysis?.usedResourceSizes) {
+              for (const resId of helperAnalysis.usedResourceSizes) {
+                merged.add(resId);
+              }
+            }
+          }
+        }
+      }
+    }
+    // Filter to only buffer resources and sort by resource order
+    return [...merged]
+      .filter(id => this.ir?.resources.find(r => r.id === id && r.type === 'buffer'))
+      .sort((a, b) => allRes.findIndex(r => r.id === a) - allRes.findIndex(r => r.id === b));
+  }
+
+  /**
    * Build function parameter list string
    */
   private buildFuncParams(func: FunctionDef): string {
@@ -767,10 +803,36 @@ export class CppGenerator {
           lines.push(`${indent}    _shader_args.push_back(static_cast<float>(${dimZ}));`);
         }
 
+        // Inject dynamic buffer sizes for resource_get_size in shader
+        const bufferSizeResources = this.collectBufferSizeResources(targetFunc);
+        if (bufferSizeResources.length > 0) {
+          const dispAllRes = this.getAllResources();
+          for (const resId of bufferSizeResources) {
+            const resIdx = dispAllRes.findIndex(r => r.id === resId);
+            lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->width));`);
+            lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->height));`);
+          }
+        }
+
         lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
         lines.push(`${indent}}`);
       } else {
-        lines.push(`${indent}ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ});`);
+        // Check if shader still needs buffer sizes even without other args
+        const bufferSizeResourcesNoArgs = this.collectBufferSizeResources(targetFunc);
+        if (bufferSizeResourcesNoArgs.length > 0) {
+          const dispAllRes2 = this.getAllResources();
+          lines.push(`${indent}{`);
+          lines.push(`${indent}    std::vector<float> _shader_args;`);
+          for (const resId of bufferSizeResourcesNoArgs) {
+            const resIdx = dispAllRes2.findIndex(r => r.id === resId);
+            lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->width));`);
+            lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->height));`);
+          }
+          lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
+          lines.push(`${indent}}`);
+        } else {
+          lines.push(`${indent}ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ});`);
+        }
       }
     } else if (node.op === 'cmd_draw') {
       const target = node['target'];
@@ -786,9 +848,12 @@ export class CppGenerator {
       const fragmentAnalysis = this.functionAnalysis.get(fragment);
       const drawNeedsOutputSize = (vertexAnalysis?.usedBuiltins.has('output_size') || fragmentAnalysis?.usedBuiltins.has('output_size')) ?? false;
 
+      // Merge buffer size resources from both vertex and fragment shaders
+      const drawBufferSizeResources = this.collectBufferSizeResources(vertex, fragment);
+
       // Build args for global inputs (accessible via var_get in vertex/fragment shaders)
       const hasGlobalInputs = this.ir?.inputs && this.ir.inputs.filter(i => i.type !== 'texture2d').length > 0;
-      if (hasGlobalInputs || drawNeedsOutputSize) {
+      if (hasGlobalInputs || drawNeedsOutputSize || drawBufferSizeResources.length > 0) {
         lines.push(`${indent}{`);
         lines.push(`${indent}    std::vector<float> _shader_args;`);
         if (hasGlobalInputs) {
@@ -805,6 +870,13 @@ export class CppGenerator {
           lines.push(`${indent}    _shader_args.push_back(static_cast<float>(_target_res->width));`);
           lines.push(`${indent}    _shader_args.push_back(static_cast<float>(_target_res->height));`);
           lines.push(`${indent}    _shader_args.push_back(1.0f);`);
+        }
+
+        // Inject dynamic buffer sizes for resource_get_size in vertex/fragment shaders
+        for (const resId of drawBufferSizeResources) {
+          const resIdx = allRes.findIndex(r => r.id === resId);
+          lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->width));`);
+          lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->height));`);
         }
 
         lines.push(`${indent}    ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}), _shader_args);`);

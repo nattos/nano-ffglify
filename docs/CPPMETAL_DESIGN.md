@@ -228,18 +228,16 @@ xcrun -sdk macosx metallib shaders.air -o default.metallib
 - **Location**: `collectFunctions` in `msl-generator.ts`
 
 ### 2. Dynamic Resource Sizing
-- **Status**: Static only
-- **Impact**: `resource_get_size` only works for `size.mode: 'fixed'` with `size.value`. Dynamic/expression-based sizes not supported.
-- **TODO**: Pass resource sizes as kernel parameters and query at runtime
+- **Status**: Fixed
+- **Fix**: Buffer sizes are now passed dynamically through the flat inputs buffer (2 floats per buffer: width, height). C++ generator emits `ctx.resources[idx]->width/height` at dispatch time; MSL generator unpacks them and uses them in `resource_get_size` instead of static IR metadata. Textures still use runtime Metal calls (`get_width()`/`get_height()`).
 
 ### 3. Retained Buffer Resize
-- **Status**: Not handled
-- **Impact**: `retainedMetalBuffer` is created once and never resized. If `cmd_resize_resource` changes a buffer's size, the retained buffer becomes stale. Masked by particle systems that resize only at init.
-- **Fix**: Detect `res->data.size() != retainedMetalBuffer.length / sizeof(float)` in `syncToMetal()` and reallocate.
+- **Status**: Fixed
+- **Fix**: `resizeResource()`, `resizeResource2D()`, and `resizeResource2DWithClear()` now invalidate `retainedMetalBuffer` (set to nil) and clear `metalBuffers` to force `syncToMetal()` re-creation on next dispatch. Safety check in `syncToMetal()` also validates buffer size matches before reuse.
 
 ### 4. Staging Texture Allocation
-- **Status**: Per-frame allocation
-- **Impact**: `syncToMetal()` creates new staging textures every frame for IOSurface-backed external textures. Should cache and reuse when dimensions/format haven't changed.
+- **Status**: Fixed
+- **Fix**: Added `retainedStagingTexture` to `ResourceState`. `syncToMetal()` reuses cached staging textures when external texture dimensions match, only allocating a new one when dimensions change.
 
 ### 5. `vec_get_element` on Matrices in Helper Functions
 - **Status**: Pre-existing limitation
