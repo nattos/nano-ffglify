@@ -929,6 +929,17 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
     return;
   }
 
+  // Validate workgroupSize
+  if (func.workgroupSize !== undefined) {
+    if (!Array.isArray(func.workgroupSize) || func.workgroupSize.length !== 3 ||
+        !func.workgroupSize.every(v => typeof v === 'number' && Number.isInteger(v) && v > 0)) {
+      errors.push({ functionId: func.id, message: `workgroupSize must be an array of 3 positive integers`, severity: 'error' });
+    }
+    if (func.type !== 'shader') {
+      errors.push({ functionId: func.id, message: `workgroupSize is only meaningful for shader functions`, severity: 'warning' });
+    }
+  }
+
   // Validate Signatures
   func.inputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' input '${param.id}'`, func.id));
   func.outputs.forEach(param => validateDataType(param.type, doc, errors, `Function '${func.id}' output '${param.id}'`, func.id));

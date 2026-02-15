@@ -41,11 +41,11 @@ export class WebGpuHost implements RuntimeGlobals {
     this.logHandler = init.logHandler;
   }
 
-  async dispatch(targetId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue>): Promise<void> {
+  async dispatch(targetId: string, threadCounts: [number, number, number], args: Record<string, RuntimeValue>): Promise<void> {
     // Merge global inputs with explicitly provided args.
     // Explicit args override global inputs of the same name.
     const mergedArgs = { ...Object.fromEntries(this.inputs.entries()), ...args };
-    await this.executor.executeShader(targetId, workgroups, mergedArgs, this.resources);
+    await this.executor.executeShader(targetId, threadCounts, mergedArgs, this.resources);
   }
 
   async draw(targetId: string, vertexId: string, fragmentId: string, vertexCount: number, pipeline: RenderPipelineDef): Promise<void> {

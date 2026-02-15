@@ -849,7 +849,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
     cpuOnly: true,
     args: {
       func: { type: z.string(), doc: "Shader function ID", requiredRef: true, refType: 'func', isIdentifier: true },
-      dispatch: { type: z.any(), doc: "Dispatch dimensions (int3 workgroup count, or scalar for 1D)", optional: true, refable: true },
+      dispatch: { type: z.any(), doc: "Dispatch dimensions as thread counts (int3, or scalar for 1D). The runtime subdivides into workgroups internally.", optional: true, refable: true },
       args: { type: z.any(), doc: "Shader arguments — keys must match function input IDs", optional: true }
     }
   }),

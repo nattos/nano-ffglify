@@ -357,10 +357,14 @@ export class WgslGenerator {
         }
       });
     }
-    // Extract metadata from entry point function
+    // Extract workgroup size from entry point function
     const entryFunc = ir.functions.find(f => f.id === entryPointId);
-    if (entryFunc && entryFunc.metadata && entryFunc.metadata['workgroup_size']) {
-      options.workgroupSize = entryFunc.metadata['workgroup_size'] as [number, number, number];
+    if (entryFunc) {
+      if (entryFunc.workgroupSize) {
+        options.workgroupSize = entryFunc.workgroupSize;
+      } else if (entryFunc.metadata && entryFunc.metadata['workgroup_size']) {
+        options.workgroupSize = entryFunc.metadata['workgroup_size'] as [number, number, number];
+      }
     }
 
     return this.compileFunctions(ir.functions, entryPointId, options, ir);

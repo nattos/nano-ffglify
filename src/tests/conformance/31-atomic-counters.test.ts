@@ -303,14 +303,11 @@ describe('Conformance: Atomic Counters', () => {
     });
 
     // ----------------------------------------------------------------
-    // GPU atomic_add (1 workgroup of threads each add 1)
+    // GPU atomic_add (64 threads each add 1)
     // Uses a two-pass approach: first shader atomically adds, second shader reads result
-    // Note: CppMetal uses dispatchThreads (dispatch = total thread count), not
-    // dispatchWorkgroups, so dispatch [1,1,1] = 1 thread. This test only runs on
-    // backends with workgroup dispatch semantics (BrowserCpuBackend).
+    // dispatch = thread counts (all backends agree on this semantic)
     // ----------------------------------------------------------------
     describe('GPU Atomic Add', () => {
-      const gpuAtomicBackends = backends.filter(b => b.name !== 'CppMetal');
       const ir: IRDocument = {
         version: '1.0.0',
         meta: { name: 'GPU Atomic Add' },
@@ -341,8 +338,8 @@ describe('Conformance: Atomic Counters', () => {
             outputs: [],
             localVars: [],
             nodes: [
-              // Dispatch 1 workgroup (64 threads), each adds 1
-              { id: 'd', op: 'cmd_dispatch', func: 'shader_add', dispatch: [1, 1, 1] },
+              // Dispatch 64 threads, each adds 1
+              { id: 'd', op: 'cmd_dispatch', func: 'shader_add', dispatch: [64, 1, 1] },
               // Dispatch 1 thread to read counter into result buffer
               { id: 'd2', op: 'cmd_dispatch', func: 'shader_read', dispatch: [1, 1, 1] },
             ]
@@ -365,21 +362,18 @@ describe('Conformance: Atomic Counters', () => {
             localVars: [],
             nodes: [
               { id: 'l', op: 'atomic_load', counter: 'cnt', index: 0 },
-              { id: 'r', op: 'buffer_store', buffer: 'b_res', index: 0, value: 'l' },
+              { id: 'lf', op: 'static_cast_float', val: 'l' },
+              { id: 'r', op: 'buffer_store', buffer: 'b_res', index: 0, value: 'lf' },
             ]
           }
         ]
       };
 
-      if (gpuAtomicBackends.length === 0) {
-        it.skip('Skipping GPU Atomic Add (CppMetal dispatch model mismatch)', () => { });
-      } else {
-        runFullGraphTest('1 workgroup of threads each add 1', ir, (ctx) => {
-          const res = ctx.getResource('b_res');
-          // Default workgroup size is 64, so 1 workgroup = 64 threads, each adding 1
-          expect(res.data?.[0]).toBe(64);
-        }, gpuAtomicBackends);
-      }
+      runFullGraphTest('64 threads each add 1', ir, (ctx) => {
+        const res = ctx.getResource('b_res');
+        // 64 threads, each adding 1 = 64
+        expect(res.data?.[0]).toBe(64);
+      }, backends);
     });
 
     // ----------------------------------------------------------------

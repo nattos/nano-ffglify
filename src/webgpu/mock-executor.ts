@@ -37,8 +37,8 @@ export class MockWebGpuHost {
     this.executor = new MockGpuExecutor();
   }
 
-  async dispatch(targetId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue>): Promise<void> {
-    await this.executor.executeShader(targetId, workgroups, args, this.resources);
+  async dispatch(targetId: string, threadCounts: [number, number, number], args: Record<string, RuntimeValue>): Promise<void> {
+    await this.executor.executeShader(targetId, threadCounts, args, this.resources);
   }
 
   async draw(targetId: string, vertexId: string, fragmentId: string, vertexCount: number, pipeline: RenderPipelineDef): Promise<void> {

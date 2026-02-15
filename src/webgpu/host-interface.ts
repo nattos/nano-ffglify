@@ -144,8 +144,9 @@ export interface RuntimeGlobals {
 
   /**
    * Dispatches a GPU compute shader.
+   * @param threadCounts Total number of threads to execute per dimension. The runtime subdivides into workgroups internally.
    */
-  dispatch(targetId: string, workgroups: [number, number, number], args: Record<string, RuntimeValue>): Promise<void>;
+  dispatch(targetId: string, threadCounts: [number, number, number], args: Record<string, RuntimeValue>): Promise<void>;
 
   /**
    * Executes a GPU render pass.

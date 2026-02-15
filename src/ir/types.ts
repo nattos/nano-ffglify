@@ -238,6 +238,12 @@ export interface FunctionDef {
 
   metadata?: Record<string, any>;
 
+  /**
+   * Workgroup size for compute shaders. Only meaningful for 'shader' type functions.
+   * Defaults to [16, 16, 1] if not specified.
+   */
+  workgroupSize?: [number, number, number];
+
   nodes: Node[];
 }
 
