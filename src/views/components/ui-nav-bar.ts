@@ -33,6 +33,7 @@ export class UiNavBar extends MobxLitElement {
         display: flex;
         flex-direction: column;
         width: 48px;
+        box-sizing: border-box;
         background: #161616;
         border-right: 1px solid var(--app-border);
         flex-shrink: 0;
@@ -91,7 +92,6 @@ export class UiNavBar extends MobxLitElement {
   render() {
     const settings = appState.local.settings;
     const visibleTabs = TABS.filter(t => !t.devOnly || settings.devMode);
-    const isOpen = !settings.leftPanelCollapsed;
 
     // Split: settings goes to bottom
     const topTabs = visibleTabs.filter(t => t.id !== 'settings');
@@ -101,7 +101,7 @@ export class UiNavBar extends MobxLitElement {
       <div class="tabs">
         ${topTabs.map(tab => html`
           <div
-            class="tab ${isOpen && settings.activeTab === tab.id ? 'active' : ''}"
+            class="tab ${settings.activeTab === tab.id ? 'active' : ''}"
             title=${tab.label}
             @click=${() => appController.toggleLeftPanel(tab.id)}
           >
@@ -111,7 +111,7 @@ export class UiNavBar extends MobxLitElement {
         <div class="spacer"></div>
         ${bottomTabs.map(tab => html`
           <div
-            class="tab ${isOpen && settings.activeTab === tab.id ? 'active' : ''}"
+            class="tab ${settings.activeTab === tab.id ? 'active' : ''}"
             title=${tab.label}
             @click=${() => appController.toggleLeftPanel(tab.id)}
           >

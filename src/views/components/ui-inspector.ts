@@ -12,24 +12,11 @@ export class UiInspector extends MobxLitElement {
     :host {
       display: flex;
       flex-direction: column;
-      background: #181818;
-      border-left: 1px solid var(--app-border, #333);
-      width: 300px;
       height: 100%;
       overflow-y: auto;
       color: #ccc;
       font-family: var(--font-sans, sans-serif);
       font-size: 0.85rem;
-    }
-
-    .header {
-      padding: 1rem;
-      border-bottom: 1px solid var(--app-border, #333);
-      font-weight: bold;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #888;
-      font-size: 0.75rem;
     }
 
     .input-list {
@@ -195,12 +182,11 @@ export class UiInspector extends MobxLitElement {
   `;
 
   render() {
-    if (!this.runtime) return html`<div class="header">No Runtime</div>`;
+    if (!this.runtime) return html`<div style="padding: 0.5rem; color: var(--app-text-muted, #888); font-size: 0.8rem;">No runtime active</div>`;
 
     const entries = Array.from(this.runtime.inputEntries.values());
 
     return html`
-      <div class="header">Inspector</div>
       <div class="input-list">
         ${entries.map(entry => this.renderInput(entry))}
       </div>

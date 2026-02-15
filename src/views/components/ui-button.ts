@@ -28,8 +28,10 @@ export class UiButton extends LitElement {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.875rem;
-      font-weight: 500;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
       transition: all 0.15s ease-in-out;
       line-height: 1;
       height: 100%;

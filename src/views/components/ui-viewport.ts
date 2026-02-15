@@ -25,7 +25,6 @@ export class UiViewport extends LitElement {
     :host {
       display: flex;
       flex-direction: column;
-      background: #111;
       overflow: hidden;
       position: relative;
     }
@@ -54,14 +53,11 @@ export class UiViewport extends LitElement {
     }
     .stats {
       position: absolute;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.6);
-      color: #fff;
-      padding: 4px 8px;
-      border-radius: 4px;
+      left: 0;
+      padding: 4px 0;
       font-family: monospace;
       font-size: 10px;
+      color: rgba(255, 255, 255, 0.25);
       pointer-events: none;
       z-index: 10;
       white-space: nowrap;
@@ -127,8 +123,8 @@ export class UiViewport extends LitElement {
     const contentBottomFromCenter = this.lastScaleY; // in NDC (0..1 range from center)
     // Convert to pixels from top of host
     const contentBottomPx = hostRect.height * (1 + contentBottomFromCenter) / 2;
-    // Position stats 4px below content bottom
-    const desiredTop = contentBottomPx + 4;
+    // Position stats 8px below content bottom
+    const desiredTop = contentBottomPx + 8;
     // But clamp so it doesn't exceed the host (leave 20px for the label itself)
     const maxTop = hostRect.height - 20;
     const clampedTop = Math.min(desiredTop, maxTop);
@@ -253,7 +249,7 @@ export class UiViewport extends LitElement {
     const passEncoder = commandEncoder.beginRenderPass({
       colorAttachments: [{
         view: this.context.getCurrentTexture().createView(),
-        clearValue: { r: 0.1, g: 0.1, b: 0.1, a: 1 },
+        clearValue: { r: 0.067, g: 0.067, b: 0.067, a: 1 },
         loadOp: 'clear',
         storeOp: 'store',
       }]

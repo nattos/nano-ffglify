@@ -19,7 +19,7 @@ export class UiSettingsPanel extends MobxLitElement {
       :host {
         display: flex;
         flex-direction: column;
-        padding: 1rem;
+        padding: 0.5rem;
         overflow-y: auto;
         gap: 1.5rem;
         color: var(--app-text-main);
@@ -48,6 +48,14 @@ export class UiSettingsPanel extends MobxLitElement {
         font-size: 0.75rem;
         color: var(--app-text-muted);
         margin-top: 0.25rem;
+      }
+
+      a {
+        color: var(--color-emerald-500);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
       }
 
       .toggle {
@@ -171,7 +179,7 @@ export class UiSettingsPanel extends MobxLitElement {
 
         <div>
           <div class="setting-label">API Key</div>
-          <div class="setting-description">Google Generative AI API key</div>
+          <div class="setting-description"><a href="https://ai.google.dev/gemini-api/docs/api-key" target="_blank">Google Generative AI API key</a></div>
           <div class="api-key-row" style="margin-top: 0.5rem;">
             <input
               .type=${this.showKey ? 'text' : 'password'}

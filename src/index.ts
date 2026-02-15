@@ -31,7 +31,7 @@ export class App extends MobxLitElement {
   @state() private isGlobalDragging = false;
   @state() private showApiKeyDialog = false;
 
-  // Live drag state (not persisted until mouseup)
+  // Live drag state (not persisted until pointerup)
   @state() private dragLeftWidth: number | null = null;
   @state() private dragChatWidth: number | null = null;
   private dragStartX = 0;
@@ -60,12 +60,17 @@ export class App extends MobxLitElement {
         overflow: hidden;
       }
 
+      ui-left-panel {
+        overflow: hidden;
+      }
+
       .viewport-wrapper {
         min-width: 0;
         min-height: 0;
-        padding: 8px;
+        padding: 24px;
         display: flex;
         overflow: hidden;
+        background: #111;
       }
 
       ui-viewport {
@@ -86,12 +91,12 @@ export class App extends MobxLitElement {
       }
 
       .resize-handle:hover,
-      .resize-handle.active {
+      :host(.dragging) .resize-handle.active {
         background: var(--color-emerald-500);
         opacity: 0.4;
       }
 
-      .resize-handle.active {
+      :host(.dragging) .resize-handle.active {
         opacity: 0.6;
       }
 
@@ -145,6 +150,8 @@ export class App extends MobxLitElement {
   }
 
   // --- Drag resize ---
+  // Uses window-level listeners so pointer release outside the window is handled correctly
+  // and Lit re-renders during drag don't break capture.
 
   private handleResizeStart(e: PointerEvent, target: 'left' | 'chat') {
     e.preventDefault();
@@ -152,38 +159,44 @@ export class App extends MobxLitElement {
     this.dragStartX = e.clientX;
 
     if (target === 'left') {
-      this.dragStartSize = this.leftCollapsed ? 0 : this.leftWidth;
+      this.dragStartSize = this.leftCollapsed ? 0 : (appState.local.settings.leftPanelWidth ?? LEFT_PANEL_DEFAULT);
     } else {
-      this.dragStartSize = this.chatWidth;
+      this.dragStartSize = appState.local.settings.chatPanelWidth ?? CHAT_PANEL_DEFAULT;
     }
 
+    // Mark the handle visually
     const handle = e.currentTarget as HTMLElement;
-    handle.setPointerCapture(e.pointerId);
     handle.classList.add('active');
+    this.classList.add('dragging');
+
+    window.addEventListener('pointermove', this.onWindowPointerMove);
+    window.addEventListener('pointerup', this.onWindowPointerUp);
   }
 
-  private handleResizeMove = (e: PointerEvent) => {
+  private onWindowPointerMove = (e: PointerEvent) => {
     if (!this.dragTarget) return;
     const delta = e.clientX - this.dragStartX;
 
     if (this.dragTarget === 'left') {
-      const newWidth = Math.max(0, this.dragStartSize + delta);
-      this.dragLeftWidth = newWidth;
+      this.dragLeftWidth = Math.max(0, this.dragStartSize + delta);
     } else {
-      // Chat: dragging left makes it wider
-      const newWidth = Math.max(CHAT_PANEL_MIN, this.dragStartSize - delta);
-      this.dragChatWidth = newWidth;
+      this.dragChatWidth = Math.max(CHAT_PANEL_MIN, this.dragStartSize - delta);
     }
   };
 
-  private handleResizeEnd = (e: PointerEvent) => {
+  private onWindowPointerUp = (_e: PointerEvent) => {
+    window.removeEventListener('pointermove', this.onWindowPointerMove);
+    window.removeEventListener('pointerup', this.onWindowPointerUp);
+
+    // Remove visual class from active handle
+    this.classList.remove('dragging');
+    const activeHandle = this.shadowRoot?.querySelector('.resize-handle.active');
+    if (activeHandle) activeHandle.classList.remove('active');
+
     if (!this.dragTarget) return;
-    const handle = e.currentTarget as HTMLElement;
-    handle.classList.remove('active');
-    handle.releasePointerCapture(e.pointerId);
 
     if (this.dragTarget === 'left') {
-      const w = this.dragLeftWidth ?? this.leftWidth;
+      const w = this.dragLeftWidth ?? 0;
       if (w < LEFT_PANEL_COLLAPSE_THRESHOLD) {
         appController.setLeftPanelCollapsed(true);
       } else {
@@ -231,6 +244,8 @@ export class App extends MobxLitElement {
     window.removeEventListener('dragover', this.handleGlobalDragOver);
     window.removeEventListener('dragleave', this.handleGlobalDragLeave);
     window.removeEventListener('drop', this.handleGlobalDrop);
+    window.removeEventListener('pointermove', this.onWindowPointerMove);
+    window.removeEventListener('pointerup', this.onWindowPointerUp);
   }
 
   private async runDemoScript() {
@@ -274,15 +289,25 @@ export class App extends MobxLitElement {
   }
 
   render() {
-    const collapsed = this.leftCollapsed;
+    const collapsed = this.leftCollapsed && this.dragTarget !== 'left';
+    const isDraggingLeft = this.dragTarget === 'left';
 
-    // During drag, use live width; otherwise use persisted
-    const effectiveLeftWidth = collapsed
-      ? (this.dragTarget === 'left' ? Math.max(0, this.dragLeftWidth ?? 0) : 0)
-      : (this.dragLeftWidth ?? this.leftWidth);
-    const effectiveChatWidth = this.dragChatWidth ?? this.chatWidth;
+    // Compute effective widths
+    let effectiveLeftWidth: number;
+    if (isDraggingLeft) {
+      effectiveLeftWidth = Math.max(0, this.dragLeftWidth ?? 0);
+    } else if (collapsed) {
+      effectiveLeftWidth = 0;
+    } else {
+      effectiveLeftWidth = this.dragLeftWidth ?? (appState.local.settings.leftPanelWidth ?? LEFT_PANEL_DEFAULT);
+    }
 
-    const gridCols = `48px ${effectiveLeftWidth}px 5px 1fr 5px ${effectiveChatWidth}px`;
+    const effectiveChatWidth = this.dragChatWidth ?? (appState.local.settings.chatPanelWidth ?? CHAT_PANEL_DEFAULT);
+
+    // When collapsed (and not dragging), hide handle too (0px)
+    const leftHandleWidth = collapsed ? 0 : 5;
+
+    const gridCols = `48px ${effectiveLeftWidth}px ${leftHandleWidth}px 1fr 5px ${effectiveChatWidth}px`;
 
     return html`
       ${this.showApiKeyDialog ? html`
@@ -293,12 +318,10 @@ export class App extends MobxLitElement {
 
       <div class="main-area" style="grid-template-columns: ${gridCols}">
         <ui-nav-bar></ui-nav-bar>
-        <ui-left-panel style="${collapsed && !this.dragTarget ? 'display:none' : ''}"></ui-left-panel>
+        <ui-left-panel></ui-left-panel>
         <div
           class="resize-handle"
           @pointerdown=${(e: PointerEvent) => this.handleResizeStart(e, 'left')}
-          @pointermove=${this.handleResizeMove}
-          @pointerup=${this.handleResizeEnd}
         ></div>
         <div class="viewport-wrapper">
           <ui-viewport .runtime=${appController.runtime}></ui-viewport>
@@ -306,8 +329,6 @@ export class App extends MobxLitElement {
         <div
           class="resize-handle"
           @pointerdown=${(e: PointerEvent) => this.handleResizeStart(e, 'chat')}
-          @pointermove=${this.handleResizeMove}
-          @pointerup=${this.handleResizeEnd}
         ></div>
         <ui-chat-panel></ui-chat-panel>
       </div>

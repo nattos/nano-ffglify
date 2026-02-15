@@ -2,7 +2,7 @@ import './ui-button';
 import './ui-icon';
 import { MobxLitElement } from '../mobx-lit-element';
 import { css, html } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, query } from 'lit/decorators.js';
 import { globalStyles } from '../../styles';
 import { appState } from '../../domain/state';
 import { appController } from '../../state/controller';
@@ -10,6 +10,10 @@ import { chatHandler } from '../../llm/chat-handler';
 
 @customElement('ui-chat-panel')
 export class UiChatPanel extends MobxLitElement {
+  @query('.chat-history') private chatHistory!: HTMLElement;
+
+  private wasPinned = true;
+
   static readonly styles = [
     globalStyles,
     css`
@@ -24,9 +28,7 @@ export class UiChatPanel extends MobxLitElement {
       .header {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        padding: 0.75rem 1rem;
-        border-bottom: 1px solid var(--app-border);
+        padding: 0.75rem 0.5rem;
         flex-shrink: 0;
       }
 
@@ -106,6 +108,20 @@ export class UiChatPanel extends MobxLitElement {
     await chatHandler.handleUserMessage(text);
   }
 
+  protected updated() {
+    // Autoscroll: if we were pinned to the bottom before render, scroll to bottom now
+    if (this.wasPinned && this.chatHistory) {
+      this.chatHistory.scrollTop = this.chatHistory.scrollHeight;
+    }
+  }
+
+  private handleScroll() {
+    if (!this.chatHistory) return;
+    const el = this.chatHistory;
+    // Consider "pinned" if within 30px of the bottom
+    this.wasPinned = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+  }
+
   render() {
     const { chat_history } = appState.database;
     const { draftChat } = appState.local;
@@ -115,7 +131,7 @@ export class UiChatPanel extends MobxLitElement {
         <span class="header-title">Chat</span>
       </div>
 
-      <div class="chat-history">
+      <div class="chat-history" @scroll=${() => this.handleScroll()}>
         ${chat_history.map(msg => html`
           <div class="msg ${msg.role}">
             ${msg.role === 'tool-response'

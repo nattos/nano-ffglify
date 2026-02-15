@@ -50,6 +50,14 @@ export class UiApiKeyDialog extends LitElement {
         line-height: 1.5;
       }
 
+      a {
+        color: var(--color-emerald-500);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+
       input {
         width: 100%;
         padding: 0.6rem;
@@ -93,7 +101,7 @@ export class UiApiKeyDialog extends LitElement {
       <div class="backdrop" @click=${(e: Event) => { if (e.target === e.currentTarget) this.handleSkip(); }}>
         <div class="dialog">
           <h2>API Key Required</h2>
-          <p>Enter your Google Generative AI API key to enable the LLM chat assistant. You can also set this later in Settings.</p>
+          <p>Enter your <a href="https://ai.google.dev/gemini-api/docs/api-key" target="_blank">Google Generative AI API key</a> to enable the LLM chat assistant. You can also set this later in Settings.</p>
           <input
             type="password"
             .value=${this.keyDraft}
