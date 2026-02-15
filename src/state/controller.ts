@@ -40,9 +40,35 @@ export class AppController {
   private activeCompileResolver: ((res: CompileResult) => void) | null = null;
   private activeCompilePromise: Promise<CompileResult> | null = null;
 
-  public setActiveTab(tab: 'live' | 'ir' | 'raw_code' | 'state' | 'script' | 'logs') {
+  public setActiveTab(tab: 'dashboard' | 'ir' | 'raw_code' | 'state' | 'script' | 'logs' | 'settings') {
     runInAction(() => {
       appState.local.settings.activeTab = tab;
+    });
+    this.saveSettings();
+  }
+
+  public setDevMode(enabled: boolean) {
+    runInAction(() => {
+      appState.local.settings.devMode = enabled;
+      // If current tab is dev-only and devMode is turned off, switch to dashboard
+      const devOnlyTabs = ['ir', 'raw_code', 'state', 'script', 'logs'] as const;
+      if (!enabled && (devOnlyTabs as readonly string[]).includes(appState.local.settings.activeTab)) {
+        appState.local.settings.activeTab = 'dashboard';
+      }
+    });
+    this.saveSettings();
+  }
+
+  public setApiKey(key: string | undefined) {
+    runInAction(() => {
+      appState.local.settings.apiKey = key;
+    });
+    this.saveSettings();
+  }
+
+  public setLeftPanelCollapsed(collapsed: boolean) {
+    runInAction(() => {
+      appState.local.settings.leftPanelCollapsed = collapsed;
     });
     this.saveSettings();
   }
@@ -150,10 +176,6 @@ export class AppController {
     // Ensure we have compiled code.
     if (!this.ensureCompiled()) {
       return;
-    }
-
-    if (appState.local.settings.activeTab !== 'live') {
-      this.setActiveTab('live');
     }
 
     runInAction(() => {

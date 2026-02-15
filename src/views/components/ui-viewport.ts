@@ -22,10 +22,8 @@ export class UiViewport extends LitElement {
             display: flex;
             flex-direction: column;
             background: #111;
-            border-radius: 8px;
             overflow: hidden;
             position: relative;
-            aspect-ratio: 16 / 9;
         }
         canvas {
             width: 100%;

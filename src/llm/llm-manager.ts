@@ -22,6 +22,7 @@ import { OpSignatures } from "../ir/signatures";
 import { ALL_EXAMPLES } from "../domain/example-ir";
 import { appController } from "../state/controller";
 import { PromptBuilder } from "../domain/prompt-builder";
+import { appState } from "../domain/state";
 
 export interface LLMToolCall {
   name: string;
@@ -48,25 +49,21 @@ interface ChatSessionAdapter {
 }
 
 export class GoogleGenAIManager implements LLMManager {
-  private apiKey = import.meta.env.GOOGLE_API_KEY || "";
-  private genAI: GoogleGenerativeAI;
-  private model: GenerativeModel;
+  private genAI: GoogleGenerativeAI | null = null;
+  private model: GenerativeModel | null = null;
+  private tools: FunctionDeclaration[];
 
   constructor(private appController: AppController, private systemInstruction: string) {
-    if (!this.apiKey) {
-      console.warn("No GOOGLE_API_KEY provided. LLM will not function correctly.");
-    }
-
     // Load default mocks
     Object.entries(NOTES_MOCKS).forEach(([key, val]) => {
       this.mockRegistry.set(key.toLowerCase(), Array.isArray(val) ? val : [val]);
     });
 
     // Generate Native Tools from Schemas
-    const tools: FunctionDeclaration[] = [];
+    this.tools = [];
 
     // 1. Core Tools
-    tools.push({
+    this.tools.push({
       name: "final_response",
       description: "Send the final text response to the user. Always use this to end the turn.",
       parameters: {
@@ -77,11 +74,11 @@ export class GoogleGenAIManager implements LLMManager {
     });
 
     // 2. Schema-Driven Tools
-    tools.push(generateReplaceTool(IRSchema));
-    tools.push(generatePatchTool(IRSchema));
+    this.tools.push(generateReplaceTool(IRSchema));
+    this.tools.push(generatePatchTool(IRSchema));
 
     // 3. Documentation Tools
-    tools.push({
+    this.tools.push({
       name: "queryDocs",
       description: "Look up documentation for IR operations or example IR documents. Can also list all available operations or examples.",
       parameters: {
@@ -109,17 +106,41 @@ export class GoogleGenAIManager implements LLMManager {
         required: []
       }
     });
-    console.log(tools);
 
-    this.genAI = new GoogleGenerativeAI(this.apiKey);
+    // Initialize with available key
+    this.initializeSDK();
+  }
+
+  private get resolvedApiKey(): string {
+    return appState.local.settings.apiKey || import.meta.env.GOOGLE_API_KEY || "";
+  }
+
+  get hasApiKey(): boolean {
+    return !!this.resolvedApiKey;
+  }
+
+  private initializeSDK() {
+    const apiKey = this.resolvedApiKey;
+    if (!apiKey) {
+      console.warn("No API key provided. LLM will not function correctly.");
+      this.genAI = null;
+      this.model = null;
+      return;
+    }
+
+    this.genAI = new GoogleGenerativeAI(apiKey);
     this.model = this.genAI.getGenerativeModel({
       model: DEFAULT_LLM_MODEL,
-      systemInstruction: systemInstruction,
-      // Define tools for the model
-      tools: [{
-        functionDeclarations: tools
-      }]
+      systemInstruction: this.systemInstruction,
+      tools: [{ functionDeclarations: this.tools }]
     });
+  }
+
+  public reinitialize(apiKey?: string) {
+    if (apiKey !== undefined) {
+      // Key is set via appController.setApiKey() before calling this
+    }
+    this.initializeSDK();
   }
 
   // Registry for deterministic testing - support multi-step responses
@@ -175,6 +196,12 @@ export class GoogleGenAIManager implements LLMManager {
         }
       };
     } else {
+      if (!this.model) {
+        this.initializeSDK();
+      }
+      if (!this.model) {
+        return { text: "No API key configured. Please set one in Settings." };
+      }
       console.log("Starting Chat with Gemini...");
       const realChat = this.model.startChat({});
       session = {

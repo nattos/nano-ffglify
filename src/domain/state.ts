@@ -39,10 +39,11 @@ export class AppState {
 
     this.local = observable({
       settings: {
-        activeTab: 'state',
+        activeTab: 'dashboard',
         chatOpen: true,
         useMockLLM: false,
-        transportState: 'stopped'
+        transportState: 'stopped',
+        devMode: false,
       },
       llmLogs: [],
       draftChat: '',
@@ -69,6 +70,14 @@ export class AppState {
   async loadSettings() {
     const saved = await settingsManager.loadSettings();
     if (saved && this.local['settings']) {
+      // Migrate legacy tab values
+      if ((saved as any).activeTab === 'live') {
+        saved.activeTab = 'dashboard';
+      }
+      // Ensure devMode has a default
+      if (saved.devMode === undefined) {
+        saved.devMode = false;
+      }
       runInAction(() => {
         Object.assign(this.local['settings'], saved);
       });
