@@ -359,6 +359,12 @@ export type BuiltinOp =
   | 'texture_sample' | 'texture_load' | 'texture_store'
   | 'resource_get_size' | 'resource_get_format'
 
+  // Atomics
+  | 'atomic_load' | 'atomic_store'
+  | 'atomic_add' | 'atomic_sub'
+  | 'atomic_min' | 'atomic_max'
+  | 'atomic_exchange'
+
   // Commands
   | 'cmd_dispatch' | 'cmd_resize_resource' | 'cmd_draw'
   | 'cmd_sync_to_cpu' | 'cmd_wait_cpu_sync';

@@ -95,7 +95,7 @@ export interface PrecomputedShaderInfo {
   workgroupSize?: [number, number, number];
   inputBinding?: number;
   inputLayout?: PrecomputedInputLayout;
-  resourceBindings: { id: string, binding: number, type: 'texture2d' | 'buffer' }[];
+  resourceBindings: { id: string, binding: number, type: 'texture2d' | 'buffer' | 'atomic_counter' }[];
 }
 
 export interface PrecomputedResourceInfo {

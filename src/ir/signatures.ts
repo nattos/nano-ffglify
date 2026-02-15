@@ -420,5 +420,14 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { target: 'string', vertex: 'string', fragment: 'string', count: 'int' }, output: 'any' }
   ],
   'cmd_sync_to_cpu': [{ inputs: { resource: 'string' }, output: 'any' }],
-  'cmd_wait_cpu_sync': [{ inputs: { resource: 'string' }, output: 'any' }]
+  'cmd_wait_cpu_sync': [{ inputs: { resource: 'string' }, output: 'any' }],
+
+  // Atomics
+  'atomic_load':     [{ inputs: { counter: 'string', index: 'int' }, output: 'int' }],
+  'atomic_store':    [{ inputs: { counter: 'string', index: 'int', value: 'int' }, output: 'any' }],
+  'atomic_add':      [{ inputs: { counter: 'string', index: 'int', value: 'int' }, output: 'int' }],
+  'atomic_sub':      [{ inputs: { counter: 'string', index: 'int', value: 'int' }, output: 'int' }],
+  'atomic_min':      [{ inputs: { counter: 'string', index: 'int', value: 'int' }, output: 'int' }],
+  'atomic_max':      [{ inputs: { counter: 'string', index: 'int', value: 'int' }, output: 'int' }],
+  'atomic_exchange': [{ inputs: { counter: 'string', index: 'int', value: 'int' }, output: 'int' }],
 };

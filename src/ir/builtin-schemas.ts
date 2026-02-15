@@ -196,6 +196,11 @@ export interface StructConstructArgs { type: string; values?: Record<string, any
 export interface CmdDispatchArgs { func: string; dispatch?: any; args?: Record<string, any>; }
 export interface CallFuncArgs { func: string; args?: Record<string, any>; }
 
+// --- Atomics ---
+export interface AtomicLoadArgs { counter: string; index: any; [key: string]: any; }
+export interface AtomicStoreArgs { counter: string; index: any; value: any; [key: string]: any; }
+export interface AtomicRmwArgs { counter: string; index: any; value: any; [key: string]: any; }
+
 export interface ArrayConstructArgs {
   values?: any[];
   type?: string;
@@ -481,6 +486,36 @@ export const ResourceMetaDef = defineOp<ResourceMetaArgs>({
   args: { resource: { type: z.string(), doc: "ID of the resource", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true } }
 });
 
+// --- Atomics ---
+
+export const AtomicLoadDef = defineOp<AtomicLoadArgs>({
+  doc: "Atomically load a value from an atomic counter.",
+  args: {
+    counter: { type: z.string(), doc: "Atomic counter resource ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true },
+    index: { type: IntSchema, doc: "Element index", refable: true }
+  }
+});
+
+export const AtomicStoreDef = defineOp<AtomicStoreArgs>({
+  doc: "Atomically store a value to an atomic counter.",
+  isExecutable: true,
+  args: {
+    counter: { type: z.string(), doc: "Atomic counter resource ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true },
+    index: { type: IntSchema, doc: "Element index", refable: true },
+    value: { type: IntSchema, doc: "Value to store", refable: true }
+  }
+});
+
+export const AtomicRmwDef = defineOp<AtomicRmwArgs>({
+  doc: "Atomic read-modify-write operation. Returns the previous value before the operation.",
+  isExecutable: true,
+  args: {
+    counter: { type: z.string(), doc: "Atomic counter resource ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true },
+    index: { type: IntSchema, doc: "Element index", refable: true },
+    value: { type: IntSchema, doc: "Operand value", refable: true }
+  }
+});
+
 // --- Matrices ---
 
 export const Mat3x3Def = defineOp<Mat3x3Args>({
@@ -751,6 +786,15 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'resource_get_size': ResourceMetaDef,
   'resource_get_format': ResourceMetaDef,
 
+  // Atomics
+  'atomic_load': AtomicLoadDef,
+  'atomic_store': AtomicStoreDef,
+  'atomic_add': AtomicRmwDef,
+  'atomic_sub': AtomicRmwDef,
+  'atomic_min': AtomicRmwDef,
+  'atomic_max': AtomicRmwDef,
+  'atomic_exchange': AtomicRmwDef,
+
   // Matrices
   'float3x3': Mat3x3Def,
   'float4x4': Mat4x4Def,
@@ -896,6 +940,13 @@ export type OpArgs = {
   'buffer_store': BufferStoreArgs;
   'resource_get_size': ResourceMetaArgs;
   'resource_get_format': ResourceMetaArgs;
+  'atomic_load': AtomicLoadArgs;
+  'atomic_store': AtomicStoreArgs;
+  'atomic_add': AtomicRmwArgs;
+  'atomic_sub': AtomicRmwArgs;
+  'atomic_min': AtomicRmwArgs;
+  'atomic_max': AtomicRmwArgs;
+  'atomic_exchange': AtomicRmwArgs;
   'float3x3': Mat3x3Args;
   'float4x4': Mat4x4Args;
   'mat_identity': MatIdentityArgs;

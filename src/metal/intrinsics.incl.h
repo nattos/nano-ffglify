@@ -1,4 +1,9 @@
 
+// Bit-cast helpers for packing int32 into float32 storage (preserves bit pattern).
+// Used by atomic counters: CPU stores int bits as float, GPU reads via atomic_int*.
+inline float int_bits_to_float(int v) { float f; std::memcpy(&f, &v, 4); return f; }
+inline int float_bits_to_int(float f) { int v; std::memcpy(&v, &f, 4); return v; }
+
 template <typename T, typename F> inline auto applyUnary(T val, F fn) {
   return fn(val);
 }

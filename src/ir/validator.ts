@@ -553,6 +553,13 @@ const resolveNodeType = (
       return vType;
     }
 
+    // Atomic ops always produce int
+    if (node.op === 'atomic_load' || node.op === 'atomic_add' || node.op === 'atomic_sub' ||
+        node.op === 'atomic_min' || node.op === 'atomic_max' || node.op === 'atomic_exchange') {
+      cache.set(nodeId, 'int');
+      return 'int';
+    }
+
     if (node.op === 'array_extract') {
       const arrayType = inputTypes['array'];
       if (!arrayType || arrayType === 'any') {
@@ -821,6 +828,10 @@ export const validateResources = (doc: IRDocument, errors: LogicValidationError[
       } else {
         validateDataType(res.dataType, doc, errors, `Buffer resource '${res.id}'`);
       }
+    } else if (res.type === 'atomic_counter') {
+      if (res.dataType && res.dataType !== 'int') {
+        errors.push({ message: `Atomic counter resource '${res.id}' must have dataType 'int', got '${res.dataType}'`, severity: 'error' });
+      }
     }
   });
 };
@@ -1047,6 +1058,17 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
                 errors.push({ nodeId: node.id, functionId: func.id, message: `Static OOB Access: Index ${index} >= Size ${sizeVal}`, severity: 'error' });
               }
             }
+          }
+        }
+
+        // Validate atomic ops reference atomic_counter resources
+        if (node.op.startsWith('atomic_') && resDef) {
+          if (resDef.type !== 'atomic_counter') {
+            errors.push({
+              nodeId: node.id, functionId: func.id,
+              message: `Atomic operation '${node.op}' requires an atomic_counter resource, but '${resId}' is a '${resDef.type}'`,
+              severity: 'error'
+            });
           }
         }
 

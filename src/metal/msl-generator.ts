@@ -724,7 +724,9 @@ export class MslGenerator {
         this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d');
       if (!res) continue;
 
-      if ('type' in res && res.type === 'buffer') {
+      if ('type' in res && res.type === 'atomic_counter') {
+        bufferParams.push(`device atomic_int* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
+      } else if ('type' in res && res.type === 'buffer') {
         const elemType = this.irTypeToMsl((res as any).dataType || 'float');
         bufferParams.push(`device ${elemType}* ${this.sanitizeId(resId, 'buffer')} [[buffer(${binding})]]`);
       } else {
@@ -1145,6 +1147,23 @@ export class MslGenerator {
       const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       const bufName = this.sanitizeId(bufferId, 'buffer');
       lines.push(`${indent}${bufName}[int(${idx})] = ${val};`);
+    } else if (node.op === 'atomic_store') {
+      const counterId = node['counter'];
+      const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      const bufName = this.sanitizeId(counterId, 'buffer');
+      lines.push(`${indent}atomic_store_explicit(&${bufName}[int(${idx})], int(${val}), memory_order_relaxed);`);
+    } else if (node.op === 'atomic_add' || node.op === 'atomic_sub' || node.op === 'atomic_min' || node.op === 'atomic_max' || node.op === 'atomic_exchange') {
+      const counterId = node['counter'];
+      const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+      const bufName = this.sanitizeId(counterId, 'buffer');
+      const mslOp: Record<string, string> = {
+        'atomic_add': 'atomic_fetch_add_explicit', 'atomic_sub': 'atomic_fetch_sub_explicit',
+        'atomic_min': 'atomic_fetch_min_explicit', 'atomic_max': 'atomic_fetch_max_explicit',
+        'atomic_exchange': 'atomic_exchange_explicit'
+      };
+      lines.push(`${indent}int ${this.nodeResId(node.id)} = ${mslOp[node.op]}(&${bufName}[int(${idx})], int(${val}), memory_order_relaxed);`);
     } else if (node.op === 'texture_store') {
       const texId = node['tex'] as string;
       const coords = this.resolveArg(node, 'coords', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
@@ -1271,6 +1290,12 @@ export class MslGenerator {
         const bufferId = node['buffer'];
         const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         return `${this.sanitizeId(bufferId, 'buffer')}[int(${idx})]`;
+      }
+
+      case 'atomic_load': {
+        const counterId = node['counter'];
+        const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+        return `atomic_load_explicit(&${this.sanitizeId(counterId, 'buffer')}[int(${idx})], memory_order_relaxed)`;
       }
 
       // Vector constructors
@@ -1821,14 +1846,16 @@ export class MslGenerator {
       'call_func',
       'mat_identity', 'mat_mul', 'mat_inverse',
       'quat_mul', 'quat_rotate', 'quat_slerp', 'quat_to_float4x4',
-      'color_mix'
+      'color_mix',
+      'atomic_load', 'atomic_add', 'atomic_sub', 'atomic_min', 'atomic_max', 'atomic_exchange'
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
 
   private isExecutable(op: string, edges: Edge[], nodeId: string): boolean {
     const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
-      op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set';
+      op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set' ||
+      op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange';
 
     if (isSideEffecting) return true;
 

@@ -501,13 +501,15 @@ export class CppGenerator {
       'mat_identity', 'mat_mul', 'mat_inverse', 'mat_transpose',
       'quat', 'quat_identity', 'quat_mul', 'quat_rotate', 'quat_slerp', 'quat_to_float4x4',
       'color_mix', 'texture_sample',
+      'atomic_load', 'atomic_add', 'atomic_sub', 'atomic_min', 'atomic_max', 'atomic_exchange',
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
 
   private isExecutable(op: string, edges: Edge[], nodeId: string): boolean {
     const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
-      op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set';
+      op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set' ||
+      op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange';
 
     if (isSideEffecting) return true;
 
@@ -685,6 +687,13 @@ export class CppGenerator {
       } else {
         lines.push(`${indent}ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})] = ${val};`);
       }
+    } else if (node.op === 'atomic_store') {
+      const counterId = node['counter'];
+      const idx = this.resolveArg(node, 'index', func, allFunctions, emitPure, edges, inferredTypes);
+      const val = this.resolveArg(node, 'value', func, allFunctions, emitPure, edges, inferredTypes);
+      const allRes = this.getAllResources();
+      const bufferIdx = allRes.findIndex(r => r.id === counterId);
+      lines.push(`${indent}ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})] = int_bits_to_float(static_cast<int>(${val}));`);
     } else if (node.op === 'array_set') {
       // (unchanged logic omitted for brevity, but arguments updated)
       // array_set modifies a variable in-place, need to find the actual variable name
@@ -1158,6 +1167,31 @@ export class CppGenerator {
         const allRes = this.getAllResources();
         const bufferIdx = allRes.findIndex(r => r.id === bufferId);
         return `ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})]`;
+      }
+
+      case 'atomic_load': {
+        const counterId = node['counter'];
+        const idx = a('index');
+        const allRes = this.getAllResources();
+        const bufferIdx = allRes.findIndex(r => r.id === counterId);
+        return `float_bits_to_int(ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})])`;
+      }
+
+      case 'atomic_add': case 'atomic_sub': case 'atomic_min': case 'atomic_max': case 'atomic_exchange': {
+        const counterId = node['counter'];
+        const idx = a('index');
+        const val = a('value');
+        const allRes = this.getAllResources();
+        const bufferIdx = allRes.findIndex(r => r.id === counterId);
+        const accessor = `ctx.resources[${bufferIdx}]->data[static_cast<size_t>(${idx})]`;
+        const cppOps: Record<string, string> = {
+          'atomic_add': `old + static_cast<int>(${val})`,
+          'atomic_sub': `old - static_cast<int>(${val})`,
+          'atomic_min': `std::min(old, static_cast<int>(${val}))`,
+          'atomic_max': `std::max(old, static_cast<int>(${val}))`,
+          'atomic_exchange': `static_cast<int>(${val})`
+        };
+        return `([&]() { int old = float_bits_to_int(${accessor}); ${accessor} = int_bits_to_float(${cppOps[node.op]}); return old; })()`;
       }
 
       // Constants

@@ -5,6 +5,7 @@
 #import <Metal/Metal.h>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>

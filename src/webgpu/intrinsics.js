@@ -366,7 +366,7 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
 
       const encoder = device.createCommandEncoder();
 
-      if (state.def.type === 'buffer' && state.gpuBuffer) {
+      if ((state.def.type === 'buffer' || state.def.type === 'atomic_counter') && state.gpuBuffer) {
         const size = state.gpuBuffer.size;
         const staging = device.createBuffer({
           size: size,

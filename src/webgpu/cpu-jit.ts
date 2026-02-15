@@ -83,7 +83,8 @@ export class CpuJitCompiler {
       'array_construct', 'array_extract', 'array_length', 'array_set',
       'var_get', 'buffer_load', 'texture_load', 'texture_sample', 'call_func', 'vec_swizzle',
       'color_mix', 'vec_get_element', 'quat',
-      'resource_get_size', 'resource_get_format', 'builtin_get', 'const_get'
+      'resource_get_size', 'resource_get_format', 'builtin_get', 'const_get',
+      'atomic_load', 'atomic_add', 'atomic_sub', 'atomic_min', 'atomic_max', 'atomic_exchange'
     ];
     return valueOps.includes(op);
   }
@@ -377,7 +378,8 @@ require('./intrinsics.js');
   private isExecutable(op: string, edges: Edge[], nodeId: string) {
     const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
       op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' ||
-      op === 'cmd_resize_resource' || op === 'cmd_draw' || op === 'cmd_dispatch';
+      op === 'cmd_resize_resource' || op === 'cmd_draw' || op === 'cmd_dispatch' ||
+      op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange';
 
     if (isSideEffecting) return true;
 
@@ -516,6 +518,12 @@ require('./intrinsics.js');
       const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       lines.push(`${indent}ctx.resources.get('${bufferId}').data[${idx}] = ${val};`);
     }
+    else if (node.op === 'atomic_store') {
+      const counterId = node['counter'];
+      const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+      const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+      lines.push(`${indent}ctx.resources.get('${counterId}').data[${idx}] = (${val}) | 0;`);
+    }
     else if (node.op === 'texture_store') {
       const texId = node['tex'];
       const coords = this.resolveArg(node, 'coords', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
@@ -631,6 +639,31 @@ require('./intrinsics.js');
           if (idx < 0 || idx >= res.data.length) throw new Error("Runtime Error: buffer_load OOB");
           return res.data[idx];
         })(${idx})`;
+      }
+      case 'atomic_load': {
+        const counterId = node['counter'];
+        const idx = a('index');
+        return `((idx) => {
+          const res = ctx.resources.get('${counterId}');
+          return res ? (res.data[idx] | 0) : 0;
+        })(${idx})`;
+      }
+      case 'atomic_add': case 'atomic_sub': case 'atomic_min': case 'atomic_max': case 'atomic_exchange': {
+        const counterId = node['counter'];
+        const idx = a('index');
+        const val = a('value');
+        const rmwOps: Record<string, string> = {
+          'atomic_add': 'old + v', 'atomic_sub': 'old - v',
+          'atomic_min': 'Math.min(old, v)', 'atomic_max': 'Math.max(old, v)',
+          'atomic_exchange': 'v'
+        };
+        return `((idx, v) => {
+          const res = ctx.resources.get('${counterId}');
+          if (!res) return 0;
+          const old = res.data[idx] | 0;
+          res.data[idx] = (${rmwOps[node.op]}) | 0;
+          return old;
+        })(${idx}, ${val})`;
       }
       case 'texture_load': {
         const texId = node['tex'];

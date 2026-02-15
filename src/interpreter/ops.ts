@@ -1,5 +1,5 @@
 import { IRDocument, BuiltinOp, TextureFormat, TextureFormatValues, TextureFormatFromId } from '../ir/types';
-import { CmdSyncToCpuArgs, CmdWaitCpuSyncArgs, OpArgs } from '../ir/builtin-schemas';
+import { AtomicLoadArgs, AtomicStoreArgs, AtomicRmwArgs, CmdSyncToCpuArgs, CmdWaitCpuSyncArgs, OpArgs } from '../ir/builtin-schemas';
 import { EvaluationContext, RuntimeValue, VectorValue } from './context';
 
 export type OpHandler<K extends BuiltinOp> = (ctx: EvaluationContext, args: OpArgs[K]) => RuntimeValue | void;
@@ -977,5 +977,28 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   },
   'cmd_wait_cpu_sync': function (ctx: EvaluationContext, args: CmdWaitCpuSyncArgs): RuntimeValue | void {
     throw new Error('Function not implemented.');
+  },
+
+  // Atomic ops — interpreter is disabled but stubs needed for type completeness
+  'atomic_load': function (ctx: EvaluationContext, args: AtomicLoadArgs): RuntimeValue | void {
+    throw new Error('Atomic operations not implemented in interpreter');
+  },
+  'atomic_store': function (ctx: EvaluationContext, args: AtomicStoreArgs): RuntimeValue | void {
+    throw new Error('Atomic operations not implemented in interpreter');
+  },
+  'atomic_add': function (ctx: EvaluationContext, args: AtomicRmwArgs): RuntimeValue | void {
+    throw new Error('Atomic operations not implemented in interpreter');
+  },
+  'atomic_sub': function (ctx: EvaluationContext, args: AtomicRmwArgs): RuntimeValue | void {
+    throw new Error('Atomic operations not implemented in interpreter');
+  },
+  'atomic_min': function (ctx: EvaluationContext, args: AtomicRmwArgs): RuntimeValue | void {
+    throw new Error('Atomic operations not implemented in interpreter');
+  },
+  'atomic_max': function (ctx: EvaluationContext, args: AtomicRmwArgs): RuntimeValue | void {
+    throw new Error('Atomic operations not implemented in interpreter');
+  },
+  'atomic_exchange': function (ctx: EvaluationContext, args: AtomicRmwArgs): RuntimeValue | void {
+    throw new Error('Atomic operations not implemented in interpreter');
   },
 };

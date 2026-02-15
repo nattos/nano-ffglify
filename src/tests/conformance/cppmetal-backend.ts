@@ -146,6 +146,10 @@ export const CppMetalBackend: TestBackend = {
           : dt === 'float4' ? 4 : dt === 'float3' ? 3 : dt === 'float2' ? 2 : 1;
         return `B:${size}:${stride}`;
       }
+      if (r.type === 'atomic_counter') {
+        const size = r['size'] && typeof r['size'] === 'object' && 'value' in r['size'] ? r['size'].value : 1;
+        return `B:${size}:1`;
+      }
       return '0';
     });
 

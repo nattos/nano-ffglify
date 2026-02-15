@@ -33,7 +33,7 @@ export interface WgslOptions {
 
 export interface CompilationMetadata {
   resourceBindings: Map<string, number>;
-  resourceTypes: Map<string, 'buffer' | 'texture2d'>;
+  resourceTypes: Map<string, 'buffer' | 'texture2d' | 'atomic_counter'>;
   inputBinding?: number;
   inputLayout?: BufferBlockLayout;
   structLayouts?: Record<string, StructLayoutInfo>;
@@ -229,13 +229,19 @@ export class WgslGenerator {
     }
 
     // Resource Bindings
-    const resourceTypes = new Map<string, 'buffer' | 'texture2d'>();
+    const resourceTypes = new Map<string, 'buffer' | 'texture2d' | 'atomic_counter'>();
     if (options.resourceBindings) {
       options.resourceBindings.forEach((bindingIdx, resId) => {
         // We now emit ALL bindings and use placeholders to ensure they are in the layout
 
         const def = options.resourceDefs?.get(resId);
-        if (def?.type === 'buffer' || !def) {
+        if (def?.type === 'atomic_counter') {
+          resourceTypes.set(resId, 'atomic_counter');
+          const structName = `AtomicBuffer_${resId}`;
+          finalLines.push(`struct ${structName} { data: array<atomic<i32>> }`);
+          const bufVar = this.getBufferVar(resId);
+          finalLines.push(`@group(0) @binding(${bindingIdx}) var<storage, read_write> ${bufVar} : ${structName};`);
+        } else if (def?.type === 'buffer' || !def) {
           resourceTypes.set(resId, 'buffer');
           const type = def?.dataType ? this.resolveType(def.dataType) : 'f32';
           const structName = `Buffer_${resId}`;
@@ -589,7 +595,7 @@ export class WgslGenerator {
   }
 
   private isExecutable(op: string, edges: Edge[], nodeId: string) {
-    const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' || op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' || op === 'vec_set_element';
+    const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' || op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' || op === 'vec_set_element' || op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange';
 
     if (isSideEffecting) return true;
 
@@ -691,6 +697,23 @@ export class WgslGenerator {
         const type = dataType ? this.resolveType(dataType) : 'f32';
         lines.push(`${indent}${bufVar}.data[u32(${idx})] = ${type}(${val});`);
       }
+    } else if (node.op === 'atomic_store') {
+      const counterId = node['counter'] as string;
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
+      const val = this.resolveArg(node, 'value', func, options, ir, 'int', edges);
+      const bufVar = this.getBufferVar(counterId);
+      lines.push(`${indent}atomicStore(&${bufVar}.data[u32(${idx})], i32(${val}));`);
+    } else if (node.op === 'atomic_add' || node.op === 'atomic_sub' || node.op === 'atomic_min' || node.op === 'atomic_max' || node.op === 'atomic_exchange') {
+      const counterId = node['counter'] as string;
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
+      const val = this.resolveArg(node, 'value', func, options, ir, 'int', edges);
+      const bufVar = this.getBufferVar(counterId);
+      const wgslOp: Record<string, string> = {
+        'atomic_add': 'atomicAdd', 'atomic_sub': 'atomicSub',
+        'atomic_min': 'atomicMin', 'atomic_max': 'atomicMax',
+        'atomic_exchange': 'atomicExchange'
+      };
+      lines.push(`${indent}let v_${node.id} = ${wgslOp[node.op]}(&${bufVar}.data[u32(${idx})], i32(${val}));`);
     } else if (node.op === 'call_func') {
       const targetFunc = ir.functions.find(f => f.id === node['func']);
       if (targetFunc) {
@@ -883,7 +906,7 @@ export class WgslGenerator {
             break;
           }
         }
-        if (src.op === 'call_func') return `v_${src.id}` + edgeSwizzle;
+        if (src.op === 'call_func' || src.op === 'atomic_add' || src.op === 'atomic_sub' || src.op === 'atomic_min' || src.op === 'atomic_max' || src.op === 'atomic_exchange') return `v_${src.id}` + edgeSwizzle;
         if (src.op === 'var_get') return this.getVariableExpr(src['var'], func, options) + edgeSwizzle;
         return this.compileExpression(src, func, options, ir, targetType, edges) + edgeSwizzle;
       }
@@ -1140,6 +1163,12 @@ export class WgslGenerator {
       }
       const type = dataType ? this.resolveType(dataType) : 'f32';
       return `${type}(${bufVar}.data[u32(${idx})])`;
+    }
+    if (node.op === 'atomic_load') {
+      const counterId = node['counter'] as string;
+      const idx = this.resolveArg(node, 'index', func, options, ir, 'int', edges);
+      const bufVar = this.getBufferVar(counterId);
+      return `atomicLoad(&${bufVar}.data[u32(${idx})])`;
     }
     if (node.op === 'color_mix') {
       return `color_mix_impl(${this.resolveArg(node, 'a', func, options, ir, 'float4', edges)}, ${this.resolveArg(node, 'b', func, options, ir, 'float4', edges)})`;
