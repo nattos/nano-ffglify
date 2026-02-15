@@ -24,6 +24,7 @@ export class ChatHandler {
   async handleUserMessage(text: string) {
     // 1. Optimistic UI Update
     this.appController.addChatMessage({ role: 'user', text });
+    this.appController.setLLMBusy(true);
 
     try {
       const previousHistory = this.appState.database.chat_history.slice(0, -1);
@@ -47,6 +48,8 @@ export class ChatHandler {
     } catch (error) {
       console.error("LLM Error:", error);
       this.appController.addChatMessage({ role: 'assistant', text: "I'm having trouble connecting to the network right now." });
+    } finally {
+      this.appController.setLLMBusy(false);
     }
   }
 
@@ -68,9 +71,15 @@ export class ChatHandler {
         const cleanArgs: ReplaceIRRequest = effectiveArgs;
         const upsertRes = await this.entityManager.replaceIR(cleanArgs);
 
+        // Build summary for UI
+        const funcs = cleanArgs.functions || [];
+        const totalNodes = funcs.reduce((n, f) => n + (f.nodes?.length || 0), 0);
+        const funcNames = funcs.map(f => f.id).join(', ');
+        const statusIcon = upsertRes.success ? '\u2713' : '\u2717';
+
         this.appController.addChatMessage({
           role: 'tool-response',
-          text: '',
+          text: `${statusIcon} replaceIR \u2014 ${funcs.length} function${funcs.length !== 1 ? 's' : ''} (${funcNames}), ${totalNodes} node${totalNodes !== 1 ? 's' : ''}${upsertRes.compileResult ? `, compile: ${upsertRes.compileResult.compileStatus}` : ''}`,
           type: 'entity_update',
           data: structuredClone(upsertRes)
         });
@@ -81,9 +90,12 @@ export class ChatHandler {
         const cleanArgs: PatchIRRequest = effectiveArgs;
         const patchRes = await this.entityManager.patchIR(cleanArgs);
 
+        const patchCount = cleanArgs.patches?.length || 0;
+        const statusIcon = patchRes.success ? '\u2713' : '\u2717';
+
         this.appController.addChatMessage({
           role: 'tool-response',
-          text: '',
+          text: `${statusIcon} patchIR \u2014 ${patchCount} edit${patchCount !== 1 ? 's' : ''}${patchRes.compileResult ? `, compile: ${patchRes.compileResult.compileStatus}` : ''}`,
           type: 'entity_update',
           data: structuredClone(patchRes)
         });
@@ -104,7 +116,7 @@ export class ChatHandler {
           const queryRes: IREditResponse = { success: true, message: `Example IR: ${exampleName}`, docsResult: example };
           this.appController.addChatMessage({
             role: 'tool-response',
-            text: `Showing example IR for ${exampleName}`,
+            text: `queryDocs \u2014 example: ${exampleName}`,
             type: 'entity_update',
             data: structuredClone(queryRes)
           });
@@ -113,6 +125,7 @@ export class ChatHandler {
 
         // 2. Handle Listing
         if (listType === 'example') {
+          const count = Object.keys(ALL_EXAMPLES).length;
           const lines = Object.entries(ALL_EXAMPLES).map(([key, ir]) => {
             const metaName = (ir as any).meta?.name || 'Unnamed';
             const comment = (ir as any).comment || '';
@@ -123,7 +136,7 @@ export class ChatHandler {
           const queryRes: IREditResponse = { success: true, message: summary };
           this.appController.addChatMessage({
             role: 'tool-response',
-            text: summary,
+            text: `queryDocs \u2014 listed ${count} examples`,
             type: 'text',
             data: structuredClone(queryRes)
           });
@@ -131,14 +144,14 @@ export class ChatHandler {
         }
 
         if (listType === 'op' || (!opName && !exampleName && !listType)) {
-          // List all operations (default if nothing else provided)
+          const count = Object.keys(OpDefs).length;
           const lines = Object.entries(OpDefs).map(([name, def]) => `- **${name}**: ${def.doc}`);
           const summary = `Available IR Operations:\n\n${lines.join('\n')}`;
 
           const queryRes: IREditResponse = { success: true, message: summary };
           this.appController.addChatMessage({
             role: 'tool-response',
-            text: summary,
+            text: `queryDocs \u2014 listed ${count} operations`,
             type: 'text',
             data: structuredClone(queryRes)
           });
@@ -156,7 +169,7 @@ export class ChatHandler {
           const queryRes: IREditResponse = { success: true, message: `Documentation for ${opName}`, docsResult: doc };
           this.appController.addChatMessage({
             role: 'tool-response',
-            text: `Showing docs for ${opName}`,
+            text: `queryDocs \u2014 op: ${opName}`,
             type: 'entity_update',
             data: structuredClone(queryRes)
           });

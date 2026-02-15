@@ -71,8 +71,37 @@ export class UiChatPanel extends MobxLitElement {
         align-self: flex-start;
         font-size: 0.75rem;
         opacity: 0.7;
-        font-family: monospace;
-        white-space: pre-wrap;
+      }
+
+      .thinking {
+        align-self: flex-start;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8rem;
+        color: var(--app-text-muted);
+      }
+
+      .thinking-dots {
+        display: flex;
+        gap: 3px;
+      }
+
+      .thinking-dots span {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--app-text-muted);
+        animation: dot-pulse 1.4s ease-in-out infinite;
+      }
+
+      .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+      .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+      @keyframes dot-pulse {
+        0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+        40% { opacity: 1; transform: scale(1); }
       }
 
       .input-area {
@@ -140,7 +169,7 @@ export class UiChatPanel extends MobxLitElement {
 
   render() {
     const { chat_history } = appState.database;
-    const { draftChat } = appState.local;
+    const { draftChat, llmBusy } = appState.local;
 
     return html`
       <div class="header">
@@ -151,10 +180,16 @@ export class UiChatPanel extends MobxLitElement {
         ${chat_history.map(msg => html`
           <div class="msg ${msg.role}">
             ${msg.role === 'tool-response'
-              ? html`<strong>${msg.role}:</strong> ${JSON.stringify(msg.data, undefined, 2)}`
+              ? html`${msg.text || msg.data?.message || 'tool response'}`
               : html`<strong>${msg.role}:</strong> ${msg.text}`}
           </div>
         `)}
+        ${llmBusy ? html`
+          <div class="thinking">
+            <div class="thinking-dots"><span></span><span></span><span></span></div>
+            Thinking
+          </div>
+        ` : ''}
       </div>
 
       <div class="input-area">
@@ -162,11 +197,12 @@ export class UiChatPanel extends MobxLitElement {
           class="chat-input"
           rows="1"
           .value=${draftChat}
+          ?disabled=${llmBusy}
           @input=${(e: any) => this.handleInput(e)}
           @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.handleSend(); } }}
-          placeholder="Type a message..."
+          placeholder=${llmBusy ? 'Waiting for response...' : 'Type a message...'}
         ></textarea>
-        <ui-button icon="la-paper-plane" square @click=${() => this.handleSend()} title="Send"></ui-button>
+        <ui-button icon="la-paper-plane" square ?disabled=${llmBusy} @click=${() => this.handleSend()} title="Send"></ui-button>
       </div>
     `;
   }

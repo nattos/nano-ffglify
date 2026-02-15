@@ -28,6 +28,7 @@ export class UiTitleBar extends MobxLitElement {
         font-weight: bold;
         font-size: 1rem;
         white-space: nowrap;
+        color: var(--app-text-muted);
       }
 
       .center {
@@ -66,7 +67,7 @@ export class UiTitleBar extends MobxLitElement {
       </div>
 
       <div class="right">
-        <ui-button icon="la-external-link-alt" @click=${() => this.dispatchEvent(new CustomEvent('download-zip', { bubbles: true, composed: true }))} title="Export Build ZIP">Export</ui-button>
+        <ui-button icon="la-external-link-alt" variant="ghost" @click=${() => this.dispatchEvent(new CustomEvent('download-zip', { bubbles: true, composed: true }))} title="Export Build ZIP">Export</ui-button>
       </div>
     `;
   }

@@ -214,6 +214,12 @@ export class AppController {
     });
   }
 
+  public setLLMBusy(busy: boolean) {
+    runInAction(() => {
+      appState.local.llmBusy = busy;
+    });
+  }
+
   public setDraftChat(text: string) {
     runInAction(() => {
       appState.local.draftChat = text;

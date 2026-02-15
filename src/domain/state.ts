@@ -46,6 +46,7 @@ export class AppState {
         devMode: false,
       },
       llmLogs: [],
+      llmBusy: false,
       draftChat: '',
       activeRewindId: null,
       selectedEntity: undefined,
