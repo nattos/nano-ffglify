@@ -135,6 +135,10 @@ export class UiChatPanel extends MobxLitElement {
     `
   ];
 
+  private handleStop() {
+    chatHandler.stop();
+  }
+
   private async handleSend() {
     const text = appState.local.draftChat;
     if (!text.trim()) return;
@@ -202,7 +206,10 @@ export class UiChatPanel extends MobxLitElement {
           @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.handleSend(); } }}
           placeholder=${llmBusy ? 'Waiting for response...' : 'Type a message...'}
         ></textarea>
-        <ui-button icon="la-paper-plane" square ?disabled=${llmBusy} @click=${() => this.handleSend()} title="Send"></ui-button>
+        ${llmBusy
+          ? html`<ui-button icon="la-stop" square @click=${() => this.handleStop()} title="Stop"></ui-button>`
+          : html`<ui-button icon="la-paper-plane" square @click=${() => this.handleSend()} title="Send"></ui-button>`
+        }
       </div>
     `;
   }

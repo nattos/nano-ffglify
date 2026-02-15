@@ -38,6 +38,7 @@ export interface LLMResponse {
 export interface LLMOptions {
   forceMock?: boolean;
   maxTurns?: number;
+  signal?: AbortSignal;
   executeTool?: (name: string, args: any) => Promise<{ end: boolean; response: any; }>;
 }
 
@@ -205,6 +206,7 @@ export class GoogleGenAIManager implements LLMManager {
       }
       console.log("Starting Chat with Gemini...");
       const realChat = this.model.startChat({});
+      const signal = options?.signal;
       session = {
         sendMessage: async (input: string | FunctionResponsePart[]) => {
           return this.withRetry(async () => {
@@ -219,7 +221,7 @@ export class GoogleGenAIManager implements LLMManager {
               });
             }
             return { text: text || undefined, tool_calls: toolCalls.length > 0 ? toolCalls : undefined };
-          });
+          }, signal);
         }
       };
     }
@@ -230,6 +232,10 @@ export class GoogleGenAIManager implements LLMManager {
 
     try {
       while (turns < maxTurns) {
+        if (options?.signal?.aborted) {
+          finalResponse.endReason = 'Stopped.';
+          break;
+        }
         turns++;
         const turnStart = Date.now();
 
@@ -297,18 +303,22 @@ export class GoogleGenAIManager implements LLMManager {
       if (!endedNormally) {
         finalResponse.endReason = `Reached maximum turns (${maxTurns}).`;
       }
-    } catch (error) {
-      console.error("LLM Session Error:", error);
-      const errorStr = error?.toString() ?? 'Unknown error';
-      const isOverloaded =
-        errorStr.includes("503") ||
-        errorStr.includes("429") ||
-        errorStr.toLowerCase().includes("overloaded") ||
-        errorStr.toLowerCase().includes("rate limit");
-      const endReason = isOverloaded
-        ? "The model is currently overloaded. Please try again later."
-        : `Error: ${errorStr}`;
-      finalResponse = { text: "Error during conversation.", endReason };
+    } catch (error: any) {
+      if (error?.name === 'AbortError' || options?.signal?.aborted) {
+        finalResponse.endReason = 'Stopped.';
+      } else {
+        console.error("LLM Session Error:", error);
+        const errorStr = error?.toString() ?? 'Unknown error';
+        const isOverloaded =
+          errorStr.includes("503") ||
+          errorStr.includes("429") ||
+          errorStr.toLowerCase().includes("overloaded") ||
+          errorStr.toLowerCase().includes("rate limit");
+        const endReason = isOverloaded
+          ? "The model is currently overloaded. Please try again later."
+          : `Error: ${errorStr}`;
+        finalResponse = { text: "Error during conversation.", endReason };
+      }
       this.appController.logLLMInteraction({
         id: sessionId,
         timestamp: Date.now(),
@@ -328,13 +338,29 @@ export class GoogleGenAIManager implements LLMManager {
   private static readonly RETRY_DELAYS = [5000, 30000, 60000];
   private static readonly MAX_RETRIES = 5;
 
-  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  private async withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     for (let attempt = 0; ; attempt++) {
+      if (signal?.aborted) {
+        this.appController.setLLMStatus(null);
+        throw new DOMException('Aborted', 'AbortError');
+      }
       try {
-        const result = await fn();
+        const result = await (signal
+          ? Promise.race([
+              fn(),
+              new Promise<never>((_, reject) => {
+                signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+              })
+            ])
+          : fn());
         this.appController.setLLMStatus(null);
         return result;
       } catch (error: any) {
+        if (error?.name === 'AbortError' || signal?.aborted) {
+          this.appController.setLLMStatus(null);
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
         const errorStr = error?.toString() || "";
         const isRetryable =
           errorStr.includes("503") ||
@@ -353,7 +379,12 @@ export class GoogleGenAIManager implements LLMManager {
         if (attempt >= 1) {
           this.appController.setLLMStatus(`Model is busy, retrying in ${delay / 1000}s\u2026`);
         }
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, delay);
+          if (signal) {
+            signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+          }
+        });
       }
     }
   }

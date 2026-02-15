@@ -14,6 +14,8 @@ import { opDefToFunctionDeclaration } from '../domain/schemas';
 import { ALL_EXAMPLES } from '../domain/example-ir';
 
 export class ChatHandler {
+  private activeAbortController: AbortController | null = null;
+
   constructor(
     private appController: AppController,
     private appState: AppState,
@@ -21,10 +23,18 @@ export class ChatHandler {
     private entityManager: EntityManager
   ) { }
 
+  public stop() {
+    if (this.activeAbortController) {
+      this.activeAbortController.abort();
+      this.activeAbortController = null;
+    }
+  }
+
   async handleUserMessage(text: string) {
     // 1. Optimistic UI Update
     this.appController.addChatMessage({ role: 'user', text });
     this.appController.setLLMBusy(true);
+    this.activeAbortController = new AbortController();
 
     try {
       const previousHistory = this.appState.database.chat_history.slice(0, -1);
@@ -33,6 +43,7 @@ export class ChatHandler {
       const result = await this.llmManager.generateResponse(fullPrompt, {
         forceMock: this.appState.local.settings.useMockLLM,
         maxTurns: this.appState.local.settings.maxLLMTurns || 25,
+        signal: this.activeAbortController.signal,
         executeTool: async (name, args) => {
           console.log("Executing Tool:", name, args);
           try {
@@ -54,6 +65,7 @@ export class ChatHandler {
       console.error("LLM Error:", error);
       this.appController.addChatMessage({ role: 'assistant', text: "I'm having trouble connecting to the network right now." });
     } finally {
+      this.activeAbortController = null;
       this.appController.setLLMBusy(false);
     }
   }
