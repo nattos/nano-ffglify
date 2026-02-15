@@ -333,7 +333,7 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
         }
       }
 
-      const useLoadOp = pipeline.loadOp || 'clear';
+      const useLoadOp = pipelineDef.loadOp || 'clear';
       const encoder = device.createCommandEncoder();
       const colorAttachment = {
         view: targetState.gpuTexture.createView(),
