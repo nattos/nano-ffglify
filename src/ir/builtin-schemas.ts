@@ -638,7 +638,12 @@ export const BuiltinNameSchema = z.enum([
 
 export interface BuiltinGetArgs { name: string;[key: string]: any; }
 export const BuiltinGetDef = defineOp<BuiltinGetArgs>({
-  doc: "Get a GPU/Shader built-in variable. Compute builtins (global_invocation_id, local_invocation_id, workgroup_id, num_workgroups) are int3, NOT float3. normalized_global_invocation_id is float3 = float3(gid) / float3(grid_size), useful for UV coordinates. output_size is int3: dispatch grid dimensions for compute shaders, render target dimensions for vertex/fragment shaders. CPU-allowed builtins (time, delta_time, bpm, beat_number, beat_delta) are auto-injected as shader args by cmd_dispatch.",
+  doc: "Get a GPU/Shader built-in variable. " +
+    "COMPUTE: global_invocation_id (int3, thread position), local_invocation_id (int3), workgroup_id (int3), num_workgroups (int3), normalized_global_invocation_id (float3, UV-like 0..1). " +
+    "VERTEX: vertex_index (int), instance_index (int), position (float4, OUTPUT — set to clip-space pos). " +
+    "FRAGMENT: frag_coord (float4, pixel coords), front_facing (bool), sample_index (int), sample_mask (int). " +
+    "ANY GPU STAGE: output_size (int3, dispatch grid size for compute, render target size for vertex/fragment — use for aspect ratio, UV mapping). " +
+    "TIME (auto-injected into shaders): time (float, seconds), delta_time (float, frame delta), bpm/beat_number/beat_delta (float, music sync).",
   args: { name: { type: BuiltinNameSchema, doc: "Built-in name (see BUILTIN_TYPES for return types)", refType: 'builtin', isIdentifier: true } }
 });
 

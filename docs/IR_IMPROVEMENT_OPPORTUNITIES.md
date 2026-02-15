@@ -178,6 +178,40 @@ This also solves the **shuffle problem** — reordering components is just `"xyz
 
 **Proposal**: Add `vec_dot` signatures for `int2`, `int3`, `int4`. Combined with S2 (typed int literals), the entire flat index computation becomes: `vec_dot(gid, int3(1, 32, 1024))`.
 
+### S7: Default blend state shorthand [XS]
+
+**Current**: Alpha blending requires a verbose `pipeline` object on every `cmd_draw`:
+```json
+"pipeline": {
+  "blend": {
+    "color": { "srcFactor": "src-alpha", "dstFactor": "one-minus-src-alpha" },
+    "alpha": { "srcFactor": "one", "dstFactor": "one-minus-src-alpha" }
+  }
+}
+```
+
+The particle shader and nearly every transparent-rendering effect repeats this exact pattern.
+
+**Proposal**: Support named blend presets as a string shorthand: `"pipeline": { "blend": "alpha" }`. Common presets: `"alpha"` (standard alpha blend), `"additive"` (one/one), `"premultiplied"` (one/one-minus-src-alpha), `"opaque"` (no blend, default).
+
+### S8: `cmd_draw` infers vertex count from buffer [S]
+
+**Current**: `cmd_draw` requires an explicit `count` argument for vertex count. For particle systems and instanced rendering, this is always the buffer size — requiring the CPU function to track it separately (often via a `resource_get_size` node or a hardcoded literal that must match the buffer resize).
+
+**Proposal**: Allow `count` to reference a resource ID directly: `"count": "particles"`. The runtime resolves it to the buffer's element count. This eliminates a common source of desync bugs where the buffer is resized but the draw count isn't updated.
+
+### S9: Struct buffer ergonomics [M]
+
+**Current**: Accessing struct fields from a buffer requires two nodes:
+```json
+{ "id": "p", "op": "buffer_load", "buffer": "particles", "index": "vi" },
+{ "id": "pos", "op": "struct_extract", "struct": "p", "field": "position" }
+```
+
+For particle systems with many fields (position, velocity, color, life, size), this means 2N nodes just to unpack one particle.
+
+**Proposal**: Allow `buffer_load` to accept an optional `field` argument: `{ "op": "buffer_load", "buffer": "particles", "index": "vi", "field": "position" }`. This collapses load+extract into one node. The validator infers the output type from the struct's field type.
+
 ---
 
 ## Inconsistencies
@@ -242,3 +276,6 @@ This hasn't caused test failures yet but is fragile.
 **Behavior difference**: `int(2147483648.0)` gives different results across backends without the safe-cast helper.
 
 **Files**: `msl-generator.ts:440-444` (safe_cast_int), `wgsl-generator.ts` (native i32), `cpu-jit.ts`
+
+
+> **Note**: Architecture-level items (retained buffer lifecycle, staging texture reuse, cross-API synchronization) have been moved to `docs/CPPMETAL_DESIGN.md` § Known Issues.

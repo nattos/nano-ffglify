@@ -69,7 +69,7 @@ Many node properties can either be literals, or references to other nodes. Check
 
 Types:
 
-The following primitive types are available: [${PRIMITIVE_TYPES.join, ', '}]
+The following primitive types are available: [${PRIMITIVE_TYPES.join(', ')}]
 
 Arrays are also available, and may either be fixed or dynamic size. Dynamic sized arrays are only available as global "resources". These translate to GPU buffers. Fixed sized arrays are also allowed for local variables.
 
@@ -83,6 +83,28 @@ Type Coercion & Math:
   - Booleans are NOT implicitly converted to numbers for math ops. Use \`select\` or explicit casts.
   - Vector dimensions must match (no \`vec2 + vec3\`).
   - Resource operations (like \`buffer_store\`) are strict about types (no storing \`int\` into a \`float\` buffer without a cast).
+
+GPU Pipeline Patterns:
+
+The most common architecture is a CPU "main" function that orchestrates GPU work:
+
+- **Image Effects**: CPU function dispatches a compute shader via \`cmd_dispatch\`. The compute shader reads input textures, writes output texture. Use \`builtin_get output_size\` for render target dimensions.
+- **Particle Systems / Simulations**: CPU function first dispatches a compute shader to update simulation state in a buffer, then uses \`cmd_draw\` to render with vertex/fragment shaders. Buffer data persists across frames — no need to re-upload each frame.
+- **Multi-Pass**: Chain multiple \`cmd_dispatch\` or \`cmd_draw\` calls in the CPU function. Each pass reads the previous pass's output.
+
+Key patterns:
+- Use \`cmd_resize_resource\` to initialize buffers/textures before first use. A clear value fills the resource (e.g., \`{ "op": "cmd_resize_resource", "resource": "particles", "size": 1000, "clear": [0,0,0,0] }\`).
+- Struct types define vertex attributes. A buffer with \`dataType\` set to a struct ID stores interleaved vertex data. The vertex shader reads from the buffer via \`buffer_load\`.
+- \`cmd_draw\` requires \`target\` (output texture), \`vertex\` and \`fragment\` (shader function IDs), and \`count\` (vertex count). Optional \`pipeline\` controls blend, topology, cull mode.
+- Alpha blending is common: \`"pipeline": { "blend": { "color": { "srcFactor": "src-alpha", "dstFactor": "one-minus-src-alpha" }, "alpha": { "srcFactor": "one", "dstFactor": "one-minus-src-alpha" } } }\`
+
+Built-in Variables:
+
+- **Compute stage**: \`global_invocation_id\` (int3) — thread position in dispatch grid. \`normalized_global_invocation_id\` (float3) — UV-like [0..1] coordinates.
+- **Vertex stage**: \`vertex_index\` (int), \`instance_index\` (int), \`position\` (float4, output-only — set this to clip-space position).
+- **Fragment stage**: \`frag_coord\` (float4) — pixel coordinates.
+- **Any GPU stage**: \`output_size\` (int3) — dimensions of the dispatch grid (compute) or render target (vertex/fragment). Use for aspect ratio correction, UV computation, etc.
+- **Time builtins**: \`time\` (float, seconds since start), \`delta_time\` (float, seconds since last frame). These are auto-injected into shader args by \`cmd_dispatch\` and \`cmd_draw\` — just use \`builtin_get\` in the shader.
 
 Coordinate Systems:
 
