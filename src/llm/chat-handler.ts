@@ -30,7 +30,7 @@ export class ChatHandler {
       const previousHistory = this.appState.database.chat_history.slice(0, -1);
       const fullPrompt = PromptBuilder.buildWorkerUserPrompt({ database: this.appState.database, ephemeral: this.appState.local }, previousHistory, text);
 
-      await this.llmManager.generateResponse(fullPrompt, {
+      const result = await this.llmManager.generateResponse(fullPrompt, {
         forceMock: this.appState.local.settings.useMockLLM,
         maxTurns: this.appState.local.settings.maxLLMTurns || 25,
         executeTool: async (name, args) => {
@@ -45,6 +45,10 @@ export class ChatHandler {
           }
         }
       });
+
+      if (result.endReason) {
+        this.appController.addChatMessage({ role: 'assistant', text: result.endReason });
+      }
 
     } catch (error) {
       console.error("LLM Error:", error);

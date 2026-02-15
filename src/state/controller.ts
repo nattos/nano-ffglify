@@ -224,6 +224,15 @@ export class AppController {
   public setLLMBusy(busy: boolean) {
     runInAction(() => {
       appState.local.llmBusy = busy;
+      if (!busy) {
+        appState.local.llmStatus = undefined;
+      }
+    });
+  }
+
+  public setLLMStatus(status: string | null) {
+    runInAction(() => {
+      appState.local.llmStatus = status ?? undefined;
     });
   }
 

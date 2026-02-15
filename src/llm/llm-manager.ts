@@ -32,6 +32,7 @@ export interface LLMToolCall {
 export interface LLMResponse {
   text?: string;
   tool_calls?: LLMToolCall[];
+  endReason?: string;
 }
 
 export interface LLMOptions {
@@ -225,6 +226,7 @@ export class GoogleGenAIManager implements LLMManager {
 
     // 2. Unified Multi-Turn Loop
     let currentInput: string | FunctionResponsePart[] = prompt;
+    let endedNormally = false;
 
     try {
       while (turns < maxTurns) {
@@ -257,6 +259,7 @@ export class GoogleGenAIManager implements LLMManager {
         let sessionEnded = false;
         if (!options?.executeTool) {
           sessionEnded = true;
+          endedNormally = true;
         } else {
           const functionResponses: FunctionResponsePart[] = [];
 
@@ -281,6 +284,7 @@ export class GoogleGenAIManager implements LLMManager {
 
             if (toolResult.end || call.name === 'final_response') {
               sessionEnded = true;
+              endedNormally = true;
             }
           }
           currentInput = functionResponses;
@@ -290,9 +294,21 @@ export class GoogleGenAIManager implements LLMManager {
           break;
         }
       }
+      if (!endedNormally) {
+        finalResponse.endReason = `Reached maximum turns (${maxTurns}).`;
+      }
     } catch (error) {
       console.error("LLM Session Error:", error);
-      finalResponse = { text: "Error during conversation." };
+      const errorStr = error?.toString() ?? 'Unknown error';
+      const isOverloaded =
+        errorStr.includes("503") ||
+        errorStr.includes("429") ||
+        errorStr.toLowerCase().includes("overloaded") ||
+        errorStr.toLowerCase().includes("rate limit");
+      const endReason = isOverloaded
+        ? "The model is currently overloaded. Please try again later."
+        : `Error: ${errorStr}`;
+      finalResponse = { text: "Error during conversation.", endReason };
       this.appController.logLLMInteraction({
         id: sessionId,
         timestamp: Date.now(),
@@ -310,11 +326,14 @@ export class GoogleGenAIManager implements LLMManager {
   }
 
   private static readonly RETRY_DELAYS = [5000, 30000, 60000];
+  private static readonly MAX_RETRIES = 5;
 
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await fn();
+        const result = await fn();
+        this.appController.setLLMStatus(null);
+        return result;
       } catch (error: any) {
         const errorStr = error?.toString() || "";
         const isRetryable =
@@ -323,13 +342,17 @@ export class GoogleGenAIManager implements LLMManager {
           errorStr.toLowerCase().includes("overloaded") ||
           errorStr.toLowerCase().includes("rate limit");
 
-        if (!isRetryable) {
+        if (!isRetryable || attempt >= GoogleGenAIManager.MAX_RETRIES) {
+          this.appController.setLLMStatus(null);
           throw error;
         }
 
         const delays = GoogleGenAIManager.RETRY_DELAYS;
         const delay = delays[Math.min(attempt, delays.length - 1)];
         console.warn(`LLM Request failed (attempt ${attempt + 1}). Retrying in ${delay / 1000}s...`, error);
+        if (attempt >= 1) {
+          this.appController.setLLMStatus(`Model is busy, retrying in ${delay / 1000}s\u2026`);
+        }
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }

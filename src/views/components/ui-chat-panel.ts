@@ -187,7 +187,7 @@ export class UiChatPanel extends MobxLitElement {
         ${llmBusy ? html`
           <div class="thinking">
             <div class="thinking-dots"><span></span><span></span><span></span></div>
-            Thinking
+            ${appState.local.llmStatus || 'Thinking'}
           </div>
         ` : ''}
       </div>

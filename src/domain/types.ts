@@ -65,6 +65,7 @@ export interface LocalState {
   settings: AppSettings;
   llmLogs: LLMLogEntry[];
   llmBusy: boolean;
+  llmStatus?: string;
   draftChat: string;
   activeRewindId: string | null;
   selectedEntity?: { id: string; type: 'IR' };
