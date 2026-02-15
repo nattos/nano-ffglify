@@ -450,6 +450,351 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
         state.flags.gpuDirty = false;
         state.flags.cpuDirty = false;
       }
+    },
+
+    executeCopyBuffer(srcId, dstId, srcOffset, dstOffset, count, resources) {
+      const src = resources.get(srcId);
+      const dst = resources.get(dstId);
+      if (!src || !dst) return;
+
+      const srcInfo = resourceInfos.get(srcId);
+      const dstInfo = resourceInfos.get(dstId);
+
+      // GPU path: only when GPU resources already exist (from prior dispatch)
+      const srcHasGpu = src.gpuBuffer && src.flags && src.flags.gpuDirty;
+      const dstHasGpu = dst.gpuBuffer;
+      if (srcInfo && dstInfo && (srcHasGpu || dstHasGpu)) {
+        _ensureGpuResource(device, src, srcInfo);
+        _ensureGpuResource(device, dst, dstInfo);
+
+        if (src.gpuBuffer && dst.gpuBuffer) {
+          const srcCC = srcInfo.componentCount || 1;
+          const dstCC = dstInfo.componentCount || 1;
+          const srcElems = Math.floor(src.gpuBuffer.size / (srcCC * 4));
+          const dstElems = Math.floor(dst.gpuBuffer.size / (dstCC * 4));
+          const maxFromSrc = srcElems - srcOffset;
+          const maxToDst = dstElems - dstOffset;
+          let actualCount = Math.min(maxFromSrc, maxToDst);
+          if (count !== Infinity && count >= 0) actualCount = Math.min(actualCount, count);
+          if (actualCount <= 0) return;
+
+          const srcByteOff = srcOffset * srcCC * 4;
+          const dstByteOff = dstOffset * dstCC * 4;
+          const byteCount = actualCount * srcCC * 4;
+
+          const encoder = device.createCommandEncoder();
+          encoder.copyBufferToBuffer(src.gpuBuffer, srcByteOff, dst.gpuBuffer, dstByteOff, byteCount);
+          device.queue.submit([encoder.finish()]);
+
+          if (!dst.flags) dst.flags = { cpuDirty: false, gpuDirty: false };
+          dst.flags.gpuDirty = true;
+          return;
+        }
+      }
+
+      // CPU fallback
+      if (!src.data || !dst.data) return;
+      const srcLen = src.data.length;
+      const dstLen = dst.data.length;
+      const maxFromSrc = srcLen - srcOffset;
+      const maxToDst = dstLen - dstOffset;
+      let actualCount = Math.min(maxFromSrc, maxToDst);
+      if (count !== Infinity && count >= 0) actualCount = Math.min(actualCount, count);
+      for (let i = 0; i < actualCount; i++) {
+        dst.data[dstOffset + i] = src.data[srcOffset + i];
+      }
+    },
+
+    executeCopyTexture(srcId, dstId, srcRect, dstRect, sample, alpha, normalized, resources) {
+      const src = resources.get(srcId);
+      const dst = resources.get(dstId);
+      if (!src || !dst) return;
+
+      const srcInfo = resourceInfos.get(srcId);
+      const dstInfo = resourceInfos.get(dstId);
+
+      // Resolve pixel rects
+      let sx = 0, sy = 0, sw = src.width, sh = src.height;
+      let dx = 0, dy = 0, dw = dst.width, dh = dst.height;
+      if (srcRect) {
+        if (normalized) {
+          sx = Math.floor(srcRect[0] * src.width); sy = Math.floor(srcRect[1] * src.height);
+          sw = Math.floor(srcRect[2] * src.width); sh = Math.floor(srcRect[3] * src.height);
+        } else {
+          sx = Math.floor(srcRect[0]); sy = Math.floor(srcRect[1]);
+          sw = Math.floor(srcRect[2]); sh = Math.floor(srcRect[3]);
+        }
+      }
+      if (dstRect) {
+        if (normalized) {
+          dx = Math.floor(dstRect[0] * dst.width); dy = Math.floor(dstRect[1] * dst.height);
+          dw = Math.floor(dstRect[2] * dst.width); dh = Math.floor(dstRect[3] * dst.height);
+        } else {
+          dx = Math.floor(dstRect[0]); dy = Math.floor(dstRect[1]);
+          dw = Math.floor(dstRect[2]); dh = Math.floor(dstRect[3]);
+        }
+      }
+
+      if (alpha <= 0) return;
+
+      const isSimpleCopy = (sw === dw && sh === dh && alpha >= 1.0);
+
+      // GPU path: only when GPU resources already exist (from prior dispatch)
+      const srcHasGpu = src.gpuTexture && src.flags && src.flags.gpuDirty;
+      const dstHasGpu = dst.gpuTexture;
+
+      // GPU path: simple blit (no scaling, no alpha blending)
+      if (srcInfo && dstInfo && isSimpleCopy && (srcHasGpu || dstHasGpu)) {
+        _ensureGpuResource(device, src, srcInfo);
+        _ensureGpuResource(device, dst, dstInfo);
+
+        if (src.gpuTexture && dst.gpuTexture) {
+          const copyW = Math.min(sw, src.width - sx, dst.width - dx);
+          const copyH = Math.min(sh, src.height - sy, dst.height - dy);
+          if (copyW <= 0 || copyH <= 0) return;
+
+          const encoder = device.createCommandEncoder();
+          encoder.copyTextureToTexture(
+            { texture: src.gpuTexture, origin: [sx, sy, 0] },
+            { texture: dst.gpuTexture, origin: [dx, dy, 0] },
+            [copyW, copyH, 1]
+          );
+          device.queue.submit([encoder.finish()]);
+
+          if (!dst.flags) dst.flags = { cpuDirty: false, gpuDirty: false };
+          dst.flags.gpuDirty = true;
+          return;
+        }
+      }
+
+      // GPU path: complex copy (scaling or alpha < 1.0) via compute shader
+      if (srcInfo && dstInfo && !isSimpleCopy && (srcHasGpu || dstHasGpu)) {
+        _ensureGpuResource(device, src, srcInfo);
+        _ensureGpuResource(device, dst, dstInfo);
+
+        if (src.gpuTexture && dst.gpuTexture) {
+          const dstFormat = dstInfo.format || 'rgba8unorm';
+          const needsAlphaBlend = alpha < 1.0;
+          const sampleMode = (sample === 'bilinear') ? 1 : 0;
+
+          // Get or create the copy compute pipeline
+          const pipelineKey = `__copy_tex_${dstFormat}`;
+          if (!pipelines.has(pipelineKey)) {
+            const shaderCode = `
+struct CopyParams {
+  src_rect: vec4<f32>,
+  dst_rect: vec4<f32>,
+  alpha: f32,
+  sample_mode: u32,
+  src_dims: vec2<f32>,
+}
+
+@group(0) @binding(0) var src_tex: texture_2d<f32>;
+@group(0) @binding(1) var orig_dst_tex: texture_2d<f32>;
+@group(0) @binding(2) var<uniform> params: CopyParams;
+@group(0) @binding(3) var dst_tex: texture_storage_2d<${dstFormat}, write>;
+
+@compute @workgroup_size(16, 16, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let dst_x = i32(params.dst_rect.x) + i32(gid.x);
+  let dst_y = i32(params.dst_rect.y) + i32(gid.y);
+  if (gid.x >= u32(params.dst_rect.z) || gid.y >= u32(params.dst_rect.w)) { return; }
+
+  // Map dst pixel to src coordinate
+  let u = params.src_rect.x + (f32(gid.x) + 0.5) * params.src_rect.z / params.dst_rect.z;
+  let v = params.src_rect.y + (f32(gid.y) + 0.5) * params.src_rect.w / params.dst_rect.w;
+
+  var pixel: vec4<f32>;
+  if (params.sample_mode == 1u) {
+    // Bilinear sampling
+    let tx = u - 0.5;
+    let ty = v - 0.5;
+    let x0 = i32(floor(tx));
+    let y0 = i32(floor(ty));
+    let fx = tx - floor(tx);
+    let fy = ty - floor(ty);
+    let sdims = vec2<i32>(params.src_dims);
+    let cx00 = clamp(vec2<i32>(x0, y0), vec2<i32>(0), sdims - vec2<i32>(1));
+    let cx10 = clamp(vec2<i32>(x0 + 1, y0), vec2<i32>(0), sdims - vec2<i32>(1));
+    let cx01 = clamp(vec2<i32>(x0, y0 + 1), vec2<i32>(0), sdims - vec2<i32>(1));
+    let cx11 = clamp(vec2<i32>(x0 + 1, y0 + 1), vec2<i32>(0), sdims - vec2<i32>(1));
+    let s00 = textureLoad(src_tex, cx00, 0);
+    let s10 = textureLoad(src_tex, cx10, 0);
+    let s01 = textureLoad(src_tex, cx01, 0);
+    let s11 = textureLoad(src_tex, cx11, 0);
+    let top = s00 * (1.0 - fx) + s10 * fx;
+    let bot = s01 * (1.0 - fx) + s11 * fx;
+    pixel = top * (1.0 - fy) + bot * fy;
+  } else {
+    // Nearest sampling
+    let ix = clamp(i32(floor(u)), 0, i32(params.src_dims.x) - 1);
+    let iy = clamp(i32(floor(v)), 0, i32(params.src_dims.y) - 1);
+    pixel = textureLoad(src_tex, vec2<i32>(ix, iy), 0);
+  }
+
+  if (params.alpha < 1.0) {
+    // Porter-Duff source-over compositing
+    let existing = textureLoad(orig_dst_tex, vec2<i32>(dst_x, dst_y), 0);
+    let srcA = pixel.a * params.alpha;
+    let dstA = existing.a;
+    let outA = srcA + dstA * (1.0 - srcA);
+    var out_color: vec4<f32>;
+    if (outA < 1e-5) {
+      out_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    } else {
+      out_color = vec4<f32>(
+        (pixel.r * srcA + existing.r * dstA * (1.0 - srcA)) / outA,
+        (pixel.g * srcA + existing.g * dstA * (1.0 - srcA)) / outA,
+        (pixel.b * srcA + existing.b * dstA * (1.0 - srcA)) / outA,
+        outA
+      );
+    }
+    textureStore(dst_tex, vec2<i32>(dst_x, dst_y), out_color);
+  } else {
+    textureStore(dst_tex, vec2<i32>(dst_x, dst_y), pixel);
+  }
+}
+`;
+            const module = device.createShaderModule({ code: shaderCode });
+            const p = device.createComputePipeline({
+              layout: 'auto',
+              compute: { module, entryPoint: 'main' }
+            });
+            pipelines.set(pipelineKey, p);
+          }
+          const copyPipeline = pipelines.get(pipelineKey);
+
+          // Create uniform buffer for CopyParams
+          const paramsBuffer = device.createBuffer({ size: 48, usage: 64 | 8 }); // UNIFORM | COPY_DST
+          const paramsData = new Float32Array([
+            sx, sy, sw, sh,    // src_rect
+            dx, dy, dw, dh,    // dst_rect
+            alpha, sampleMode, // alpha, sample_mode (u32 reinterpreted)
+            src.width, src.height // src_dims
+          ]);
+          // Correctly write sample_mode as u32
+          const paramsView = new DataView(paramsData.buffer);
+          paramsView.setUint32(9 * 4, sampleMode, true);
+          device.queue.writeBuffer(paramsBuffer, 0, paramsData);
+
+          // For alpha blending, we need the original dst texture content
+          let origDstTexture = src.gpuTexture; // dummy, won't be read if alpha >= 1.0
+          if (needsAlphaBlend) {
+            // Copy current dst to a temp texture for reading
+            origDstTexture = device.createTexture({
+              size: [dst.width, dst.height, 1],
+              format: dstFormat,
+              usage: 0x1F // all usages
+            });
+            const enc = device.createCommandEncoder();
+            enc.copyTextureToTexture(
+              { texture: dst.gpuTexture },
+              { texture: origDstTexture },
+              [dst.width, dst.height, 1]
+            );
+            device.queue.submit([enc.finish()]);
+          }
+
+          const bindGroup = device.createBindGroup({
+            layout: copyPipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: src.gpuTexture.createView() },
+              { binding: 1, resource: origDstTexture.createView() },
+              { binding: 2, resource: { buffer: paramsBuffer } },
+              { binding: 3, resource: dst.gpuTexture.createView() }
+            ]
+          });
+
+          const encoder = device.createCommandEncoder();
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(copyPipeline);
+          pass.setBindGroup(0, bindGroup);
+          pass.dispatchWorkgroups(Math.ceil(dw / 16), Math.ceil(dh / 16), 1);
+          pass.end();
+          device.queue.submit([encoder.finish()]);
+
+          if (needsAlphaBlend) {
+            origDstTexture.destroy();
+          }
+          paramsBuffer.destroy();
+
+          if (!dst.flags) dst.flags = { cpuDirty: false, gpuDirty: false };
+          dst.flags.gpuDirty = true;
+          return;
+        }
+      }
+
+      // CPU fallback
+      if (!src.data || !dst.data) return;
+
+      const getSrcPixel = (px, py) => {
+        const cx = Math.max(0, Math.min(src.width - 1, px));
+        const cy = Math.max(0, Math.min(src.height - 1, py));
+        const p = src.data[cy * src.width + cx];
+        return Array.isArray(p) ? p : [p, 0, 0, 1];
+      };
+
+      const sampleBilinear = (u, v) => {
+        const tx = u - 0.5, ty = v - 0.5;
+        const x0 = Math.floor(tx), y0 = Math.floor(ty);
+        const fx = tx - x0, fy = ty - y0;
+        const s00 = getSrcPixel(x0, y0);
+        const s10 = getSrcPixel(x0 + 1, y0);
+        const s01 = getSrcPixel(x0, y0 + 1);
+        const s11 = getSrcPixel(x0 + 1, y0 + 1);
+        const r = [0, 0, 0, 0];
+        for (let c = 0; c < 4; c++) {
+          const top = s00[c] * (1 - fx) + s10[c] * fx;
+          const bot = s01[c] * (1 - fx) + s11[c] * fx;
+          r[c] = top * (1 - fy) + bot * fy;
+        }
+        return r;
+      };
+
+      const needsSampling = sample !== null && (sw !== dw || sh !== dh);
+
+      for (let py = 0; py < dh; py++) {
+        for (let px = 0; px < dw; px++) {
+          const dstX = dx + px;
+          const dstY = dy + py;
+          if (dstX < 0 || dstX >= dst.width || dstY < 0 || dstY >= dst.height) continue;
+
+          let pixel;
+          if (needsSampling) {
+            const srcU = sx + (px + 0.5) * sw / dw;
+            const srcV = sy + (py + 0.5) * sh / dh;
+            if (sample === 'bilinear') {
+              pixel = sampleBilinear(srcU, srcV);
+            } else {
+              pixel = getSrcPixel(Math.floor(srcU), Math.floor(srcV));
+            }
+          } else {
+            const srcX = sx + Math.min(px, sw - 1);
+            const srcY = sy + Math.min(py, sh - 1);
+            pixel = getSrcPixel(srcX, srcY);
+          }
+
+          const dstIdx = dstY * dst.width + dstX;
+          if (alpha >= 1.0) {
+            dst.data[dstIdx] = [...pixel];
+          } else {
+            const existing = dst.data[dstIdx];
+            const dstPixel = Array.isArray(existing) ? existing : [existing, 0, 0, 1];
+            const srcA = pixel[3] * alpha;
+            const dstA = dstPixel[3];
+            const outA = srcA + dstA * (1 - srcA);
+            const out = [0, 0, 0, outA];
+            if (outA < 1e-5) {
+              out[0] = out[1] = out[2] = 0;
+            } else {
+              for (let c = 0; c < 3; c++) {
+                out[c] = (pixel[c] * srcA + dstPixel[c] * dstA * (1 - srcA)) / outA;
+              }
+            }
+            dst.data[dstIdx] = out;
+          }
+        }
+      }
     }
   };
 };

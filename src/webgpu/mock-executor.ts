@@ -23,6 +23,26 @@ export class MockGpuExecutor implements IGpuExecutor {
   async executeWaitCpuSync(resourceId: string, resources: Map<string, ResourceState>): Promise<void> {
     console.log(`[MockGpuExecutor] executeWaitCpuSync: ${resourceId}`);
   }
+
+  executeCopyBuffer(srcId: string, dstId: string, srcOffset: number, dstOffset: number, count: number, resources: Map<string, ResourceState>): void {
+    // CPU-only fallback for mock
+    const src = resources.get(srcId);
+    const dst = resources.get(dstId);
+    if (!src || !dst || !src.data || !dst.data) return;
+    const maxFromSrc = src.data.length - srcOffset;
+    const maxToDst = dst.data.length - dstOffset;
+    let actualCount = Math.min(maxFromSrc, maxToDst);
+    if (count !== Infinity && count >= 0) actualCount = Math.min(actualCount, count);
+    for (let i = 0; i < actualCount; i++) {
+      dst.data[dstOffset + i] = src.data[srcOffset + i];
+    }
+  }
+
+  executeCopyTexture(srcId: string, dstId: string, srcRect: [number, number, number, number] | null,
+                     dstRect: [number, number, number, number] | null, sample: string | null,
+                     alpha: number, normalized: boolean, resources: Map<string, ResourceState>): void {
+    console.log(`[MockGpuExecutor] executeCopyTexture: ${srcId} -> ${dstId}`);
+  }
 }
 
 /**

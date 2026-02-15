@@ -719,6 +719,31 @@ struct EvalContext {
     if (srcIdx >= resources.size() || dstIdx >= resources.size()) return;
     auto *srcRes = resources[srcIdx];
     auto *dstRes = resources[dstIdx];
+
+    // GPU path: use Metal blit when Metal buffers exist
+    if (!metalBuffers.empty() && srcIdx < metalBuffers.size() && dstIdx < metalBuffers.size()
+        && metalBuffers[srcIdx] != nil && metalBuffers[dstIdx] != nil) {
+      int srcElems = static_cast<int>(metalBuffers[srcIdx].length / (stride * sizeof(float)));
+      int dstElems = static_cast<int>(metalBuffers[dstIdx].length / (stride * sizeof(float)));
+      int maxFromSrc = srcElems - srcOffset;
+      int maxToDst = dstElems - dstOffset;
+      int actualCount = std::min(maxFromSrc, maxToDst);
+      if (count >= 0) actualCount = std::min(actualCount, count);
+      if (actualCount <= 0) return;
+      size_t srcByteOff = srcOffset * stride * sizeof(float);
+      size_t dstByteOff = dstOffset * stride * sizeof(float);
+      size_t byteCount = actualCount * stride * sizeof(float);
+      id<MTLCommandBuffer> cmdBuf = [commandQueue commandBuffer];
+      id<MTLBlitCommandEncoder> blit = [cmdBuf blitCommandEncoder];
+      [blit copyFromBuffer:metalBuffers[srcIdx] sourceOffset:srcByteOff
+                  toBuffer:metalBuffers[dstIdx] destinationOffset:dstByteOff size:byteCount];
+      [blit endEncoding];
+      [cmdBuf commit];
+      pendingCmdBuffer = cmdBuf;
+      return;
+    }
+
+    // CPU fallback
     int srcElems = static_cast<int>(srcRes->data.size()) / stride;
     int dstElems = static_cast<int>(dstRes->data.size()) / stride;
     int maxFromSrc = srcElems - srcOffset;
@@ -731,6 +756,45 @@ struct EvalContext {
         dstRes->data[(dstOffset + i) * stride + j] = srcRes->data[(srcOffset + i) * stride + j];
       }
     }
+  }
+
+  // Sync a single Metal texture's data into the resource's CPU data vector.
+  void syncTextureToData(size_t idx) {
+    if (idx >= metalTextures.size() || metalTextures[idx] == nil) return;
+    auto *res = resources[idx];
+    int w = static_cast<int>(res->width);
+    int h = static_cast<int>(res->height);
+    size_t bytesPerRow = w * 4; // RGBA8 = 4 bytes per pixel
+    std::vector<uint8_t> bytes(w * h * 4);
+    MTLRegion region = MTLRegionMake2D(0, 0, w, h);
+    [metalTextures[idx] getBytes:bytes.data()
+                     bytesPerRow:bytesPerRow
+                      fromRegion:region
+                     mipmapLevel:0];
+    res->data.resize(w * h * 4);
+    for (size_t j = 0; j < bytes.size(); ++j) {
+      res->data[j] = bytes[j] / 255.0f;
+    }
+  }
+
+  // Sync a single resource's CPU data vector back to its Metal texture.
+  void syncDataToTexture(size_t idx) {
+    if (idx >= metalTextures.size() || metalTextures[idx] == nil) return;
+    auto *res = resources[idx];
+    int w = static_cast<int>(res->width);
+    int h = static_cast<int>(res->height);
+    size_t pixelCount = w * h;
+    if (res->data.size() < pixelCount * 4) return;
+    std::vector<uint8_t> bytes(pixelCount * 4);
+    for (size_t j = 0; j < pixelCount * 4; ++j) {
+      float v = std::max(0.0f, std::min(1.0f, res->data[j]));
+      bytes[j] = static_cast<uint8_t>(v * 255.0f + 0.5f);
+    }
+    MTLRegion region = MTLRegionMake2D(0, 0, w, h);
+    [metalTextures[idx] replaceRegion:region
+                          mipmapLevel:0
+                            withBytes:bytes.data()
+                          bytesPerRow:w * 4];
   }
 
   // Copy/blit pixels between textures.
@@ -772,6 +836,38 @@ struct EvalContext {
     }
 
     if (alpha <= 0.0f) return;
+
+    bool isSimpleCopy = (isw == idw && ish == idh && alpha >= 1.0f && sampleMode == 0);
+
+    // GPU path: simple copy via Metal blit (no scaling, no alpha)
+    if (isSimpleCopy && !metalTextures.empty()
+        && srcIdx < metalTextures.size() && dstIdx < metalTextures.size()
+        && metalTextures[srcIdx] != nil && metalTextures[dstIdx] != nil) {
+      int copyW = std::min({isw, srcW - isx, dstW - idx_});
+      int copyH = std::min({ish, srcH - isy, dstH - idy});
+      if (copyW <= 0 || copyH <= 0) return;
+      id<MTLCommandBuffer> cmdBuf = [commandQueue commandBuffer];
+      id<MTLBlitCommandEncoder> blit = [cmdBuf blitCommandEncoder];
+      [blit copyFromTexture:metalTextures[srcIdx] sourceSlice:0 sourceLevel:0
+               sourceOrigin:MTLOriginMake(isx, isy, 0)
+                 sourceSize:MTLSizeMake(copyW, copyH, 1)
+                  toTexture:metalTextures[dstIdx] destinationSlice:0 destinationLevel:0
+           destinationOrigin:MTLOriginMake(idx_, idy, 0)];
+      [blit endEncoding];
+      [cmdBuf commit];
+      pendingCmdBuffer = cmdBuf;
+      return;
+    }
+
+    // Complex case with Metal textures: wait for GPU, sync textures to CPU, do CPU copy, sync back
+    if (!isSimpleCopy && !metalTextures.empty()
+        && srcIdx < metalTextures.size() && dstIdx < metalTextures.size()
+        && metalTextures[srcIdx] != nil && metalTextures[dstIdx] != nil) {
+      if (pendingCmdBuffer) { [pendingCmdBuffer waitUntilCompleted]; pendingCmdBuffer = nil; }
+      syncTextureToData(srcIdx);
+      syncTextureToData(dstIdx);
+      // Fall through to CPU sampling/compositing code below, then sync back
+    }
 
     auto getSrcPixel = [&](int px, int py) -> std::array<float, 4> {
       int cx = std::max(0, std::min(srcW - 1, px));
@@ -845,6 +941,12 @@ struct EvalContext {
           dstRes->data[dstOff+3] = outA;
         }
       }
+    }
+
+    // If we synced from Metal textures for complex copy, write result back
+    if (!isSimpleCopy && !metalTextures.empty()
+        && dstIdx < metalTextures.size() && metalTextures[dstIdx] != nil) {
+      syncDataToTexture(dstIdx);
     }
   }
 
