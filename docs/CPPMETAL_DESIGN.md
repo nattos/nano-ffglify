@@ -233,7 +233,7 @@ xcrun -sdk macosx metallib shaders.air -o default.metallib
 
 ### 3. Retained Buffer Resize
 - **Status**: Fixed
-- **Fix**: `resizeResource()`, `resizeResource2D()`, and `resizeResource2DWithClear()` now invalidate `retainedMetalBuffer` (set to nil) and clear `metalBuffers` to force `syncToMetal()` re-creation on next dispatch. Safety check in `syncToMetal()` also validates buffer size matches before reuse.
+- **Fix**: When a retained GPU buffer exists at resize time, `resizeResource()` and `resizeResource2D()` perform a **GPU-to-GPU buffer copy** via `MTLBlitCommandEncoder::copyFromBuffer` to preserve live data (for non-clearing resizes). The new buffer is swapped in-place in `metalBuffers[idx]`, avoiding a full `syncToMetal()` that would re-upload stale CPU data for other resources. `resizeResource2DWithClear()` uploads directly from CPU pattern data via `newBufferWithBytes`. Serial queue ordering ensures blit commands execute after any pending dispatch. Safety check in `syncToMetal()` also validates buffer size matches before reuse.
 
 ### 4. Staging Texture Allocation
 - **Status**: Fixed

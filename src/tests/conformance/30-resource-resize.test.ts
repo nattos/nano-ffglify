@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { cpuBackends, runFullGraphTest } from './test-runner';
+import { cpuBackends, availableBackends, runFullGraphTest } from './test-runner';
+import { CppMetalBackend } from './cppmetal-backend';
 import { IRDocument } from '../../ir/types';
 
 // Resource resize tests require CPU+GPU dispatch (CppMetal backend).
 const backends = cpuBackends;
+// GPU-to-GPU copy tests only work on CppMetal (CPU backend has no GPU buffers).
+const cppMetalOnly = availableBackends.filter(b => b === CppMetalBackend);
 
 describe('Conformance: Resource Resize', () => {
   if (backends.length === 0) {
@@ -241,5 +244,89 @@ describe('Conformance: Resource Resize', () => {
       expect(res.data![i]).toBe(99);
     }
   }, backends);
+
+  // ----------------------------------------------------------------
+  // Test 5: GPU data survives non-clearing resize (GPU-to-GPU copy)
+  // Dispatch writes values to b_data, resize without clearing,
+  // then dispatch reads b_data back into b_output to verify survival
+  // ----------------------------------------------------------------
+  const irGpuDataSurvivesResize: IRDocument = {
+    version: '1.0.0',
+    meta: { name: 'GPU Data Survives Resize' },
+    entryPoint: 'main',
+    inputs: [],
+    resources: [
+      {
+        id: 'b_data',
+        type: 'buffer',
+        dataType: 'float',
+        size: { mode: 'fixed', value: 5 },
+        persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: true }
+      },
+      {
+        id: 'b_output',
+        type: 'buffer',
+        dataType: 'float',
+        size: { mode: 'fixed', value: 5 },
+        persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: true }
+      }
+    ],
+    structs: [],
+    functions: [
+      {
+        id: 'main',
+        type: 'cpu',
+        inputs: [],
+        outputs: [],
+        localVars: [],
+        nodes: [
+          // Step 1: dispatch shader that writes (gid.x + 1) * 10 into b_data[gid.x]
+          { id: 'disp1', op: 'cmd_dispatch', func: 'shader_write', dispatch: [5, 1, 1], next: 'resize' },
+          // Step 2: resize b_data from 5 to 10 (clearOnResize = false)
+          { id: 'resize', op: 'cmd_resize_resource', resource: 'b_data', size: 10, next: 'disp2' },
+          // Step 3: dispatch shader that reads b_data[gid.x] into b_output[gid.x]
+          { id: 'disp2', op: 'cmd_dispatch', func: 'shader_read', dispatch: [5, 1, 1] }
+        ]
+      },
+      {
+        id: 'shader_write',
+        type: 'shader',
+        inputs: [],
+        outputs: [],
+        localVars: [],
+        nodes: [
+          { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+          { id: 'idx', op: 'vec_swizzle', vec: 'gid', channels: 'x' },
+          { id: 'fidx', op: 'static_cast_float', val: 'idx' },
+          { id: 'idx_plus_1', op: 'math_add', a: 'fidx', b: 1 },
+          { id: 'val', op: 'math_mul', a: 'idx_plus_1', b: 10 },
+          { id: 'store', op: 'buffer_store', buffer: 'b_data', index: 'idx', value: 'val' }
+        ]
+      },
+      {
+        id: 'shader_read',
+        type: 'shader',
+        inputs: [],
+        outputs: [],
+        localVars: [],
+        nodes: [
+          { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+          { id: 'idx', op: 'vec_swizzle', vec: 'gid', channels: 'x' },
+          { id: 'load', op: 'buffer_load', buffer: 'b_data', index: 'idx' },
+          { id: 'store', op: 'buffer_store', buffer: 'b_output', index: 'idx', value: 'load' }
+        ]
+      }
+    ]
+  };
+
+  runFullGraphTest('GPU data survives non-clearing resize', irGpuDataSurvivesResize, (ctx) => {
+    const res = ctx.getResource('b_output');
+    // Original 5 elements should be preserved: [10, 20, 30, 40, 50]
+    expect(res.data![0]).toBe(10);
+    expect(res.data![1]).toBe(20);
+    expect(res.data![2]).toBe(30);
+    expect(res.data![3]).toBe(40);
+    expect(res.data![4]).toBe(50);
+  }, cppMetalOnly);
 
 });

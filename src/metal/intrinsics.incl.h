@@ -612,13 +612,25 @@ struct EvalContext {
       res->height = 1;
       size_t totalFloats =
           static_cast<size_t>(newSize) * static_cast<size_t>(stride);
+      size_t newByteSize = totalFloats * sizeof(float);
+
+      // GPU-to-GPU buffer copy when a retained GPU buffer exists
+      if (res->retainedMetalBuffer != nil && device != nil) {
+        id<MTLBuffer> newBuffer = resizeGpuBuffer(res->retainedMetalBuffer, newByteSize, clearData);
+        res->retainedMetalBuffer = newBuffer;
+        if (!metalBuffers.empty() && idx < metalBuffers.size()) {
+          metalBuffers[idx] = newBuffer;
+        }
+      } else {
+        metalBuffers.clear(); // Force syncToMetal() on next dispatch
+      }
+
+      // Always keep CPU data sized correctly (for metadata, syncFromMetal)
       if (clearData) {
         res->data.assign(totalFloats, 0.0f);
       } else {
         res->data.resize(totalFloats, 0.0f);
       }
-      res->retainedMetalBuffer = nil; // Invalidate GPU buffer — size changed
-      metalBuffers.clear();           // Force syncToMetal() on next dispatch
       actionLog.push_back({"resize", "", newSize, 1});
     }
   }
@@ -635,13 +647,25 @@ struct EvalContext {
       bool isTex = idx < isTextureResource.size() && isTextureResource[idx];
       if (isTex)
         total *= 4;
+      size_t newByteSize = total * sizeof(float);
+
+      // GPU-to-GPU buffer copy when a retained GPU buffer exists
+      if (res->retainedMetalBuffer != nil && device != nil) {
+        id<MTLBuffer> newBuffer = resizeGpuBuffer(res->retainedMetalBuffer, newByteSize, clearData);
+        res->retainedMetalBuffer = newBuffer;
+        if (!metalBuffers.empty() && idx < metalBuffers.size()) {
+          metalBuffers[idx] = newBuffer;
+        }
+      } else {
+        metalBuffers.clear(); // Force syncToMetal() on next dispatch
+      }
+
+      // Always keep CPU data sized correctly (for metadata, syncFromMetal)
       if (clearData) {
         res->data.assign(total, 0.0f);
       } else {
         res->data.resize(total, 0.0f);
       }
-      res->retainedMetalBuffer = nil; // Invalidate GPU buffer — size changed
-      metalBuffers.clear();           // Force syncToMetal() on next dispatch
       actionLog.push_back({"resize", "", w, h});
     }
   }
@@ -665,8 +689,21 @@ struct EvalContext {
           res->data[i * elemSize + j] = pattern[j];
         }
       }
-      res->retainedMetalBuffer = nil; // Invalidate GPU buffer — size changed
-      metalBuffers.clear();           // Force syncToMetal() on next dispatch
+
+      // CPU pattern data is authoritative — upload from CPU
+      if (res->retainedMetalBuffer != nil && device != nil) {
+        size_t byteSize = res->data.size() * sizeof(float);
+        id<MTLBuffer> newBuffer =
+            [device newBufferWithBytes:res->data.data()
+                                length:std::max(byteSize, (size_t)sizeof(float))
+                               options:MTLResourceStorageModeShared];
+        res->retainedMetalBuffer = newBuffer;
+        if (!metalBuffers.empty() && idx < metalBuffers.size()) {
+          metalBuffers[idx] = newBuffer;
+        }
+      } else {
+        metalBuffers.clear(); // Force syncToMetal() on next dispatch
+      }
       actionLog.push_back({"resize", "", w, h});
     }
   }
@@ -676,6 +713,26 @@ struct EvalContext {
     if (it != inputs.end())
       return it->second;
     return 0.0f;
+  }
+
+  // Create a new Metal buffer and optionally blit old data into it (GPU-to-GPU copy).
+  // Serial queue ordering ensures the blit executes after any pending dispatch.
+  id<MTLBuffer> resizeGpuBuffer(id<MTLBuffer> oldBuffer, size_t newByteSize, bool clearData) {
+    size_t safeSize = std::max(newByteSize, (size_t)sizeof(float));
+    id<MTLBuffer> newBuffer = [device newBufferWithLength:safeSize
+                                                  options:MTLResourceStorageModeShared];
+    if (!clearData && oldBuffer != nil && oldBuffer.length > 0 && newByteSize > 0) {
+      size_t copySize = std::min((size_t)oldBuffer.length, newByteSize);
+      id<MTLCommandBuffer> cmdBuf = [commandQueue commandBuffer];
+      id<MTLBlitCommandEncoder> blit = [cmdBuf blitCommandEncoder];
+      [blit copyFromBuffer:oldBuffer sourceOffset:0
+                  toBuffer:newBuffer destinationOffset:0
+                      size:copySize];
+      [blit endEncoding];
+      [cmdBuf commit];
+      pendingCmdBuffer = cmdBuf;
+    }
+    return newBuffer;
   }
 
   // CPU-side texture sampling (for CPU functions that sample textures directly)
