@@ -69,8 +69,29 @@ export class WebGpuHost implements RuntimeGlobals {
       const newSize = typeof size === 'number' ? size : size[0];
       // Basic CPU-side resize/reinit for the host
       if (res.data && res.data.length === newSize && clear === undefined) return;
+
+      const shouldClear = clear !== undefined || (res.def.persistence?.clearOnResize !== false);
+
       res.width = newSize;
-      res.data = new Array(newSize).fill(clear ?? 0);
+      if (shouldClear) {
+        res.data = new Array(newSize).fill(clear ?? 0);
+        // Mark CPU data as dirty so cleared data gets uploaded to GPU
+        if ((res as any).flags) {
+          (res as any).flags.cpuDirty = true;
+        }
+      } else {
+        // Preserve existing data, extend with zeros for new elements
+        const oldData = res.data || [];
+        if (newSize <= oldData.length) {
+          res.data = oldData.slice(0, newSize);
+        } else {
+          res.data = [...oldData, ...new Array(newSize - oldData.length).fill(0)];
+        }
+        // Signal _ensureGpuResource to do GPU-to-GPU copy if a GPU buffer exists
+        if (res.gpuBuffer) {
+          (res as any)._preserveGpuOnResize = true;
+        }
+      }
     } else if (res.def.type === 'texture2d') {
       const width = Array.isArray(size) ? size[0] : size;
       const height = Array.isArray(size) ? size[1] : 1;

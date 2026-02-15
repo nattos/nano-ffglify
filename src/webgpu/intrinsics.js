@@ -478,12 +478,29 @@ const _ensureGpuResource = (device, state, info) => {
     const alignedSize = Math.max(Math.ceil(byteSize / 4) * 4, 16);
 
     if (!state.gpuBuffer || state.gpuBuffer.size < alignedSize) {
-      if (state.gpuBuffer) state.gpuBuffer.destroy();
+      const oldBuffer = state.gpuBuffer;
+      const preserveGpu = state._preserveGpuOnResize && oldBuffer;
+      delete state._preserveGpuOnResize;
+
       state.gpuBuffer = device.createBuffer({
         size: alignedSize,
         usage: 128 | 8 | 4 // STORAGE | COPY_DST | COPY_SRC
       });
-      state.flags.cpuDirty = true;
+
+      if (preserveGpu) {
+        // GPU-to-GPU copy: preserve existing data across resize
+        const encoder = device.createCommandEncoder();
+        const copySize = Math.min(oldBuffer.size, alignedSize);
+        encoder.copyBufferToBuffer(oldBuffer, 0, state.gpuBuffer, 0, copySize);
+        device.queue.submit([encoder.finish()]);
+        oldBuffer.destroy();
+      } else {
+        if (oldBuffer) oldBuffer.destroy();
+        state.flags.cpuDirty = true;
+      }
+    } else {
+      // Buffer is large enough — clean up flag if set
+      delete state._preserveGpuOnResize;
     }
   }
 

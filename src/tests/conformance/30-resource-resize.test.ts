@@ -1,12 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { cpuBackends, availableBackends, runFullGraphTest } from './test-runner';
-import { CppMetalBackend } from './cppmetal-backend';
+import { cpuBackends, runFullGraphTest } from './test-runner';
 import { IRDocument } from '../../ir/types';
 
 // Resource resize tests require CPU+GPU dispatch (CppMetal backend).
 const backends = cpuBackends;
-// GPU-to-GPU copy tests only work on CppMetal (CPU backend has no GPU buffers).
-const cppMetalOnly = availableBackends.filter(b => b === CppMetalBackend);
 
 describe('Conformance: Resource Resize', () => {
   if (backends.length === 0) {
@@ -327,6 +324,6 @@ describe('Conformance: Resource Resize', () => {
     expect(res.data![2]).toBe(30);
     expect(res.data![3]).toBe(40);
     expect(res.data![4]).toBe(50);
-  }, cppMetalOnly);
+  }, backends);
 
 });
