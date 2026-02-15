@@ -1142,6 +1142,184 @@ export const HISTOGRAM_SHADER: IRDocument = {
   ]
 };
 
+export const FEEDBACK_SHADER: IRDocument = {
+  version: '1.0.0',
+  meta: { name: 'Video Feedback' },
+  comment: 'Classic video feedback with whispy noise trails. A persistent texture holds the previous frame, sampled at 3 zoom levels with hash-noise UV offsets. The averaged, decayed feedback is composited with the live input via max, then copied back for the next frame.',
+  entryPoint: 'fn_main_cpu',
+
+  inputs: [
+    { id: 'input_visual', type: 'texture2d', format: 'rgba8', comment: 'Live input video stream.' }
+  ],
+
+  resources: [
+    {
+      id: 'output_tex',
+      type: 'texture2d',
+      format: TextureFormat.RGBA8,
+      size: { mode: 'viewport' },
+      isOutput: true,
+      persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
+    },
+    {
+      id: 'feedback_tex',
+      type: 'texture2d',
+      format: TextureFormat.RGBA8,
+      size: { mode: 'viewport' },
+      comment: 'Persistent feedback buffer: retains previous frame content, never cleared per-frame.',
+      persistence: { retain: true, clearOnResize: true, clearEveryFrame: false, cpuAccess: false }
+    }
+  ],
+
+  structs: [],
+
+  functions: [
+    {
+      id: 'fn_main_cpu',
+      type: 'cpu',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      comment: 'CPU entry: compute feedback effect, then copy output to feedback texture for next frame.',
+      nodes: [
+        { id: 'size', op: 'resource_get_size', resource: 'output_tex' },
+        { id: 'dispatch', op: 'cmd_dispatch', func: 'fn_feedback', threads: 'size', exec_out: 'copy' },
+        { id: 'copy', op: 'cmd_copy_texture', src: 'output_tex', dst: 'feedback_tex' }
+      ]
+    },
+    {
+      id: 'fn_feedback',
+      type: 'shader',
+      comment: 'Compute kernel: 3-tap zoomed feedback with hash noise for whispy trails, composited with live input.',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      nodes: [
+        { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
+        { id: 'time', op: 'builtin_get', name: 'time' },
+
+        { id: 'c_noise', op: 'comment', comment: 'Hash noise for whispy UV offsets: fract(sin(dot(uv, magic) + time*17.3) * 43758.5453). Two channels for x/y displacement.' },
+        { id: 'h_p1', op: 'float2', x: 127.1, y: 311.7 },
+        { id: 'h_dot', op: 'vec_dot', a: 'nuv.xy', b: 'h_p1' },
+        { id: 'h_t', op: 'math_mul', a: 'time', b: 17.3 },
+        { id: 'h_in', op: 'math_add', a: 'h_dot', b: 'h_t' },
+        { id: 'h_sin1', op: 'math_sin', val: 'h_in' },
+        { id: 'h_sc1', op: 'math_mul', a: 'h_sin1', b: 43758.5453 },
+        { id: 'n1', op: 'math_fract', val: 'h_sc1' },
+        { id: 'h_in2', op: 'math_add', a: 'h_in', b: 37.0 },
+        { id: 'h_sin2', op: 'math_sin', val: 'h_in2' },
+        { id: 'h_sc2', op: 'math_mul', a: 'h_sin2', b: 43758.5453 },
+        { id: 'n2', op: 'math_fract', val: 'h_sc2' },
+        { id: 'n1c', op: 'math_sub', a: 'n1', b: 0.5 },
+        { id: 'n2c', op: 'math_sub', a: 'n2', b: 0.5 },
+        { id: 'nx', op: 'math_mul', a: 'n1c', b: 0.006 },
+        { id: 'ny', op: 'math_mul', a: 'n2c', b: 0.006 },
+        { id: 'noise', op: 'float2', x: 'nx', y: 'ny' },
+
+        { id: 'c_taps', op: 'comment', comment: '3 taps at increasing zoom levels (0.996, 0.992, 0.988) toward center. Each uses a different noise offset for organic, whispy trail movement.' },
+        { id: 'cuv', op: 'math_sub', a: 'nuv.xy', b: 0.5 },
+
+        { id: 'z1', op: 'math_mul', a: 'cuv', b: 0.996 },
+        { id: 'u1r', op: 'math_add', a: 'z1', b: 0.5 },
+        { id: 'u1', op: 'math_add', a: 'u1r', b: 'noise' },
+        { id: 'fb1', op: 'texture_sample', tex: 'feedback_tex', coords: 'u1' },
+
+        { id: 'z2', op: 'math_mul', a: 'cuv', b: 0.992 },
+        { id: 'u2r', op: 'math_add', a: 'z2', b: 0.5 },
+        { id: 'neg_noise', op: 'math_mul', a: 'noise', b: -1.0 },
+        { id: 'u2', op: 'math_add', a: 'u2r', b: 'neg_noise' },
+        { id: 'fb2', op: 'texture_sample', tex: 'feedback_tex', coords: 'u2' },
+
+        { id: 'z3', op: 'math_mul', a: 'cuv', b: 0.988 },
+        { id: 'u3r', op: 'math_add', a: 'z3', b: 0.5 },
+        { id: 'rot_noise', op: 'float2', x: 'ny', y: 'nx' },
+        { id: 'u3', op: 'math_add', a: 'u3r', b: 'rot_noise' },
+        { id: 'fb3', op: 'texture_sample', tex: 'feedback_tex', coords: 'u3' },
+
+        { id: 'c_composite', op: 'comment', comment: 'Average 3 taps with 0.95 total decay (0.317 = 0.95/3). Then take max with input: brighter of feedback trail or live input wins. This naturally fades trails while keeping input crisp.' },
+        { id: 'sum12', op: 'math_add', a: 'fb1', b: 'fb2' },
+        { id: 'sum_all', op: 'math_add', a: 'sum12', b: 'fb3' },
+        { id: 'fb_avg', op: 'math_mul', a: 'sum_all', b: 0.317 },
+
+        { id: 'input_col', op: 'texture_sample', tex: 'input_visual', coords: 'nuv.xy' },
+        { id: 'combined', op: 'math_max', a: 'fb_avg', b: 'input_col' },
+
+        { id: 'out', op: 'float4', xyz: 'combined.xyz', w: 1.0 },
+        { id: 'store', op: 'texture_store', tex: 'output_tex', coords: 'gid.xy', value: 'out' }
+      ]
+    }
+  ]
+};
+
+export const UV_WARP_SHADER: IRDocument = {
+  version: '1.0.0',
+  meta: { name: 'UV Warp' },
+  comment: 'Barrel/pincushion UV distortion controlled by a strength parameter. Negative strength blows outward (fisheye), positive sucks inward. Formula: warped_uv = 0.5 + (uv - 0.5) * max(0.01, 1 + strength * r² * 2).',
+  entryPoint: 'fn_main_cpu',
+
+  inputs: [
+    { id: 'input_visual', type: 'texture2d', format: 'rgba8', comment: 'Input video stream.' },
+    { id: 'strength', type: 'float', default: 0.0, ui: { min: -1.0, max: 1.0, widget: 'slider' }, comment: 'Warp strength: -1 = fisheye (outward), +1 = suck (inward).' }
+  ],
+
+  resources: [
+    {
+      id: 'output_tex',
+      type: 'texture2d',
+      format: TextureFormat.RGBA8,
+      size: { mode: 'viewport' },
+      isOutput: true,
+      persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
+    }
+  ],
+
+  structs: [],
+
+  functions: [
+    {
+      id: 'fn_main_cpu',
+      type: 'cpu',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      nodes: [
+        { id: 'size', op: 'resource_get_size', resource: 'output_tex' },
+        { id: 'dispatch', op: 'cmd_dispatch', func: 'fn_warp', threads: 'size' }
+      ]
+    },
+    {
+      id: 'fn_warp',
+      type: 'shader',
+      comment: 'Compute kernel: radial UV warp. At center (offset=0), warp has no effect. Distortion increases quadratically toward edges.',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      nodes: [
+        { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
+
+        { id: 'str', op: 'var_get', var: 'strength' },
+
+        { id: 'c_warp', op: 'comment', comment: 'Radial warp: offset from center, scale by 1 + strength * r² * 2. Positive strength shrinks offset (inward), negative expands (outward). max(0.01, ...) prevents inversion.' },
+        { id: 'offset', op: 'math_sub', a: 'nuv.xy', b: 0.5 },
+        { id: 'r2', op: 'vec_dot', a: 'offset', b: 'offset' },
+        { id: 'sr2', op: 'math_mul', a: 'str', b: 'r2' },
+        { id: 'sr2x2', op: 'math_mul', a: 'sr2', b: 2.0 },
+        { id: 'warp_raw', op: 'math_add', a: 1.0, b: 'sr2x2' },
+        { id: 'warp', op: 'math_max', a: 'warp_raw', b: 0.01 },
+
+        { id: 'warped_off', op: 'math_mul', a: 'offset', b: 'warp' },
+        { id: 'warped_uv', op: 'math_add', a: 'warped_off', b: 0.5 },
+
+        { id: 'color', op: 'texture_sample', tex: 'input_visual', coords: 'warped_uv' },
+        { id: 'out', op: 'float4', xyz: 'color.xyz', w: 1.0 },
+        { id: 'store', op: 'texture_store', tex: 'output_tex', coords: 'gid.xy', value: 'out' }
+      ]
+    }
+  ]
+};
+
 export const ALL_EXAMPLES = {
   noise_shader: NOISE_SHADER,
   effect_shader: EFFECT_SHADER,
@@ -1149,4 +1327,6 @@ export const ALL_EXAMPLES = {
   raymarch_shader: RAYMARCH_SHADER,
   particle_shader: PARTICLE_SHADER,
   histogram_shader: HISTOGRAM_SHADER,
+  feedback_shader: FEEDBACK_SHADER,
+  uv_warp_shader: UV_WARP_SHADER,
 };
