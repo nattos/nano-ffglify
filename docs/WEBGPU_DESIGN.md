@@ -145,7 +145,7 @@ The CPU portion of the IR (Control Flow, Logic) is executed by a specialized JIT
 3.  **Decoupled Host Interface**: The JIT function accepts a simple `globals` object implementing the `RuntimeGlobals` interface. This interface uses standalone types (numbers, booleans, simple arrays/objects) rather than internal engine types.
 4.  **Flat Scope**: Local variables are compiled to JS `let` variables in a flat scope, avoiding `Map` lookups for performance and WGSL parity.
 5.  **Host Globals**:
-    *   `dispatch(target, workgroups, args)`: Triggers a GPU compute shader.
+    *   `dispatch(target, threadCounts, args)`: Triggers a GPU compute shader.
     *   `draw(target, vertex, fragment, count, pipeline)`: Executes a GPU render pass.
     *   `resize(resId, size, format, clear)`: Manages resource dimensions and state.
     *   `log(msg, payload)`: Debugging and profiling.

@@ -125,8 +125,8 @@ describe('Edge Reconstruction Parity', () => {
     localVars: [],
     nodes: [
       { id: 'resize_w', op: 'cmd_resize_resource', resource: 'b_weights', size: 'u_kernel_size' },
-      { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [4, 1, 1], exec_in: 'resize_w' },
-      { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1], exec_in: 'cmd_gen' }
+      { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', threads: [4, 1, 1], exec_in: 'resize_w' },
+      { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', threads: [1, 1, 1], exec_in: 'cmd_gen' }
     ]
   }, [
     { from: 'resize_w', portOut: 'exec_out', to: 'cmd_gen', portIn: 'exec_in', type: 'execution' },

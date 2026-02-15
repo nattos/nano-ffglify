@@ -405,9 +405,9 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   // Commands
   'cmd_dispatch': [
     { inputs: { func: 'string' }, output: 'any' },
-    { inputs: { func: 'string', dispatch: 'float3' }, output: 'any' },
-    { inputs: { func: 'string', dispatch: 'int' }, output: 'any' },
-    { inputs: { func: 'string', dispatch: 'any', args: 'any' }, output: 'any' },
+    { inputs: { func: 'string', threads: 'float3' }, output: 'any' },
+    { inputs: { func: 'string', threads: 'int' }, output: 'any' },
+    { inputs: { func: 'string', threads: 'any', args: 'any' }, output: 'any' },
     { inputs: { func: 'string', args: 'any' }, output: 'any' },
     { inputs: { func: 'string', '*': 'any' }, output: 'any' }
   ],

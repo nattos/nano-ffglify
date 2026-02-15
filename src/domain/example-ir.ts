@@ -32,7 +32,7 @@ export const NOISE_SHADER: IRDocument = {
       comment: 'CPU entry point: dispatches the noise compute kernel.',
       nodes: [
         { id: 'get_tex_size', op: 'resource_get_size', resource: 'output_tex' },
-        { id: 'dispatch_noise', op: 'cmd_dispatch', func: 'fn_noise_gpu', dispatch: 'get_tex_size', comment: 'Global inputs (scale) are automatically inherited by the shader.' }
+        { id: 'dispatch_noise', op: 'cmd_dispatch', func: 'fn_noise_gpu', threads: 'get_tex_size', comment: 'Global inputs (scale) are automatically inherited by the shader.' }
       ]
     },
     {
@@ -97,7 +97,7 @@ export const EFFECT_SHADER: IRDocument = {
       localVars: [],
       nodes: [
         { id: 'size', op: 'resource_get_size', resource: 'output_tex' },
-        { id: 'dispatch', op: 'cmd_dispatch', func: 'fn_effect_gpu', dispatch: 'size' }
+        { id: 'dispatch', op: 'cmd_dispatch', func: 'fn_effect_gpu', threads: 'size' }
       ]
     },
     {
@@ -158,7 +158,7 @@ export const MIXER_SHADER: IRDocument = {
       localVars: [],
       nodes: [
         { id: 'size', op: 'resource_get_size', resource: 'output_mix' },
-        { id: 'dispatch', op: 'cmd_dispatch', func: 'fn_mix_gpu', dispatch: 'size' }
+        { id: 'dispatch', op: 'cmd_dispatch', func: 'fn_mix_gpu', threads: 'size' }
       ]
     },
     {
@@ -224,9 +224,9 @@ export const RAYMARCH_SHADER: IRDocument = {
       outputs: [],
       localVars: [],
       nodes: [
-        { id: 'dispatch_evolve', op: 'cmd_dispatch', func: 'fn_evolve_sdf', dispatch: [32, 32, 32], exec_out: 'dispatch_render' },
+        { id: 'dispatch_evolve', op: 'cmd_dispatch', func: 'fn_evolve_sdf', threads: [32, 32, 32], exec_out: 'dispatch_render' },
         { id: 'size', op: 'resource_get_size', resource: 'output_ray' },
-        { id: 'dispatch_render', op: 'cmd_dispatch', func: 'fn_ray_gpu', dispatch: 'size' }
+        { id: 'dispatch_render', op: 'cmd_dispatch', func: 'fn_ray_gpu', threads: 'size' }
       ]
     },
     {
@@ -644,7 +644,7 @@ export const PARTICLE_SHADER: IRDocument = {
       nodes: [
         { id: 'pc', op: 'var_get', var: 'particle_count' },
         { id: 'pc_int', op: 'static_cast_int', val: 'pc' },
-        { id: 'dispatch_sim', op: 'cmd_dispatch', func: 'fn_simulate_gpu', dispatch: ['pc_int', 1, 1], exec_out: 'draw_particles' },
+        { id: 'dispatch_sim', op: 'cmd_dispatch', func: 'fn_simulate_gpu', threads: ['pc_int', 1, 1], exec_out: 'draw_particles' },
         { id: 'vert_count_f', op: 'math_mul', a: 'pc', b: 6, comment: '6 vertices per particle (2 triangles per quad).' },
         { id: 'vert_count', op: 'static_cast_int', val: 'vert_count_f' },
         {

@@ -339,9 +339,9 @@ describe('Conformance: Atomic Counters', () => {
             localVars: [],
             nodes: [
               // Dispatch 64 threads, each adds 1
-              { id: 'd', op: 'cmd_dispatch', func: 'shader_add', dispatch: [64, 1, 1] },
+              { id: 'd', op: 'cmd_dispatch', func: 'shader_add', threads: [64, 1, 1] },
               // Dispatch 1 thread to read counter into result buffer
-              { id: 'd2', op: 'cmd_dispatch', func: 'shader_read', dispatch: [1, 1, 1] },
+              { id: 'd2', op: 'cmd_dispatch', func: 'shader_read', threads: [1, 1, 1] },
             ]
           },
           {

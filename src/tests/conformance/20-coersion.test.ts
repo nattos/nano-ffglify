@@ -117,7 +117,7 @@ describe('20-coersion', () => {
       { id: 'p1', op: 'struct_construct', type: 'Point', values: { x: 1.0, y: 2.0 } },
       { id: 'p2', op: 'struct_construct', type: 'Point', values: { x: 3.0, y: 4.0 } },
       { id: 'arr', op: 'array_construct', values: ['p1', 'p2'] },
-      { id: 'disp', op: 'cmd_dispatch', func: 'shader_struct_arr', dispatch: [1, 1, 1], args: { data: 'arr' } }
+      { id: 'disp', op: 'cmd_dispatch', func: 'shader_struct_arr', threads: [1, 1, 1], args: { data: 'arr' } }
     ]
   };
 
@@ -143,7 +143,7 @@ describe('20-coersion', () => {
     localVars: [],
     nodes: [
       { id: 'arr', op: 'array_construct', length: 2, fill: 0.0 }, // No type property
-      { id: 'disp', op: 'cmd_dispatch', func: 'shader_float_arr', dispatch: [1, 1, 1], args: { data: 'arr' } }
+      { id: 'disp', op: 'cmd_dispatch', func: 'shader_float_arr', threads: [1, 1, 1], args: { data: 'arr' } }
     ]
   };
 

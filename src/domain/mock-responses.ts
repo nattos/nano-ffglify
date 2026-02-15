@@ -118,8 +118,8 @@ export const NOTES_MOCKS: Record<string, LLMResponse | LLMResponse[]> = {
                   { id: 'out_size', op: 'resource_get_size', resource: 't_output' },
                   { id: 'out_w', op: 'vec_get_element', vec: 'out_size', index: 0 },
                   { id: 'out_h', op: 'vec_get_element', vec: 'out_size', index: 1 },
-                  { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: ['u_kernel_size', 1, 1], exec_in: 'resize_w' },
-                  { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: ['out_w', 'out_h', 1], args: { u_kernel_size: 'u_kernel_size' }, exec_in: 'cmd_gen' }
+                  { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', threads: ['u_kernel_size', 1, 1], exec_in: 'resize_w' },
+                  { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', threads: ['out_w', 'out_h', 1], args: { u_kernel_size: 'u_kernel_size' }, exec_in: 'cmd_gen' }
                 ]
               },
               {
@@ -450,7 +450,7 @@ export const NOTES_MOCKS2: Record<string, LLMResponse | LLMResponse[]> = {
                 { id: "p1", op: "struct_construct", type: "Point", values: { x: 1, y: 2 } },
                 { id: "p2", op: "struct_construct", type: "Point", values: { x: 3, y: 4 } },
                 { id: "arr", op: "array_construct", values: ["p1", "p2"] },
-                { id: "disp", op: "cmd_dispatch", func: "shader", dispatch: [1, 1, 1], args: { data: "arr" } }
+                { id: "disp", op: "cmd_dispatch", func: "shader", threads: [1, 1, 1], args: { data: "arr" } }
               ]
             },
             {

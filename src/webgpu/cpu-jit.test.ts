@@ -21,7 +21,7 @@ describe('CpuJitCompiler: Argument Resolution', () => {
           outputs: [],
           localVars: [],
           nodes: [
-            { id: 'c1', op: 'cmd_dispatch', func: 'fn_compute', dispatch: ['u_kernel_size', 1, 1] }
+            { id: 'c1', op: 'cmd_dispatch', func: 'fn_compute', threads: ['u_kernel_size', 1, 1] }
           ]
         },
         { id: 'fn_compute', type: 'shader', inputs: [], outputs: [], localVars: [], nodes: [] }
@@ -54,7 +54,7 @@ describe('CpuJitCompiler: Argument Resolution', () => {
             { id: 'v_size', type: 'int', initialValue: 32 }
           ],
           nodes: [
-            { id: 'c1', op: 'cmd_dispatch', func: 'fn_compute', dispatch: [1, 'v_size', 1] }
+            { id: 'c1', op: 'cmd_dispatch', func: 'fn_compute', threads: [1, 'v_size', 1] }
           ]
         },
         { id: 'fn_compute', type: 'shader', inputs: [], outputs: [], localVars: [], nodes: [] }

@@ -743,20 +743,20 @@ export class CppGenerator {
     } else if (node.op === 'cmd_dispatch') {
       // Emit dispatch to Metal compute shader
       const targetFunc = node['func'];
-      const dispatch = node['dispatch'] || [1, 1, 1];
+      const threads = node['threads'] || [1, 1, 1];
 
-      // Build dispatch dimensions
+      // Build thread count dimensions
       let dimX: string, dimY: string, dimZ: string;
-      if (typeof dispatch === 'string') {
-        // dispatch is a node reference (e.g., resource_get_size result)
-        const dispatchExpr = this.resolveArg(node, 'dispatch', func, allFunctions, emitPure, edges, inferredTypes);
-        dimX = `static_cast<int>(${dispatchExpr}[0])`;
-        dimY = `static_cast<int>(${dispatchExpr}[1])`;
+      if (typeof threads === 'string') {
+        // threads is a node reference (e.g., resource_get_size result)
+        const threadsExpr = this.resolveArg(node, 'threads', func, allFunctions, emitPure, edges, inferredTypes);
+        dimX = `static_cast<int>(${threadsExpr}[0])`;
+        dimY = `static_cast<int>(${threadsExpr}[1])`;
         dimZ = '1';
-      } else if (Array.isArray(dispatch)) {
-        dimX = typeof dispatch[0] === 'number' ? String(dispatch[0]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_x']: dispatch[0] } as Node, 'dispatch_x', func, allFunctions, emitPure, edges, inferredTypes);
-        dimY = typeof dispatch[1] === 'number' ? String(dispatch[1]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_y']: dispatch[1] } as Node, 'dispatch_y', func, allFunctions, emitPure, edges, inferredTypes);
-        dimZ = typeof dispatch[2] === 'number' ? String(dispatch[2]) : this.resolveArg({ ...node, dispatch: undefined, ['dispatch_z']: dispatch[2] } as Node, 'dispatch_z', func, allFunctions, emitPure, edges, inferredTypes);
+      } else if (Array.isArray(threads)) {
+        dimX = typeof threads[0] === 'number' ? String(threads[0]) : this.resolveArg({ ...node, threads: undefined, ['threads_x']: threads[0] } as Node, 'threads_x', func, allFunctions, emitPure, edges, inferredTypes);
+        dimY = typeof threads[1] === 'number' ? String(threads[1]) : this.resolveArg({ ...node, threads: undefined, ['threads_y']: threads[1] } as Node, 'threads_y', func, allFunctions, emitPure, edges, inferredTypes);
+        dimZ = typeof threads[2] === 'number' ? String(threads[2]) : this.resolveArg({ ...node, threads: undefined, ['threads_z']: threads[2] } as Node, 'threads_z', func, allFunctions, emitPure, edges, inferredTypes);
       } else {
         dimX = '1'; dimY = '1'; dimZ = '1';
       }

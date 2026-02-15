@@ -57,8 +57,8 @@ describe('Conformance: Integration - Precomputed Blur', () => {
           { id: 'out_size', op: 'resource_get_size', resource: 't_output' },
           { id: 'out_w', op: 'vec_get_element', vec: 'out_size', index: 0 },
           { id: 'out_h', op: 'vec_get_element', vec: 'out_size', index: 1 },
-          { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: ['u_kernel_size', 1, 1], exec_in: 'resize_w' },
-          { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: ['out_w', 'out_h', 1], args: { u_kernel_size: 'u_kernel_size' }, exec_in: 'cmd_gen' }
+          { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', threads: ['u_kernel_size', 1, 1], exec_in: 'resize_w' },
+          { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', threads: ['out_w', 'out_h', 1], args: { u_kernel_size: 'u_kernel_size' }, exec_in: 'cmd_gen' }
         ]
       },
       {

@@ -193,7 +193,7 @@ export interface QuatMulArgs { a: any; b: any;[key: string]: any; }
 export interface DynamicArgs { [key: string]: any; }
 
 export interface StructConstructArgs { type: string; values?: Record<string, any>; }
-export interface CmdDispatchArgs { func: string; dispatch?: any; args?: Record<string, any>; }
+export interface CmdDispatchArgs { func: string; threads?: any; args?: Record<string, any>; }
 export interface CallFuncArgs { func: string; args?: Record<string, any>; }
 
 // --- Atomics ---
@@ -849,7 +849,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
     cpuOnly: true,
     args: {
       func: { type: z.string(), doc: "Shader function ID", requiredRef: true, refType: 'func', isIdentifier: true },
-      dispatch: { type: z.any(), doc: "Dispatch dimensions as thread counts (int3, or scalar for 1D). The runtime subdivides into workgroups internally.", optional: true, refable: true },
+      threads: { type: z.any(), doc: "Thread counts per dimension (int3, or scalar for 1D). The runtime subdivides into workgroups internally.", optional: true, refable: true },
       args: { type: z.any(), doc: "Shader arguments — keys must match function input IDs", optional: true }
     }
   }),

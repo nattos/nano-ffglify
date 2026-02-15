@@ -165,7 +165,7 @@ describe('Conformance: Error Handling & Negative Tests', () => {
     // Tests that host commands cannot be used in logic/shader functions
 
     runStaticBadIR('cmd_dispatch in Shader', [
-      { id: 'exec', op: 'cmd_dispatch', dispatch: [1, 1, 1], func: 'other' }
+      { id: 'exec', op: 'cmd_dispatch', threads: [1, 1, 1], func: 'other' }
     ], [], 'not allowed in shader functions', 'shader');
 
     runStaticBadIR('cmd_draw in Shader', [

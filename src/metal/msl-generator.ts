@@ -940,7 +940,7 @@ export class MslGenerator {
       }
       // Also emit inline references
       for (const k in curr) {
-        if (['id', 'op', 'metadata', 'func', 'args', 'dispatch', 'in_gid'].includes(k)) continue;
+        if (['id', 'op', 'metadata', 'func', 'args', 'threads', 'in_gid'].includes(k)) continue;
         const val = (curr as any)[k];
         if (typeof val === 'string' && func.nodes.some(n => n.id === val)) {
           emitPure(val);
@@ -1082,7 +1082,7 @@ export class MslGenerator {
 
       // 2. Emit inline references
       for (const k in node) {
-        if (['id', 'op', 'metadata', 'func', 'args', 'dispatch'].includes(k)) continue;
+        if (['id', 'op', 'metadata', 'func', 'args', 'threads'].includes(k)) continue;
         const val = (node as any)[k];
         if (typeof val === 'string' && func.nodes.some(n => n.id === val)) {
           emitPure(val);

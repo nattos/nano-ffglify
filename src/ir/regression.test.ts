@@ -22,7 +22,7 @@ describe('Regression: Refable Arguments', () => {
           outputs: [],
           localVars: [],
           nodes: [
-            { id: 'n1', op: 'cmd_dispatch', func: 'fn_compute', dispatch: ['u_size', 1, 1] }
+            { id: 'n1', op: 'cmd_dispatch', func: 'fn_compute', threads: ['u_size', 1, 1] }
           ]
         },
         {
@@ -44,7 +44,7 @@ describe('Regression: Refable Arguments', () => {
 
     // Also verify edges are reconstructed correctly
     const edges = reconstructEdges(doc.functions[0], doc);
-    const dispatchEdge = edges.find(e => e.to === 'n1' && e.portIn === 'dispatch[0]');
+    const dispatchEdge = edges.find(e => e.to === 'n1' && e.portIn === 'threads[0]');
     expect(dispatchEdge).toBeDefined();
     expect(dispatchEdge?.from).toBe('u_size');
   });
@@ -65,7 +65,7 @@ describe('Regression: Refable Arguments', () => {
           outputs: [],
           localVars: [],
           nodes: [
-            { id: 'n1', op: 'cmd_dispatch', func: 'fn_compute', dispatch: ['u_missing', 1, 1] }
+            { id: 'n1', op: 'cmd_dispatch', func: 'fn_compute', threads: ['u_missing', 1, 1] }
           ]
         },
         { id: 'fn_compute', type: 'shader', inputs: [], outputs: [], localVars: [], nodes: [] }

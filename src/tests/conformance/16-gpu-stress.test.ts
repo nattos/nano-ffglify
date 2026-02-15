@@ -42,7 +42,7 @@ describe('Conformance: GPU Stress Tests', () => {
           { id: 'init', op: 'buffer_store', buffer: 'b_rw', index: 0, value: 10, next: 'disp' },
 
           // Dispatch Shader that increments
-          { id: 'disp', op: 'cmd_dispatch', func: 'shader_inc', dispatch: [1, 1, 1] },
+          { id: 'disp', op: 'cmd_dispatch', func: 'shader_inc', threads: [1, 1, 1] },
         ],
       },
       {
@@ -95,7 +95,7 @@ describe('Conformance: GPU Stress Tests', () => {
         outputs: [],
         localVars: [],
         nodes: [
-          { id: 'disp', op: 'cmd_dispatch', func: 'shader_fill', dispatch: [size, 1, 1] }
+          { id: 'disp', op: 'cmd_dispatch', func: 'shader_fill', threads: [size, 1, 1] }
         ],
       },
       {

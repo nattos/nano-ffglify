@@ -802,7 +802,7 @@ export class WgslGenerator {
       const targetFunc = ir.functions.find(f => f.id === targetId);
       if (targetFunc) {
         const dispatchArgs = targetFunc.inputs.map((inp: any) => this.resolveArg(node, `args.${inp.id}`, func, options, ir, 'any', edges)).join(', ');
-        const dimExpr = this.resolveArg(node, 'dispatch', func, options, ir, 'any', edges);
+        const dimExpr = this.resolveArg(node, 'threads', func, options, ir, 'any', edges);
         lines.push(`${indent}// Dispatch: ${targetId}(${dispatchArgs}) with dim ${dimExpr}`);
         // Dispatch is a command, usually not emitted directly as code in the shader body
         // but here we might be emitting a call if it's a nested dispatch (rare)

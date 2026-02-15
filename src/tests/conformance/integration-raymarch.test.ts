@@ -35,10 +35,10 @@ function makeMultiFrameRaymarchIR(width: number, height: number, frameCount: num
         exec_body: 'dispatch_evolve',
         exec_completed: 'final_render'
       },
-      { id: 'dispatch_evolve', op: 'cmd_dispatch', func: 'fn_evolve_sdf', dispatch: [32, 32, 32], exec_out: 'wait_evolve' },
+      { id: 'dispatch_evolve', op: 'cmd_dispatch', func: 'fn_evolve_sdf', threads: [32, 32, 32], exec_out: 'wait_evolve' },
       { id: 'wait_evolve', op: 'cmd_wait_pending' },
       { id: 'size', op: 'resource_get_size', resource: 'output_ray' },
-      { id: 'final_render', op: 'cmd_dispatch', func: 'fn_ray_gpu', dispatch: 'size' }
+      { id: 'final_render', op: 'cmd_dispatch', func: 'fn_ray_gpu', threads: 'size' }
     ];
   }
   return ir;

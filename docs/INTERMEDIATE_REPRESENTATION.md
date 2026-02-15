@@ -109,7 +109,7 @@ interface VariableDef {
         { "id": "resize_w", "op": "cmd_resize_resource", "resource": "b_weights", "size": "u_kernel_size" }, // 'u_kernel_size' input ref
 
         // 2. Dispatch Kernel Generation (Single thread)
-        { "id": "cmd_gen", "op": "cmd_dispatch", "func": "fn_gen_kernel", "dispatch": [1, 1, 1], "exec_in": "resize_w" },
+        { "id": "cmd_gen", "op": "cmd_dispatch", "func": "fn_gen_kernel", "threads": [1, 1, 1], "exec_in": "resize_w" },
 
         // 3. Dispatch Blur (Full screen)
         { "id": "get_size", "op": "resource_get_size", "resource": "t_input" },

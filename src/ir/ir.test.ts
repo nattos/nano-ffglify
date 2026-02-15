@@ -68,10 +68,10 @@ describe('IR Validation', () => {
           localVars: [],
           nodes: [
             { id: 'resize_w', op: 'cmd_resize_resource', resource: 'b_weights', size: 'u_kernel_size' },
-            { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', dispatch: [16, 1, 1] },
+            { id: 'cmd_gen', op: 'cmd_dispatch', func: 'fn_gen_kernel', threads: [16, 1, 1] },
             { id: 'get_size', op: 'resource_get_size', resource: 't_input' },
             { id: 'calc_groups', op: 'math_div_scalar', val: 'get_size', scalar: 8 },
-            { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', dispatch: [1, 1, 1] }
+            { id: 'cmd_blur', op: 'cmd_dispatch', func: 'fn_blur', threads: [1, 1, 1] }
           ]
         },
         {

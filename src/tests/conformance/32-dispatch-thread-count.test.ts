@@ -38,7 +38,7 @@ describe('Conformance: Dispatch Thread Count Semantics', () => {
             outputs: [],
             localVars: [],
             nodes: [
-              { id: 'd', op: 'cmd_dispatch', func: 'shader_write', dispatch: [4, 1, 1] },
+              { id: 'd', op: 'cmd_dispatch', func: 'shader_write', threads: [4, 1, 1] },
             ]
           },
           {
@@ -96,7 +96,7 @@ describe('Conformance: Dispatch Thread Count Semantics', () => {
             outputs: [],
             localVars: [],
             nodes: [
-              { id: 'd', op: 'cmd_dispatch', func: 'shader_write', dispatch: [17, 1, 1] },
+              { id: 'd', op: 'cmd_dispatch', func: 'shader_write', threads: [17, 1, 1] },
             ]
           },
           {
@@ -155,7 +155,7 @@ describe('Conformance: Dispatch Thread Count Semantics', () => {
             outputs: [],
             localVars: [],
             nodes: [
-              { id: 'd', op: 'cmd_dispatch', func: 'shader_write', dispatch: [2, 3, 1] },
+              { id: 'd', op: 'cmd_dispatch', func: 'shader_write', threads: [2, 3, 1] },
             ]
           },
           {
@@ -218,7 +218,7 @@ describe('Conformance: Dispatch Thread Count Semantics', () => {
             outputs: [],
             localVars: [],
             nodes: [
-              { id: 'd', op: 'cmd_dispatch', func: 'shader_write', dispatch: [10, 1, 1] },
+              { id: 'd', op: 'cmd_dispatch', func: 'shader_write', threads: [10, 1, 1] },
             ]
           },
           {

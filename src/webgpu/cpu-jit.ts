@@ -466,14 +466,14 @@ require('./intrinsics.js');
   private emitNode(indent: string, node: Node, func: FunctionDef, lines: string[], sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]) {
     if (node.op === 'cmd_dispatch') {
       const targetId = node['func'];
-      const dimExpr = this.resolveArg(node, 'dispatch', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+      const dimExpr = this.resolveArg(node, 'threads', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimExpr}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)});`);
     }
     else if (node.op === 'call_func') {
       const targetId = node['func'];
       const targetFunc = allFunctions.find(f => f.id === targetId);
       if (targetFunc?.type === 'shader') {
-        const dimExpr = this.resolveArg(node, 'dispatch', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        const dimExpr = this.resolveArg(node, 'threads', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
         lines.push(`${indent}await ctx.globals.dispatch('${targetId}', ${dimExpr}, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)});`);
       } else if (targetFunc) {
         lines.push(`${indent}${nodeResId(node.id)} = await ${funcName(targetId)}(ctx, ${this.generateArgsObject(node, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges)});`);

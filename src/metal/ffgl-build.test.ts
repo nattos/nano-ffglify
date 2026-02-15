@@ -199,7 +199,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
           localVars: [],
           nodes: [
             { id: 'out_size', op: 'resource_get_size', resource: 'out_tex' },
-            { id: 'disp', op: 'cmd_dispatch', func: 'fn_mixer_gpu', dispatch: 'out_size', args: { 'mix_val': 'mix' } }
+            { id: 'disp', op: 'cmd_dispatch', func: 'fn_mixer_gpu', threads: 'out_size', args: { 'mix_val': 'mix' } }
           ]
         }
       ]

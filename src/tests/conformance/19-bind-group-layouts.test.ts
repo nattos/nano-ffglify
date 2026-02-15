@@ -37,7 +37,7 @@ describe('Conformance: Bind Group Layouts', () => {
           outputs: [],
           localVars: [],
           nodes: [
-            { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1] }
+            { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', threads: [1, 1, 1] }
           ]
         },
         {
@@ -85,7 +85,7 @@ describe('Conformance: Bind Group Layouts', () => {
           outputs: [],
           localVars: [],
           nodes: [
-            { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1] }
+            { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', threads: [1, 1, 1] }
           ]
         },
         {
@@ -130,7 +130,7 @@ describe('Conformance: Bind Group Layouts', () => {
           localVars: [],
           nodes: [
             { id: 'v', op: 'float', val: 789.0 },
-            { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1], args: { val: 'v' } }
+            { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', threads: [1, 1, 1], args: { val: 'v' } }
           ]
         },
         {
@@ -170,7 +170,7 @@ describe('Conformance: Bind Group Layouts', () => {
             outputs: [],
             localVars: [],
             nodes: [
-              { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', dispatch: [1, 1, 1] }
+              { id: 'disp', op: 'cmd_dispatch', func: 'shader_main', threads: [1, 1, 1] }
             ]
           },
           {

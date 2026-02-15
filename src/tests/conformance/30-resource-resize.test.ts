@@ -39,7 +39,7 @@ describe('Conformance: Resource Resize', () => {
         localVars: [],
         nodes: [
           { id: 'resize', op: 'cmd_resize_resource', resource: 'b_output', size: 10, next: 'disp' },
-          { id: 'disp', op: 'cmd_dispatch', func: 'shader_fill', dispatch: [10, 1, 1] }
+          { id: 'disp', op: 'cmd_dispatch', func: 'shader_fill', threads: [10, 1, 1] }
         ]
       },
       {
@@ -149,7 +149,7 @@ describe('Conformance: Resource Resize', () => {
         localVars: [],
         nodes: [
           { id: 'resize', op: 'cmd_resize_resource', resource: 'b_data', size: 20, next: 'disp' },
-          { id: 'disp', op: 'cmd_dispatch', func: 'shader_check_size', dispatch: [1, 1, 1] }
+          { id: 'disp', op: 'cmd_dispatch', func: 'shader_check_size', threads: [1, 1, 1] }
         ]
       },
       {
@@ -201,10 +201,10 @@ describe('Conformance: Resource Resize', () => {
         nodes: [
           // Cycle 1: resize to 5, dispatch shader that writes 42
           { id: 'resize1', op: 'cmd_resize_resource', resource: 'b_buf', size: 5, next: 'disp1' },
-          { id: 'disp1', op: 'cmd_dispatch', func: 'shader_write_42', dispatch: [5, 1, 1], next: 'resize2' },
+          { id: 'disp1', op: 'cmd_dispatch', func: 'shader_write_42', threads: [5, 1, 1], next: 'resize2' },
           // Cycle 2: resize to 10 (clears data), dispatch shader that writes 99
           { id: 'resize2', op: 'cmd_resize_resource', resource: 'b_buf', size: 10, next: 'disp2' },
-          { id: 'disp2', op: 'cmd_dispatch', func: 'shader_write_99', dispatch: [10, 1, 1] }
+          { id: 'disp2', op: 'cmd_dispatch', func: 'shader_write_99', threads: [10, 1, 1] }
         ]
       },
       {
@@ -278,11 +278,11 @@ describe('Conformance: Resource Resize', () => {
         localVars: [],
         nodes: [
           // Step 1: dispatch shader that writes (gid.x + 1) * 10 into b_data[gid.x]
-          { id: 'disp1', op: 'cmd_dispatch', func: 'shader_write', dispatch: [5, 1, 1], next: 'resize' },
+          { id: 'disp1', op: 'cmd_dispatch', func: 'shader_write', threads: [5, 1, 1], next: 'resize' },
           // Step 2: resize b_data from 5 to 10 (clearOnResize = false)
           { id: 'resize', op: 'cmd_resize_resource', resource: 'b_data', size: 10, next: 'disp2' },
           // Step 3: dispatch shader that reads b_data[gid.x] into b_output[gid.x]
-          { id: 'disp2', op: 'cmd_dispatch', func: 'shader_read', dispatch: [5, 1, 1] }
+          { id: 'disp2', op: 'cmd_dispatch', func: 'shader_read', threads: [5, 1, 1] }
         ]
       },
       {
