@@ -333,14 +333,18 @@ const _createExecutor = (device, pipelines, precomputedInfos, renderPipelines, r
         }
       }
 
+      const useLoadOp = pipeline.loadOp || 'clear';
       const encoder = device.createCommandEncoder();
+      const colorAttachment = {
+        view: targetState.gpuTexture.createView(),
+        loadOp: useLoadOp,
+        storeOp: 'store',
+      };
+      if (useLoadOp === 'clear') {
+        colorAttachment.clearValue = { r: 0, g: 0, b: 0, a: 0 };
+      }
       const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: targetState.gpuTexture.createView(),
-          loadOp: 'clear',
-          storeOp: 'store',
-          clearValue: { r: 0, g: 0, b: 0, a: 0 }
-        }]
+        colorAttachments: [colorAttachment]
       });
 
       pass.setPipeline(pipeline);

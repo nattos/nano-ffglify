@@ -14,6 +14,7 @@ export interface RenderPipelineDef {
   topology?: 'point-list' | 'line-list' | 'line-strip' | 'triangle-list' | 'triangle-strip';
   cullMode?: 'none' | 'front' | 'back';
   frontFace?: 'ccw' | 'cw';
+  loadOp?: 'clear' | 'load';
   depthStencil?: {
     format: string; // Decoupled from TextureFormat enum
     depthWriteEnabled: boolean;

@@ -926,10 +926,12 @@ export class CppGenerator {
           lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->height));`);
         }
 
-        lines.push(`${indent}    ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}), _shader_args);`);
+        const loadExisting1 = (node['pipeline']?.loadOp === 'load') ? 'true' : 'false';
+        lines.push(`${indent}    ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}), _shader_args, ${loadExisting1});`);
         lines.push(`${indent}}`);
       } else {
-        lines.push(`${indent}ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}));`);
+        const loadExisting2 = (node['pipeline']?.loadOp === 'load') ? 'true' : 'false';
+        lines.push(`${indent}ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}), {}, ${loadExisting2});`);
       }
     } else if (this.hasResult(node.op)) {
       // Executable nodes with results (like call_func) need auto declarations

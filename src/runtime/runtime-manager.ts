@@ -166,9 +166,13 @@ export class RuntimeManager {
 
         if (inp.type === 'texture2d') {
           this.textureInputIds.push(inp.id);
-          // Initialize with test.png if not already set
           if (!this.inputSources.has(inp.id)) {
+            // Initialize with test.png if not already set
             this.setTextureSource(inp.id, { type: 'url', value: 'test.png' });
+          } else {
+            // Mark existing source as dirty so it gets re-blitted to the new GPU texture
+            const existing = this.inputSources.get(inp.id)!;
+            existing.isDirty = true;
           }
           entry.currentValue = inp.id; // The resource ID
           this.inputs.set(inp.id, inp.id);

@@ -384,6 +384,7 @@ export interface RenderPipelineDef {
   topology?: 'point-list' | 'line-list' | 'line-strip' | 'triangle-list' | 'triangle-strip'; // Default: triangle-list
   cullMode?: 'none' | 'front' | 'back'; // Default: none
   frontFace?: 'ccw' | 'cw'; // Default: ccw
+  loadOp?: 'clear' | 'load'; // Default: clear. Use 'load' to preserve existing render target content.
   depthStencil?: {
     format: TextureFormat;
     depthWriteEnabled: boolean;

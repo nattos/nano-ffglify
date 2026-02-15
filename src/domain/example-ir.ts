@@ -952,6 +952,7 @@ export const HISTOGRAM_SHADER: IRDocument = {
           comment: '256 bins × 3 channels × 6 verts/bar = 4608 vertices.',
           pipeline: {
             topology: 'triangle-list',
+            loadOp: 'load',
             blend: {
               color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
               alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' }
@@ -1000,7 +1001,8 @@ export const HISTOGRAM_SHADER: IRDocument = {
         { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
         { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
         { id: 'color', op: 'texture_sample', tex: 'input_visual', coords: 'nuv.xy' },
-        { id: 'store_px', op: 'texture_store', tex: 'output_tex', coords: 'gid.xy', value: 'color', exec_out: 'add_r' },
+        { id: 'opaque', op: 'float4', x: 'color.x', y: 'color.y', z: 'color.z', w: 1.0 },
+        { id: 'store_px', op: 'texture_store', tex: 'output_tex', coords: 'gid.xy', value: 'opaque', exec_out: 'add_r' },
 
         { id: 'c_bin', op: 'comment', comment: 'Quantize R/G/B to 0-255 and add channel offset for flat layout.' },
         { id: 'r_s', op: 'math_mul', a: 'color.x', b: 255.0 },

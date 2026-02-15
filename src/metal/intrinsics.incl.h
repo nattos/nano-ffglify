@@ -1370,7 +1370,8 @@ struct EvalContext {
   // Draw call (render pipeline)
   void draw(size_t targetIdx, const char *vsFunc, const char *fsFunc,
             int vertexCount,
-            const std::vector<float> &args = {}) {
+            const std::vector<float> &args = {},
+            bool loadExisting = false) {
     if (metalBuffers.empty()) {
       syncToMetal();
     }
@@ -1412,9 +1413,11 @@ struct EvalContext {
     MTLRenderPassDescriptor *passDesc =
         [MTLRenderPassDescriptor renderPassDescriptor];
     passDesc.colorAttachments[0].texture = metalTextures[targetIdx];
-    passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
-    passDesc.colorAttachments[0].clearColor =
-        MTLClearColorMake(0, 0, 0, 0); // Clear to transparent black
+    passDesc.colorAttachments[0].loadAction = loadExisting ? MTLLoadActionLoad : MTLLoadActionClear;
+    if (!loadExisting) {
+      passDesc.colorAttachments[0].clearColor =
+          MTLClearColorMake(0, 0, 0, 0); // Clear to transparent black
+    }
     passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
 
     id<MTLCommandBuffer> cmdBuffer = [commandQueue commandBuffer];
