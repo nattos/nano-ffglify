@@ -512,6 +512,34 @@ require('./intrinsics.js');
       const resId = node['resource'];
       lines.push(`${indent}await ctx.globals.executeWaitCpuSync('${resId}');`);
     }
+    else if (node.op === 'cmd_copy_buffer') {
+      const srcId = node['src'];
+      const dstId = node['dst'];
+      const resolveOpt = (key: string, defaultVal: string) => {
+        const edge = edges.find(e => e.to === node.id && e.portIn === key && e.type === 'data');
+        if (edge || node[key] !== undefined) return this.resolveArg(node, key, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return defaultVal;
+      };
+      const srcOffset = resolveOpt('src_offset', '0');
+      const dstOffset = resolveOpt('dst_offset', '0');
+      const count = resolveOpt('count', 'Infinity');
+      lines.push(`${indent}ctx.globals.copyBuffer('${srcId}', '${dstId}', ${srcOffset}, ${dstOffset}, ${count});`);
+    }
+    else if (node.op === 'cmd_copy_texture') {
+      const srcId = node['src'];
+      const dstId = node['dst'];
+      const resolveOpt = (key: string) => {
+        const edge = edges.find(e => e.to === node.id && e.portIn === key && e.type === 'data');
+        if (edge || node[key] !== undefined) return this.resolveArg(node, key, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+        return 'null';
+      };
+      const srcRect = resolveOpt('src_rect');
+      const dstRect = resolveOpt('dst_rect');
+      const sample = node['sample'] !== undefined ? JSON.stringify(node['sample']) : 'null';
+      const alpha = resolveOpt('alpha') === 'null' ? '1.0' : resolveOpt('alpha');
+      const normalized = node['normalized'] === true ? 'true' : 'false';
+      lines.push(`${indent}ctx.globals.copyTexture('${srcId}', '${dstId}', ${srcRect}, ${dstRect}, ${sample}, ${alpha}, ${normalized});`);
+    }
     else if (node.op === 'buffer_store') {
       const bufferId = node['buffer'];
       const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);

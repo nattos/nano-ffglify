@@ -1,5 +1,5 @@
 import { IRDocument, BuiltinOp, TextureFormat, TextureFormatValues, TextureFormatFromId } from '../ir/types';
-import { AtomicLoadArgs, AtomicStoreArgs, AtomicRmwArgs, CmdSyncToCpuArgs, CmdWaitCpuSyncArgs, OpArgs } from '../ir/builtin-schemas';
+import { AtomicLoadArgs, AtomicStoreArgs, AtomicRmwArgs, CmdSyncToCpuArgs, CmdWaitCpuSyncArgs, CmdCopyBufferArgs, CmdCopyTextureArgs, OpArgs } from '../ir/builtin-schemas';
 import { EvaluationContext, RuntimeValue, VectorValue } from './context';
 
 export type OpHandler<K extends BuiltinOp> = (ctx: EvaluationContext, args: OpArgs[K]) => RuntimeValue | void;
@@ -1000,5 +1000,13 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   },
   'atomic_exchange': function (ctx: EvaluationContext, args: AtomicRmwArgs): RuntimeValue | void {
     throw new Error('Atomic operations not implemented in interpreter');
+  },
+
+  // Copy ops — interpreter is disabled but stubs needed for type completeness
+  'cmd_copy_buffer': function (ctx: EvaluationContext, args: CmdCopyBufferArgs): RuntimeValue | void {
+    throw new Error('cmd_copy_buffer not implemented in interpreter');
+  },
+  'cmd_copy_texture': function (ctx: EvaluationContext, args: CmdCopyTextureArgs): RuntimeValue | void {
+    throw new Error('cmd_copy_texture not implemented in interpreter');
   },
 };

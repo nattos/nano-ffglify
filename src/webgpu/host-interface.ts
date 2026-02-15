@@ -172,4 +172,16 @@ export interface RuntimeGlobals {
    * Waits for a previously initiated readback to complete.
    */
   executeWaitCpuSync(resId: string): Promise<void>;
+
+  /**
+   * Copy elements from one buffer to another.
+   */
+  copyBuffer(srcId: string, dstId: string, srcOffset: number, dstOffset: number, count: number): void;
+
+  /**
+   * Copy/blit pixels from one texture to another with optional scaling and alpha blending.
+   */
+  copyTexture(srcId: string, dstId: string, srcRect: [number, number, number, number] | null,
+              dstRect: [number, number, number, number] | null, sample: string | null,
+              alpha: number, normalized: boolean): void;
 }

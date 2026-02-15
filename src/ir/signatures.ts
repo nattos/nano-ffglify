@@ -421,6 +421,16 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   ],
   'cmd_sync_to_cpu': [{ inputs: { resource: 'string' }, output: 'any' }],
   'cmd_wait_cpu_sync': [{ inputs: { resource: 'string' }, output: 'any' }],
+  'cmd_copy_buffer': [
+    { inputs: { src: 'string', dst: 'string' }, output: 'any' },
+    { inputs: { src: 'string', dst: 'string', src_offset: 'int', dst_offset: 'int', count: 'int' }, output: 'any' },
+    { inputs: { src: 'string', dst: 'string', '*': 'any' }, output: 'any' }
+  ],
+  'cmd_copy_texture': [
+    { inputs: { src: 'string', dst: 'string' }, output: 'any' },
+    { inputs: { src: 'string', dst: 'string', src_rect: 'float4', dst_rect: 'float4', sample: 'string', alpha: 'float', normalized: 'boolean' }, output: 'any' },
+    { inputs: { src: 'string', dst: 'string', '*': 'any' }, output: 'any' }
+  ],
 
   // Atomics
   'atomic_load':     [{ inputs: { counter: 'string', index: 'int' }, output: 'int' }],

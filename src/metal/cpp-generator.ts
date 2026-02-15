@@ -738,6 +738,44 @@ export class CppGenerator {
         const sizeExpr = this.resolveArg(node, 'size', func, allFunctions, emitPure, edges, inferredTypes);
         lines.push(`${indent}ctx.resizeResource(${resIdx}, static_cast<int>(${sizeExpr}), ${stride}, ${clearOnResize ? 'true' : 'false'});`);
       }
+    } else if (node.op === 'cmd_copy_buffer') {
+      const srcId = node['src'];
+      const dstId = node['dst'];
+      const allRes = this.getAllResources();
+      const srcIdx = allRes.findIndex(r => r.id === srcId);
+      const dstIdx = allRes.findIndex(r => r.id === dstId);
+      const srcDef = this.ir?.resources.find(r => r.id === srcId);
+      const dataType = srcDef?.dataType;
+      const stride = dataType === 'float4' ? 4 : dataType === 'float3' ? 3 : dataType === 'float2' ? 2 : 1;
+      const resolveOpt = (key: string, defaultExpr: string) => {
+        if (node[key] !== undefined) return this.resolveArg(node, key, func, allFunctions, emitPure, edges, inferredTypes);
+        return defaultExpr;
+      };
+      const srcOffset = resolveOpt('src_offset', '0');
+      const dstOffset = resolveOpt('dst_offset', '0');
+      const count = resolveOpt('count', '-1');
+      lines.push(`${indent}ctx.copyBuffer(${srcIdx}, ${dstIdx}, ${stride}, static_cast<int>(${srcOffset}), static_cast<int>(${dstOffset}), static_cast<int>(${count}));`);
+    } else if (node.op === 'cmd_copy_texture') {
+      const srcId = node['src'];
+      const dstId = node['dst'];
+      const allRes = this.getAllResources();
+      const srcIdx = allRes.findIndex(r => r.id === srcId);
+      const dstIdx = allRes.findIndex(r => r.id === dstId);
+
+      const resolveRect = (key: string): string => {
+        const val = node[key];
+        if (val === undefined) return '-1, -1, -1, -1';
+        if (Array.isArray(val)) return val.map((v: number) => this.formatFloat(v)).join(', ');
+        const expr = this.resolveArg(node, key, func, allFunctions, emitPure, edges, inferredTypes);
+        return `${expr}[0], ${expr}[1], ${expr}[2], ${expr}[3]`;
+      };
+
+      const srcRect = resolveRect('src_rect');
+      const dstRect = resolveRect('dst_rect');
+      const sampleMode = node['sample'] === 'bilinear' ? 2 : node['sample'] === 'nearest' ? 1 : 0;
+      const alphaVal = node['alpha'] !== undefined ? this.resolveArg(node, 'alpha', func, allFunctions, emitPure, edges, inferredTypes) : '1.0f';
+      const normalized = node['normalized'] === true ? 'true' : 'false';
+      lines.push(`${indent}ctx.copyTexture(${srcIdx}, ${dstIdx}, ${srcRect}, ${dstRect}, ${sampleMode}, ${alphaVal}, ${normalized});`);
     } else if (node.op === 'texture_store') {
       // Texture store is handled by Metal on GPU. CPU fallback is no-op.
     } else if (node.op === 'cmd_dispatch') {

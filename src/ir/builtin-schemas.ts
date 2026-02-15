@@ -201,6 +201,9 @@ export interface AtomicLoadArgs { counter: string; index: any; [key: string]: an
 export interface AtomicStoreArgs { counter: string; index: any; value: any; [key: string]: any; }
 export interface AtomicRmwArgs { counter: string; index: any; value: any; [key: string]: any; }
 
+export interface CmdCopyBufferArgs { src: string; dst: string; src_offset?: any; dst_offset?: any; count?: any; [key: string]: any; }
+export interface CmdCopyTextureArgs { src: string; dst: string; src_rect?: any; dst_rect?: any; sample?: string; alpha?: any; normalized?: boolean; [key: string]: any; }
+
 export interface ArrayConstructArgs {
   values?: any[];
   type?: string;
@@ -856,6 +859,32 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'cmd_resize_resource': defineOp<CmdResizeResourceArgs>({ doc: "Resize a resource", isExecutable: true, cpuOnly: true, args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true }, size: { type: AnyData, doc: "New size [w, h] or scalar", refable: true, literalTypes: ['float', 'int', 'float2'] }, clear: { type: z.any(), doc: "Optional clear value", optional: true } } }),
   'cmd_sync_to_cpu': defineOp<CmdSyncToCpuArgs>({ doc: "Initiate async readback", isExecutable: true, cpuOnly: true, args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true } } }),
   'cmd_wait_cpu_sync': defineOp<CmdWaitCpuSyncArgs>({ doc: "Wait for readback completion", isExecutable: true, cpuOnly: true, args: { resource: { type: z.string(), doc: "Resource ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true } } }),
+  'cmd_copy_buffer': defineOp<CmdCopyBufferArgs>({
+    doc: "Copy elements from one buffer to another, with optional offset and count.",
+    isExecutable: true,
+    cpuOnly: true,
+    args: {
+      src: { type: z.string(), doc: "Source buffer resource ID", requiredRef: true, refType: 'resource', isIdentifier: true },
+      dst: { type: z.string(), doc: "Destination buffer resource ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true },
+      src_offset: { type: IntSchema, doc: "Starting element index in source", refable: true, optional: true },
+      dst_offset: { type: IntSchema, doc: "Starting element index in destination", refable: true, optional: true },
+      count: { type: IntSchema, doc: "Number of typed elements to copy", refable: true, optional: true }
+    }
+  }),
+  'cmd_copy_texture': defineOp<CmdCopyTextureArgs>({
+    doc: "Copy/blit pixels from one texture to another, with optional scaling and alpha blending.",
+    isExecutable: true,
+    cpuOnly: true,
+    args: {
+      src: { type: z.string(), doc: "Source texture resource ID", requiredRef: true, refType: 'resource', isIdentifier: true },
+      dst: { type: z.string(), doc: "Destination texture resource ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true },
+      src_rect: { type: Float4Schema, doc: "Source region [x, y, w, h]", refable: true, optional: true },
+      dst_rect: { type: Float4Schema, doc: "Destination region [x, y, w, h]", refable: true, optional: true },
+      sample: { type: z.string(), doc: "'nearest' or 'bilinear' — enables scaling", optional: true, literalTypes: ['string'] },
+      alpha: { type: FloatSchema, doc: "Opacity for compositing (0..1)", refable: true, optional: true },
+      normalized: { type: BoolSchema, doc: "If true, rect coords are 0..1 relative to texture dims", optional: true }
+    }
+  }),
 
   // Logic / Control
   'var_set': VarSetDef,
@@ -978,6 +1007,8 @@ export type OpArgs = {
   'cmd_resize_resource': CmdResizeResourceArgs;
   'cmd_sync_to_cpu': CmdSyncToCpuArgs;
   'cmd_wait_cpu_sync': CmdWaitCpuSyncArgs;
+  'cmd_copy_buffer': CmdCopyBufferArgs;
+  'cmd_copy_texture': CmdCopyTextureArgs;
   'var_set': VarSetArgs;
   'var_get': VarGetArgs;
   'builtin_get': BuiltinGetArgs;

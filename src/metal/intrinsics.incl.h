@@ -713,6 +713,141 @@ struct EvalContext {
     }
   }
 
+  // Copy elements between buffers. stride = floats per typed element.
+  // count = -1 means copy as many as fit.
+  void copyBuffer(size_t srcIdx, size_t dstIdx, int stride, int srcOffset, int dstOffset, int count) {
+    if (srcIdx >= resources.size() || dstIdx >= resources.size()) return;
+    auto *srcRes = resources[srcIdx];
+    auto *dstRes = resources[dstIdx];
+    int srcElems = static_cast<int>(srcRes->data.size()) / stride;
+    int dstElems = static_cast<int>(dstRes->data.size()) / stride;
+    int maxFromSrc = srcElems - srcOffset;
+    int maxToDst = dstElems - dstOffset;
+    int actualCount = std::min(maxFromSrc, maxToDst);
+    if (count >= 0) actualCount = std::min(actualCount, count);
+    if (actualCount <= 0) return;
+    for (int i = 0; i < actualCount; i++) {
+      for (int j = 0; j < stride; j++) {
+        dstRes->data[(dstOffset + i) * stride + j] = srcRes->data[(srcOffset + i) * stride + j];
+      }
+    }
+  }
+
+  // Copy/blit pixels between textures.
+  // sampleMode: 0=direct, 1=nearest, 2=bilinear
+  // Rects: sx, sy, sw, sh, dx, dy, dw, dh (-1 = use full texture dimension)
+  void copyTexture(size_t srcIdx, size_t dstIdx,
+                   float sx, float sy, float sw, float sh,
+                   float dx, float dy, float dw, float dh,
+                   int sampleMode, float alpha, bool normalized) {
+    if (srcIdx >= resources.size() || dstIdx >= resources.size()) return;
+    auto *srcRes = resources[srcIdx];
+    auto *dstRes = resources[dstIdx];
+    int srcW = static_cast<int>(srcRes->width);
+    int srcH = static_cast<int>(srcRes->height);
+    int dstW = static_cast<int>(dstRes->width);
+    int dstH = static_cast<int>(dstRes->height);
+
+    // Resolve rects
+    int isx, isy, isw, ish, idx_, idy, idw, idh;
+    if (sx < 0) { isx = 0; isy = 0; isw = srcW; ish = srcH; }
+    else if (normalized) {
+      isx = static_cast<int>(floorf(sx * srcW));
+      isy = static_cast<int>(floorf(sy * srcH));
+      isw = static_cast<int>(floorf(sw * srcW));
+      ish = static_cast<int>(floorf(sh * srcH));
+    } else {
+      isx = static_cast<int>(floorf(sx)); isy = static_cast<int>(floorf(sy));
+      isw = static_cast<int>(floorf(sw)); ish = static_cast<int>(floorf(sh));
+    }
+    if (dx < 0) { idx_ = 0; idy = 0; idw = dstW; idh = dstH; }
+    else if (normalized) {
+      idx_ = static_cast<int>(floorf(dx * dstW));
+      idy = static_cast<int>(floorf(dy * dstH));
+      idw = static_cast<int>(floorf(dw * dstW));
+      idh = static_cast<int>(floorf(dh * dstH));
+    } else {
+      idx_ = static_cast<int>(floorf(dx)); idy = static_cast<int>(floorf(dy));
+      idw = static_cast<int>(floorf(dw)); idh = static_cast<int>(floorf(dh));
+    }
+
+    if (alpha <= 0.0f) return;
+
+    auto getSrcPixel = [&](int px, int py) -> std::array<float, 4> {
+      int cx = std::max(0, std::min(srcW - 1, px));
+      int cy = std::max(0, std::min(srcH - 1, py));
+      size_t off = (cy * srcW + cx) * 4;
+      if (off + 3 < srcRes->data.size()) {
+        return {srcRes->data[off], srcRes->data[off+1], srcRes->data[off+2], srcRes->data[off+3]};
+      }
+      return {0, 0, 0, 0};
+    };
+
+    auto sampleBilinear = [&](float u, float v) -> std::array<float, 4> {
+      float tx = u - 0.5f, ty = v - 0.5f;
+      int x0 = static_cast<int>(floorf(tx)), y0 = static_cast<int>(floorf(ty));
+      float fx = tx - x0, fy = ty - y0;
+      auto s00 = getSrcPixel(x0, y0);
+      auto s10 = getSrcPixel(x0+1, y0);
+      auto s01 = getSrcPixel(x0, y0+1);
+      auto s11 = getSrcPixel(x0+1, y0+1);
+      std::array<float, 4> r;
+      for (int c = 0; c < 4; c++) {
+        float top = s00[c] * (1-fx) + s10[c] * fx;
+        float bot = s01[c] * (1-fx) + s11[c] * fx;
+        r[c] = top * (1-fy) + bot * fy;
+      }
+      return r;
+    };
+
+    bool needsSampling = sampleMode > 0 && (isw != idw || ish != idh);
+
+    for (int py = 0; py < idh; py++) {
+      for (int px = 0; px < idw; px++) {
+        int dstX = idx_ + px;
+        int dstY = idy + py;
+        if (dstX < 0 || dstX >= dstW || dstY < 0 || dstY >= dstH) continue;
+
+        std::array<float, 4> pixel;
+        if (needsSampling) {
+          float srcU = isx + (px + 0.5f) * isw / idw;
+          float srcV = isy + (py + 0.5f) * ish / idh;
+          if (sampleMode == 2) {
+            pixel = sampleBilinear(srcU, srcV);
+          } else {
+            pixel = getSrcPixel(static_cast<int>(floorf(srcU)), static_cast<int>(floorf(srcV)));
+          }
+        } else {
+          int srcX = isx + std::min(px, isw - 1);
+          int srcY = isy + std::min(py, ish - 1);
+          pixel = getSrcPixel(srcX, srcY);
+        }
+
+        size_t dstOff = (dstY * dstW + dstX) * 4;
+        if (dstOff + 3 >= dstRes->data.size()) continue;
+
+        if (alpha >= 1.0f) {
+          dstRes->data[dstOff]   = pixel[0];
+          dstRes->data[dstOff+1] = pixel[1];
+          dstRes->data[dstOff+2] = pixel[2];
+          dstRes->data[dstOff+3] = pixel[3];
+        } else {
+          float srcA = pixel[3] * alpha;
+          float dA = dstRes->data[dstOff+3];
+          float outA = srcA + dA * (1.0f - srcA);
+          if (outA < 1e-5f) {
+            dstRes->data[dstOff] = dstRes->data[dstOff+1] = dstRes->data[dstOff+2] = 0.0f;
+          } else {
+            for (int c = 0; c < 3; c++) {
+              dstRes->data[dstOff+c] = (pixel[c] * srcA + dstRes->data[dstOff+c] * dA * (1.0f - srcA)) / outA;
+            }
+          }
+          dstRes->data[dstOff+3] = outA;
+        }
+      }
+    }
+  }
+
   float getInput(const std::string &name) {
     auto it = inputs.find(name);
     if (it != inputs.end())

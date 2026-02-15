@@ -373,7 +373,8 @@ export type BuiltinOp =
 
   // Commands
   | 'cmd_dispatch' | 'cmd_resize_resource' | 'cmd_draw'
-  | 'cmd_sync_to_cpu' | 'cmd_wait_cpu_sync';
+  | 'cmd_sync_to_cpu' | 'cmd_wait_cpu_sync'
+  | 'cmd_copy_buffer' | 'cmd_copy_texture';
 
 
 // ------------------------------------------------------------------
