@@ -20,10 +20,23 @@ import { DEMO_SCRIPT } from './domain/mock-responses';
 import { ZipFileSystem } from './metal/virtual-fs';
 import { packageFFGLPlugin } from './metal/ffgl-packager';
 
+const LEFT_PANEL_DEFAULT = 300;
+const LEFT_PANEL_MIN = 150;
+const LEFT_PANEL_COLLAPSE_THRESHOLD = 80;
+const CHAT_PANEL_DEFAULT = 350;
+const CHAT_PANEL_MIN = 200;
+
 @customElement('nano-app')
 export class App extends MobxLitElement {
   @state() private isGlobalDragging = false;
   @state() private showApiKeyDialog = false;
+
+  // Live drag state (not persisted until mouseup)
+  @state() private dragLeftWidth: number | null = null;
+  @state() private dragChatWidth: number | null = null;
+  private dragStartX = 0;
+  private dragStartSize = 0;
+  private dragTarget: 'left' | 'chat' | null = null;
 
   static readonly styles = [
     globalStyles,
@@ -44,18 +57,42 @@ export class App extends MobxLitElement {
 
       .main-area {
         display: grid;
-        grid-template-columns: 48px 300px 1fr 350px;
         overflow: hidden;
       }
 
-      .main-area.left-collapsed {
-        grid-template-columns: 48px 0px 1fr 350px;
+      .viewport-wrapper {
+        min-width: 0;
+        min-height: 0;
+        padding: 8px;
+        display: flex;
+        overflow: hidden;
       }
 
       ui-viewport {
+        flex: 1;
         min-width: 0;
         min-height: 0;
         aspect-ratio: unset;
+        border-radius: 6px;
+      }
+
+      .resize-handle {
+        width: 5px;
+        cursor: col-resize;
+        background: transparent;
+        position: relative;
+        z-index: 10;
+        flex-shrink: 0;
+      }
+
+      .resize-handle:hover,
+      .resize-handle.active {
+        background: var(--color-emerald-500);
+        opacity: 0.4;
+      }
+
+      .resize-handle.active {
+        opacity: 0.6;
       }
 
       .global-drop-zone {
@@ -80,22 +117,90 @@ export class App extends MobxLitElement {
     `
   ];
 
+  private get leftWidth(): number {
+    return this.dragLeftWidth ?? appState.local.settings.leftPanelWidth ?? LEFT_PANEL_DEFAULT;
+  }
+
+  private get chatWidth(): number {
+    return this.dragChatWidth ?? appState.local.settings.chatPanelWidth ?? CHAT_PANEL_DEFAULT;
+  }
+
+  private get leftCollapsed(): boolean {
+    return !!appState.local.settings.leftPanelCollapsed;
+  }
+
   async firstUpdated() {
     await this.runDemoScript();
 
     await appState.initialized;
     await appController.restoreTransportState();
 
-    // Show API key dialog if no key available
     if (!llmManager.hasApiKey) {
       this.showApiKeyDialog = true;
     }
 
-    // Global drag and drop
     window.addEventListener('dragover', this.handleGlobalDragOver);
     window.addEventListener('dragleave', this.handleGlobalDragLeave);
     window.addEventListener('drop', this.handleGlobalDrop);
   }
+
+  // --- Drag resize ---
+
+  private handleResizeStart(e: PointerEvent, target: 'left' | 'chat') {
+    e.preventDefault();
+    this.dragTarget = target;
+    this.dragStartX = e.clientX;
+
+    if (target === 'left') {
+      this.dragStartSize = this.leftCollapsed ? 0 : this.leftWidth;
+    } else {
+      this.dragStartSize = this.chatWidth;
+    }
+
+    const handle = e.currentTarget as HTMLElement;
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add('active');
+  }
+
+  private handleResizeMove = (e: PointerEvent) => {
+    if (!this.dragTarget) return;
+    const delta = e.clientX - this.dragStartX;
+
+    if (this.dragTarget === 'left') {
+      const newWidth = Math.max(0, this.dragStartSize + delta);
+      this.dragLeftWidth = newWidth;
+    } else {
+      // Chat: dragging left makes it wider
+      const newWidth = Math.max(CHAT_PANEL_MIN, this.dragStartSize - delta);
+      this.dragChatWidth = newWidth;
+    }
+  };
+
+  private handleResizeEnd = (e: PointerEvent) => {
+    if (!this.dragTarget) return;
+    const handle = e.currentTarget as HTMLElement;
+    handle.classList.remove('active');
+    handle.releasePointerCapture(e.pointerId);
+
+    if (this.dragTarget === 'left') {
+      const w = this.dragLeftWidth ?? this.leftWidth;
+      if (w < LEFT_PANEL_COLLAPSE_THRESHOLD) {
+        appController.setLeftPanelCollapsed(true);
+      } else {
+        appController.setLeftPanelCollapsed(false);
+        appController.setLeftPanelWidth(Math.max(LEFT_PANEL_MIN, w));
+      }
+      this.dragLeftWidth = null;
+    } else {
+      const w = this.dragChatWidth ?? this.chatWidth;
+      appController.setChatPanelWidth(Math.max(CHAT_PANEL_MIN, w));
+      this.dragChatWidth = null;
+    }
+
+    this.dragTarget = null;
+  };
+
+  // --- Global drag and drop ---
 
   private handleGlobalDragOver = (e: DragEvent) => {
     e.preventDefault();
@@ -169,7 +274,15 @@ export class App extends MobxLitElement {
   }
 
   render() {
-    const collapsed = appState.local.settings.leftPanelCollapsed;
+    const collapsed = this.leftCollapsed;
+
+    // During drag, use live width; otherwise use persisted
+    const effectiveLeftWidth = collapsed
+      ? (this.dragTarget === 'left' ? Math.max(0, this.dragLeftWidth ?? 0) : 0)
+      : (this.dragLeftWidth ?? this.leftWidth);
+    const effectiveChatWidth = this.dragChatWidth ?? this.chatWidth;
+
+    const gridCols = `48px ${effectiveLeftWidth}px 5px 1fr 5px ${effectiveChatWidth}px`;
 
     return html`
       ${this.showApiKeyDialog ? html`
@@ -178,10 +291,24 @@ export class App extends MobxLitElement {
 
       <ui-title-bar @download-zip=${() => this.handleDownloadZip()}></ui-title-bar>
 
-      <div class="main-area ${collapsed ? 'left-collapsed' : ''}">
+      <div class="main-area" style="grid-template-columns: ${gridCols}">
         <ui-nav-bar></ui-nav-bar>
-        <ui-left-panel></ui-left-panel>
-        <ui-viewport .runtime=${appController.runtime}></ui-viewport>
+        <ui-left-panel style="${collapsed && !this.dragTarget ? 'display:none' : ''}"></ui-left-panel>
+        <div
+          class="resize-handle"
+          @pointerdown=${(e: PointerEvent) => this.handleResizeStart(e, 'left')}
+          @pointermove=${this.handleResizeMove}
+          @pointerup=${this.handleResizeEnd}
+        ></div>
+        <div class="viewport-wrapper">
+          <ui-viewport .runtime=${appController.runtime}></ui-viewport>
+        </div>
+        <div
+          class="resize-handle"
+          @pointerdown=${(e: PointerEvent) => this.handleResizeStart(e, 'chat')}
+          @pointermove=${this.handleResizeMove}
+          @pointerup=${this.handleResizeEnd}
+        ></div>
         <ui-chat-panel></ui-chat-panel>
       </div>
 

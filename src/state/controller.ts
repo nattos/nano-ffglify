@@ -14,7 +14,7 @@
  */
 import { runInAction, toJS } from 'mobx';
 import { appState } from '../domain/state';
-import { ChatMsg, LLMLogEntry, IRDocument, DatabaseState } from '../domain/types';
+import { AppSettings, ChatMsg, LLMLogEntry, IRDocument, DatabaseState } from '../domain/types';
 import { historyManager } from './history';
 import { settingsManager } from './settings';
 import { validateIR } from '../ir/validator';
@@ -69,6 +69,34 @@ export class AppController {
   public setLeftPanelCollapsed(collapsed: boolean) {
     runInAction(() => {
       appState.local.settings.leftPanelCollapsed = collapsed;
+    });
+    this.saveSettings();
+  }
+
+  public setLeftPanelWidth(width: number) {
+    runInAction(() => {
+      appState.local.settings.leftPanelWidth = width;
+    });
+    this.saveSettings();
+  }
+
+  public setChatPanelWidth(width: number) {
+    runInAction(() => {
+      appState.local.settings.chatPanelWidth = width;
+    });
+    this.saveSettings();
+  }
+
+  public toggleLeftPanel(tabId: AppSettings['activeTab']) {
+    runInAction(() => {
+      if (appState.local.settings.activeTab === tabId && !appState.local.settings.leftPanelCollapsed) {
+        // Clicking active tab → collapse
+        appState.local.settings.leftPanelCollapsed = true;
+      } else {
+        // Clicking different tab or panel is collapsed → open to that tab
+        appState.local.settings.activeTab = tabId;
+        appState.local.settings.leftPanelCollapsed = false;
+      }
     });
     this.saveSettings();
   }

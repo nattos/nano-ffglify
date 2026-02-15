@@ -36,6 +36,8 @@ export interface AppSettings {
   devMode: boolean;
   apiKey?: string;
   leftPanelCollapsed?: boolean;
+  leftPanelWidth?: number;
+  chatPanelWidth?: number;
 }
 
 export interface LLMLogEntry {

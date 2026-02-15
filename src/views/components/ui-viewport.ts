@@ -9,6 +9,7 @@ export class UiViewport extends LitElement {
   @query('canvas') private canvas!: HTMLCanvasElement;
 
   @state() private isDragging = false;
+  @state() private statsBottom = 8;
 
   private context: GPUCanvasContext | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -17,51 +18,55 @@ export class UiViewport extends LitElement {
   private sampler: GPUSampler | null = null;
   private uniformBuffer: GPUBuffer | null = null;
 
+  private lastScaleX = 1;
+  private lastScaleY = 1;
+
   static readonly styles = css`
-        :host {
-            display: flex;
-            flex-direction: column;
-            background: #111;
-            overflow: hidden;
-            position: relative;
-        }
-        canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-            image-rendering: pixelated;
-        }
-        .overlay {
-            position: absolute;
-            inset: 0;
-            background: rgba(16, 185, 129, 0.2);
-            border: 2px dashed var(--color-emerald-500);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #fff;
-            font-weight: bold;
-            pointer-events: none;
-            opacity: 0;
-            transition: opacity 0.2s;
-        }
-        .overlay.active {
-            opacity: 1;
-        }
-        .stats {
-            position: absolute;
-            bottom: 8px;
-            left: 8px;
-            background: rgba(0, 0, 0, 0.6);
-            color: #fff;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 10px;
-            pointer-events: none;
-            z-index: 10;
-        }
-    `;
+    :host {
+      display: flex;
+      flex-direction: column;
+      background: #111;
+      overflow: hidden;
+      position: relative;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      image-rendering: pixelated;
+    }
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(16, 185, 129, 0.2);
+      border: 2px dashed var(--color-emerald-500);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-weight: bold;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .overlay.active {
+      opacity: 1;
+    }
+    .stats {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.6);
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 10px;
+      pointer-events: none;
+      z-index: 10;
+      white-space: nowrap;
+    }
+  `;
 
   updated(changedProperties: Map<string, any>) {
     if (changedProperties.has('runtime')) {
@@ -109,63 +114,80 @@ export class UiViewport extends LitElement {
     if (this.context && this.blitPipeline) {
       this.renderBlit(device, texture);
     }
+
+    // Compute stats position: just below the rendered content area
+    this.updateStatsPosition(rect);
+
     this.requestUpdate();
+  }
+
+  private updateStatsPosition(hostRect: DOMRect) {
+    // The rendered content is centered and scaled by lastScaleX/Y.
+    // scaleY gives the fraction of the host height used by the content.
+    const contentBottomFromCenter = this.lastScaleY; // in NDC (0..1 range from center)
+    // Convert to pixels from top of host
+    const contentBottomPx = hostRect.height * (1 + contentBottomFromCenter) / 2;
+    // Position stats 4px below content bottom
+    const desiredTop = contentBottomPx + 4;
+    // But clamp so it doesn't exceed the host (leave 20px for the label itself)
+    const maxTop = hostRect.height - 20;
+    const clampedTop = Math.min(desiredTop, maxTop);
+    // Convert to "bottom" offset for CSS
+    this.statsBottom = hostRect.height - clampedTop - 18;
+    if (this.statsBottom < 4) this.statsBottom = 4;
   }
 
   private initBlitPipeline(device: GPUDevice) {
     const shaderCode = `
-            struct Params {
-                scale: vec2<f32>,
-                offset: vec2<f32>,
-                screenSize: vec2<f32>,
-                texSize: vec2<f32>,
-            }
-            @group(0) @binding(2) var<uniform> params: Params;
+      struct Params {
+        scale: vec2<f32>,
+        offset: vec2<f32>,
+        screenSize: vec2<f32>,
+        texSize: vec2<f32>,
+      }
+      @group(0) @binding(2) var<uniform> params: Params;
 
-            struct VertexOutput {
-                @builtin(position) position: vec4<f32>,
-                @location(0) uv: vec2<f32>,
-            }
+      struct VertexOutput {
+        @builtin(position) position: vec4<f32>,
+        @location(0) uv: vec2<f32>,
+      }
 
-            @vertex
-            fn vert_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
-                var pos = array<vec2<f32>, 4>(
-                    vec2<f32>(-1.0, -1.0),
-                    vec2<f32>(1.0, -1.0),
-                    vec2<f32>(-1.0, 1.0),
-                    vec2<f32>(1.0, 1.0)
-                );
-                var uv = array<vec2<f32>, 4>(
-                    vec2<f32>(0.0, 1.0),
-                    vec2<f32>(1.0, 1.0),
-                    vec2<f32>(0.0, 0.0),
-                    vec2<f32>(1.0, 0.0)
-                );
+      @vertex
+      fn vert_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+        var pos = array<vec2<f32>, 4>(
+          vec2<f32>(-1.0, -1.0),
+          vec2<f32>(1.0, -1.0),
+          vec2<f32>(-1.0, 1.0),
+          vec2<f32>(1.0, 1.0)
+        );
+        var uv = array<vec2<f32>, 4>(
+          vec2<f32>(0.0, 1.0),
+          vec2<f32>(1.0, 1.0),
+          vec2<f32>(0.0, 0.0),
+          vec2<f32>(1.0, 0.0)
+        );
 
-                var out: VertexOutput;
-                // Apply Scale and Offset to center the image
-                out.position = vec4<f32>(pos[vertexIndex] * params.scale + params.offset, 0.0, 1.0);
-                out.uv = uv[vertexIndex];
-                return out;
-            }
+        var out: VertexOutput;
+        out.position = vec4<f32>(pos[vertexIndex] * params.scale + params.offset, 0.0, 1.0);
+        out.uv = uv[vertexIndex];
+        return out;
+      }
 
-            @group(0) @binding(0) var t_src: texture_2d<f32>;
-            @group(0) @binding(1) var s_src: sampler;
+      @group(0) @binding(0) var t_src: texture_2d<f32>;
+      @group(0) @binding(1) var s_src: sampler;
 
-            @fragment
-            fn frag_main(@location(0) uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) -> @location(0) vec4<f32> {
-                // Checkerboard background
-                let gridSize = 16.0;
-                let grid = floor(fragPos.xy / gridSize);
-                let checker = (i32(grid.x) + i32(grid.y)) % 2;
-                let bgColor = select(vec4<f32>(0.15, 0.15, 0.15, 1.0), vec4<f32>(0.2, 0.2, 0.2, 1.0), checker == 0);
+      @fragment
+      fn frag_main(@location(0) uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) -> @location(0) vec4<f32> {
+        let gridSize = 16.0;
+        let grid = floor(fragPos.xy / gridSize);
+        let checker = (i32(grid.x) + i32(grid.y)) % 2;
+        let bgColor = select(vec4<f32>(0.15, 0.15, 0.15, 1.0), vec4<f32>(0.2, 0.2, 0.2, 1.0), checker == 0);
 
-                let srcColor = textureSample(t_src, s_src, uv);
+        let srcColor = textureSample(t_src, s_src, uv);
 
-                // Alpha blend over checkerboard
-                return mix(bgColor, srcColor, srcColor.a);
-            }
-        `;
+        return mix(bgColor, srcColor, srcColor.a);
+      }
+    `;
 
     const module = device.createShaderModule({ code: shaderCode });
     this.blitPipeline = device.createRenderPipeline({
@@ -204,7 +226,6 @@ export class UiViewport extends LitElement {
     const tw = srcTexture.width;
     const th = srcTexture.height;
 
-    // Fit logic
     const sRatio = sw / sh;
     const tRatio = tw / th;
 
@@ -212,18 +233,19 @@ export class UiViewport extends LitElement {
     let scaleY = 1.0;
 
     if (tRatio > sRatio) {
-      // Texture is wider than screen
       scaleY = sRatio / tRatio;
     } else {
-      // Texture is taller than screen
       scaleX = tRatio / sRatio;
     }
 
+    this.lastScaleX = scaleX;
+    this.lastScaleY = scaleY;
+
     const params = new Float32Array([
-      scaleX, scaleY, // scale
-      0, 0,           // offset
-      sw, sh,         // screenSize
-      tw, th          // texSize
+      scaleX, scaleY,
+      0, 0,
+      sw, sh,
+      tw, th
     ]);
     device.queue.writeBuffer(this.uniformBuffer, 0, params);
 
@@ -258,18 +280,18 @@ export class UiViewport extends LitElement {
     const textureOutputId = this.runtime?.getPrimaryOutputId() ?? 't_output';
     const outRes = this.runtime?.getResource(textureOutputId);
     return html`
-            <canvas
-              @dragover=${this.handleDragOver}
-              @dragleave=${this.handleDragLeave}
-              @drop=${this.handleDrop}
-            ></canvas>
-            <div class="overlay ${this.isDragging ? 'active' : ''}">
-                Drop to Load Texture
-            </div>
-            <div class="stats">
-                ${outRes?.width || 0}x${outRes?.height || 0} ${this.runtime?.fps.toFixed(1) || 0} FPS
-            </div>
-        `;
+      <canvas
+        @dragover=${this.handleDragOver}
+        @dragleave=${this.handleDragLeave}
+        @drop=${this.handleDrop}
+      ></canvas>
+      <div class="overlay ${this.isDragging ? 'active' : ''}">
+        Drop to Load Texture
+      </div>
+      <div class="stats" style="bottom: ${this.statsBottom}px">
+        ${outRes?.width || 0}x${outRes?.height || 0} ${this.runtime?.fps.toFixed(1) || 0} FPS
+      </div>
+    `;
   }
 
   private handleDragOver(e: DragEvent) {

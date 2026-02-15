@@ -66,7 +66,7 @@ export class UiTitleBar extends MobxLitElement {
       </div>
 
       <div class="right">
-        <ui-button icon="la-download" square @click=${() => this.dispatchEvent(new CustomEvent('download-zip', { bubbles: true, composed: true }))} title="Download Build ZIP"></ui-button>
+        <ui-button icon="la-external-link-alt" @click=${() => this.dispatchEvent(new CustomEvent('download-zip', { bubbles: true, composed: true }))} title="Export Build ZIP">Export</ui-button>
       </div>
     `;
   }

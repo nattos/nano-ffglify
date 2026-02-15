@@ -55,7 +55,6 @@ export class UiChatPanel extends MobxLitElement {
         max-width: 90%;
         font-size: 0.85rem;
         line-height: 1.4;
-        white-space: pre-wrap;
         word-break: break-word;
       }
       .msg.user {
@@ -70,6 +69,7 @@ export class UiChatPanel extends MobxLitElement {
         font-size: 0.75rem;
         opacity: 0.7;
         font-family: monospace;
+        white-space: pre-wrap;
       }
 
       .input-area {
@@ -118,7 +118,9 @@ export class UiChatPanel extends MobxLitElement {
       <div class="chat-history">
         ${chat_history.map(msg => html`
           <div class="msg ${msg.role}">
-            <strong>${msg.role}:</strong> ${msg.role === 'tool-response' ? JSON.stringify(msg.data, undefined, 2) : msg.text}
+            ${msg.role === 'tool-response'
+              ? html`<strong>${msg.role}:</strong> ${JSON.stringify(msg.data, undefined, 2)}`
+              : html`<strong>${msg.role}:</strong> ${msg.text}`}
           </div>
         `)}
       </div>
@@ -131,9 +133,7 @@ export class UiChatPanel extends MobxLitElement {
           @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') this.handleSend(); }}
           placeholder="Type a message..."
         />
-        <ui-button @click=${() => this.handleSend()}>
-          Send <ui-icon icon="la-paper-plane"></ui-icon>
-        </ui-button>
+        <ui-button icon="la-paper-plane" square @click=${() => this.handleSend()} title="Send"></ui-button>
       </div>
     `;
   }
