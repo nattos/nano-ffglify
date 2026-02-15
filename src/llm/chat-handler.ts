@@ -32,6 +32,7 @@ export class ChatHandler {
 
       await this.llmManager.generateResponse(fullPrompt, {
         forceMock: this.appState.local.settings.useMockLLM,
+        maxTurns: this.appState.local.settings.maxLLMTurns || 25,
         executeTool: async (name, args) => {
           console.log("Executing Tool:", name, args);
           try {

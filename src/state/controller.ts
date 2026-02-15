@@ -214,6 +214,13 @@ export class AppController {
     });
   }
 
+  public setMaxLLMTurns(turns: number) {
+    runInAction(() => {
+      appState.local.settings.maxLLMTurns = Math.max(1, Math.min(100, turns));
+    });
+    this.saveSettings();
+  }
+
   public setLLMBusy(busy: boolean) {
     runInAction(() => {
       appState.local.llmBusy = busy;

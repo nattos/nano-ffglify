@@ -39,6 +39,7 @@ export interface AppSettings {
   leftPanelWidth?: number;
   chatPanelWidth?: number;
   savedInputValues?: Record<string, any>;
+  maxLLMTurns?: number;
 }
 
 export interface SavedInputFile {

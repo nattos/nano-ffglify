@@ -196,6 +196,21 @@ export class UiSettingsPanel extends MobxLitElement {
           <div class="setting-label">Model</div>
           <div class="info">${DEFAULT_LLM_MODEL}</div>
         </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Max Turns</div>
+            <div class="setting-description">Maximum LLM tool-use rounds per message</div>
+          </div>
+          <input
+            type="number"
+            .value=${settings.maxLLMTurns || 25}
+            min="1"
+            max="100"
+            style="width: 60px; padding: 0.3rem; background: #222; color: var(--app-text-main); border: 1px solid var(--app-border); border-radius: 4px; font-family: monospace; font-size: 0.85rem; text-align: center;"
+            @change=${(e: any) => appController.setMaxLLMTurns(parseInt(e.target.value) || 25)}
+          />
+        </div>
       </div>
     `;
   }

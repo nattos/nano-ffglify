@@ -181,7 +181,7 @@ export class UiChatPanel extends MobxLitElement {
           <div class="msg ${msg.role}">
             ${msg.role === 'tool-response'
               ? html`${msg.text || msg.data?.message || 'tool response'}`
-              : html`<strong>${msg.role}:</strong> ${msg.text}`}
+              : msg.text}
           </div>
         `)}
         ${llmBusy ? html`

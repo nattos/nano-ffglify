@@ -158,7 +158,7 @@ export class GoogleGenAIManager implements LLMManager {
     const sessionId = crypto.randomUUID();
     let finalResponse: LLMResponse = { text: "" };
     const mocked = !!options?.forceMock;
-    const maxTurns = options?.maxTurns || 5;
+    const maxTurns = options?.maxTurns || 25;
     let turns = 0;
 
     // 1. Setup Session Adapter
@@ -309,9 +309,10 @@ export class GoogleGenAIManager implements LLMManager {
     return finalResponse;
   }
 
-  private async withRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
-    let delay = 1000;
-    for (let i = 0; i <= maxRetries; i++) {
+  private static readonly RETRY_DELAYS = [5000, 30000, 60000];
+
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
       try {
         return await fn();
       } catch (error: any) {
@@ -322,17 +323,16 @@ export class GoogleGenAIManager implements LLMManager {
           errorStr.toLowerCase().includes("overloaded") ||
           errorStr.toLowerCase().includes("rate limit");
 
-        if (i === maxRetries || !isRetryable) {
+        if (!isRetryable) {
           throw error;
         }
 
-        console.warn(`LLM Request failed (attempt ${i + 1}/${maxRetries + 1}). Retrying in ${delay}ms...`, error);
+        const delays = GoogleGenAIManager.RETRY_DELAYS;
+        const delay = delays[Math.min(attempt, delays.length - 1)];
+        console.warn(`LLM Request failed (attempt ${attempt + 1}). Retrying in ${delay / 1000}s...`, error);
         await new Promise(resolve => setTimeout(resolve, delay));
-        delay *= 2;
-        if (delay > 10000) delay = 10000;
       }
     }
-    throw new Error("Impossible path");
   }
 }
 
