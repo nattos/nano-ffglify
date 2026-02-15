@@ -13,7 +13,7 @@ export class UiApiKeyDialog extends LitElement {
     globalStyles,
     css`
       :host {
-        display: block;
+        display: contents;
       }
 
       .backdrop {

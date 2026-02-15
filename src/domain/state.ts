@@ -42,7 +42,7 @@ export class AppState {
         activeTab: 'dashboard',
         chatOpen: true,
         useMockLLM: false,
-        transportState: 'stopped',
+        transportState: 'playing',
         devMode: false,
       },
       llmLogs: [],

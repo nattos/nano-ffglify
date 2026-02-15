@@ -235,6 +235,7 @@ export class App extends MobxLitElement {
       const ids = appController.runtime.getTextureInputIds();
       if (ids.length > 0) {
         appController.runtime.setTextureSource(ids[0], { type: 'file', value: file });
+        appController.saveInputFile(ids[0], file);
       }
     }
   };

@@ -14,13 +14,13 @@
  */
 import { runInAction, toJS } from 'mobx';
 import { appState } from '../domain/state';
-import { AppSettings, ChatMsg, LLMLogEntry, IRDocument, DatabaseState } from '../domain/types';
+import { AppSettings, ChatMsg, LLMLogEntry, IRDocument, DatabaseState, SavedInputFile } from '../domain/types';
 import { historyManager } from './history';
 import { settingsManager } from './settings';
 import { validateIR } from '../ir/validator';
 import { getSharedDevice } from '../webgpu/gpu-device';
 import { ReplManager } from '../runtime/repl-manager';
-import { RuntimeManager } from '../runtime/runtime-manager';
+import { RuntimeManager, RuntimeInputType } from '../runtime/runtime-manager';
 
 import { CompileResult } from './entity-api';
 
@@ -103,6 +103,70 @@ export class AppController {
 
   private saveSettings() {
     settingsManager.saveSettings(toJS(appState.local.settings));
+  }
+
+  private saveInputDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  public saveInputValue(id: string, value: any) {
+    runInAction(() => {
+      if (!appState.local.settings.savedInputValues) {
+        appState.local.settings.savedInputValues = {};
+      }
+      appState.local.settings.savedInputValues[id] = value;
+    });
+    // Debounce settings save for rapid slider changes
+    if (this.saveInputDebounceTimer) clearTimeout(this.saveInputDebounceTimer);
+    this.saveInputDebounceTimer = setTimeout(() => {
+      this.saveSettings();
+      this.saveInputDebounceTimer = null;
+    }, 300);
+  }
+
+  public async saveInputFile(id: string, file: File) {
+    const saved: SavedInputFile = {
+      name: file.name,
+      mimeType: file.type,
+      blob: file,
+    };
+    await settingsManager.saveInputFile(id, saved);
+  }
+
+  /**
+   * Returns the set of input IDs that have saved file data in IndexedDB.
+   * Called before setCompiled so we can skip loading default textures for those.
+   */
+  public async getSavedFileInputIds(): Promise<Set<string>> {
+    const savedFiles = await settingsManager.loadAllInputFiles();
+    return new Set(savedFiles.keys());
+  }
+
+  public async restoreSavedInputs() {
+    const savedValues = appState.local.settings.savedInputValues;
+    const entries = this.runtime.inputEntries;
+
+    // Restore scalar values
+    if (savedValues) {
+      for (const [id, value] of Object.entries(savedValues)) {
+        const entry = entries.get(id);
+        if (entry && entry.type !== RuntimeInputType.Texture) {
+          this.runtime.setInput(id, value);
+        }
+      }
+    }
+
+    // Restore file inputs
+    const savedFiles = await settingsManager.loadAllInputFiles();
+    for (const [id, savedFile] of savedFiles) {
+      const entry = entries.get(id);
+      if (entry && entry.type === RuntimeInputType.Texture) {
+        try {
+          const file = new File([savedFile.blob], savedFile.name, { type: savedFile.mimeType });
+          this.runtime.setTextureSource(id, { type: 'file', value: file });
+        } catch (e) {
+          console.warn(`Failed to restore saved file for input ${id}:`, e);
+        }
+      }
+    }
   }
 
   public setChatOpen(open: boolean) {
@@ -201,16 +265,18 @@ export class AppController {
   }
 
   public async play() {
-    // Ensure we have compiled code.
-    if (!this.ensureCompiled()) {
-      return;
-    }
-
+    // Always set transport state to playing (reflects user intent)
     runInAction(() => {
       appState.local.settings.transportState = 'playing';
     });
     this.saveSettings();
-    this.runtime.play();
+
+    // Try to compile and start playback if possible
+    const compiled = await this.ensureCompiled();
+    // Only start runtime if we're still in playing state (user may have stopped in the meantime)
+    if (compiled && appState.local.settings.transportState === 'playing') {
+      this.runtime.play();
+    }
   }
 
   public pause() {
@@ -374,7 +440,9 @@ export class AppController {
 
           try {
             const device = await getSharedDevice();
-            await this.runtime.setCompiled(artifacts, device);
+            const savedFileIds = await this.getSavedFileInputIds();
+            await this.runtime.setCompiled(artifacts, device, savedFileIds);
+            await this.restoreSavedInputs();
           } catch (gpuError) {
             console.warn("[AppController] GPU environment not available for live update:", gpuError);
           }

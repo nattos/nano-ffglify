@@ -11,6 +11,7 @@ import { chatHandler } from '../../llm/chat-handler';
 @customElement('ui-chat-panel')
 export class UiChatPanel extends MobxLitElement {
   @query('.chat-history') private chatHistory!: HTMLElement;
+  @query('.chat-input') private chatInput!: HTMLTextAreaElement;
 
   private wasPinned = true;
 
@@ -76,10 +77,9 @@ export class UiChatPanel extends MobxLitElement {
 
       .input-area {
         display: flex;
+        align-items: flex-end;
         padding: 0.5rem;
         gap: 0.5rem;
-        background: #181818;
-        border-top: 1px solid var(--app-border);
         flex-shrink: 0;
       }
 
@@ -92,6 +92,11 @@ export class UiChatPanel extends MobxLitElement {
         border-radius: 4px;
         font-size: 0.85rem;
         font-family: inherit;
+        resize: none;
+        overflow-y: auto;
+        max-height: 150px;
+        line-height: 1.4;
+        box-sizing: border-box;
       }
 
       .chat-input:focus {
@@ -105,11 +110,23 @@ export class UiChatPanel extends MobxLitElement {
     const text = appState.local.draftChat;
     if (!text.trim()) return;
     appController.setDraftChat('');
+    this.autoResizeTextarea();
     await chatHandler.handleUserMessage(text);
   }
 
+  private handleInput(e: any) {
+    appController.setDraftChat(e.target.value);
+    this.autoResizeTextarea();
+  }
+
+  private autoResizeTextarea() {
+    const ta = this.chatInput;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+  }
+
   protected updated() {
-    // Autoscroll: if we were pinned to the bottom before render, scroll to bottom now
     if (this.wasPinned && this.chatHistory) {
       this.chatHistory.scrollTop = this.chatHistory.scrollHeight;
     }
@@ -118,7 +135,6 @@ export class UiChatPanel extends MobxLitElement {
   private handleScroll() {
     if (!this.chatHistory) return;
     const el = this.chatHistory;
-    // Consider "pinned" if within 30px of the bottom
     this.wasPinned = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
   }
 
@@ -142,13 +158,14 @@ export class UiChatPanel extends MobxLitElement {
       </div>
 
       <div class="input-area">
-        <input
+        <textarea
           class="chat-input"
+          rows="1"
           .value=${draftChat}
-          @input=${(e: any) => appController.setDraftChat(e.target.value)}
-          @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') this.handleSend(); }}
+          @input=${(e: any) => this.handleInput(e)}
+          @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.handleSend(); } }}
           placeholder="Type a message..."
-        />
+        ></textarea>
         <ui-button icon="la-paper-plane" square @click=${() => this.handleSend()} title="Send"></ui-button>
       </div>
     `;

@@ -38,6 +38,13 @@ export interface AppSettings {
   leftPanelCollapsed?: boolean;
   leftPanelWidth?: number;
   chatPanelWidth?: number;
+  savedInputValues?: Record<string, any>;
+}
+
+export interface SavedInputFile {
+  name: string;
+  mimeType: string;
+  blob: Blob;
 }
 
 export interface LLMLogEntry {

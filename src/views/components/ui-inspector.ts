@@ -2,6 +2,7 @@ import { html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { MobxLitElement } from '../mobx-lit-element';
 import { RuntimeManager, RuntimeInputEntry, RuntimeInputType } from '../../runtime/runtime-manager';
+import { appController } from '../../state/controller';
 
 @customElement('ui-inspector')
 export class UiInspector extends MobxLitElement {
@@ -299,6 +300,7 @@ export class UiInspector extends MobxLitElement {
   private handleUpdate(id: string, value: any) {
     if (this.runtime) {
       this.runtime.setInput(id, value);
+      appController.saveInputValue(id, value);
     }
   }
 
@@ -318,6 +320,7 @@ export class UiInspector extends MobxLitElement {
     const file = e.dataTransfer?.files[0];
     if (file && this.runtime) {
       this.runtime.setTextureSource(id, { type: 'file', value: file });
+      appController.saveInputFile(id, file);
     }
   }
 }

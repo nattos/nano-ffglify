@@ -85,7 +85,7 @@ export class RuntimeManager {
     makeObservable(this);
   }
 
-  public async setCompiled(artifacts: CompilationArtifacts, device: GPUDevice) {
+  public async setCompiled(artifacts: CompilationArtifacts, device: GPUDevice, savedFileInputIds?: Set<string>) {
     this.device = device;
 
     // Initialize Blit Pipeline if we have a real device
@@ -166,7 +166,9 @@ export class RuntimeManager {
 
         if (inp.type === 'texture2d') {
           this.textureInputIds.push(inp.id);
-          if (!this.inputSources.has(inp.id)) {
+          if (savedFileInputIds?.has(inp.id)) {
+            // Skip default — saved file will be restored by restoreSavedInputs
+          } else if (!this.inputSources.has(inp.id)) {
             // Initialize with test.png if not already set
             this.setTextureSource(inp.id, { type: 'url', value: 'test.png' });
           } else {

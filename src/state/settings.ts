@@ -12,7 +12,7 @@
  * - Requires `VITE_DB_NAME` env var to function; throws otherwise.
  */
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import { AppSettings, DatabaseState } from '../domain/types';
+import { AppSettings, DatabaseState, SavedInputFile } from '../domain/types';
 import { Resolvable } from '../utils/utils';
 import { AUTO_PLAY_SCRIPT_LINES } from '../constants';
 
@@ -23,7 +23,8 @@ export type LocalSettings = AppSettings;
 const DB_NAME = import.meta.env.VITE_DB_NAME;
 const SETTINGS_STORE = 'settings';
 const DB_SNAPSHOT_STORE = 'database_snapshot';
-const DB_VERSION = 1; // Incremented for new store
+const INPUT_FILES_STORE = 'input_files';
+const DB_VERSION = 1;
 
 interface AppDB extends DBSchema {
   settings: {
@@ -33,6 +34,10 @@ interface AppDB extends DBSchema {
   database_snapshot: {
     key: string;
     value: DatabaseState;
+  };
+  input_files: {
+    key: string;
+    value: SavedInputFile;
   };
 }
 
@@ -49,6 +54,9 @@ export class SettingsManager {
           }
           if (!db.objectStoreNames.contains(DB_SNAPSHOT_STORE)) {
             db.createObjectStore(DB_SNAPSHOT_STORE);
+          }
+          if (!db.objectStoreNames.contains(INPUT_FILES_STORE)) {
+            db.createObjectStore(INPUT_FILES_STORE);
           }
         },
       });
@@ -93,6 +101,43 @@ export class SettingsManager {
     } catch (e) {
       console.error('Error saving database snapshot:', e);
     }
+  }
+
+  public async saveInputFile(id: string, file: SavedInputFile): Promise<void> {
+    if (!this.dbPromise) return;
+    try {
+      const db = await this.dbPromise;
+      await db.put(INPUT_FILES_STORE, file, id);
+    } catch (e) {
+      console.error('Error saving input file:', e);
+    }
+  }
+
+  public async loadInputFile(id: string): Promise<SavedInputFile | null> {
+    if (!this.dbPromise) return null;
+    try {
+      const db = await this.dbPromise;
+      return (await db.get(INPUT_FILES_STORE, id)) || null;
+    } catch (e) {
+      console.error('Error loading input file:', e);
+      return null;
+    }
+  }
+
+  public async loadAllInputFiles(): Promise<Map<string, SavedInputFile>> {
+    const result = new Map<string, SavedInputFile>();
+    if (!this.dbPromise) return result;
+    try {
+      const db = await this.dbPromise;
+      const keys = await db.getAllKeys(INPUT_FILES_STORE);
+      for (const key of keys) {
+        const file = await db.get(INPUT_FILES_STORE, key);
+        if (file) result.set(key as string, file);
+      }
+    } catch (e) {
+      console.error('Error loading input files:', e);
+    }
+    return result;
   }
 
   public async loadDatabase(): Promise<DatabaseState | null> {
