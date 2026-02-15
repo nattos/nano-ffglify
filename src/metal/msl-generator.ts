@@ -1482,7 +1482,17 @@ export class MslGenerator {
       case 'math_select': return `msl_select(${a('false')}, ${a('true')}, ${a('cond')})`;
 
       // Vector ops
-      case 'vec_dot': return `dot(${a()}, ${b()})`;
+      case 'vec_dot': {
+        // MSL dot() only supports float/half vectors; emit manual sum-of-products for int vectors
+        const typeA = typeof node['a'] === 'string' ? inferredTypes?.get(node['a']) : undefined;
+        if (typeA && (typeA === 'int2' || typeA === 'int3' || typeA === 'int4')) {
+          const va = a(), vb = b();
+          if (typeA === 'int2') return `(${va}.x * ${vb}.x + ${va}.y * ${vb}.y)`;
+          if (typeA === 'int3') return `(${va}.x * ${vb}.x + ${va}.y * ${vb}.y + ${va}.z * ${vb}.z)`;
+          return `(${va}.x * ${vb}.x + ${va}.y * ${vb}.y + ${va}.z * ${vb}.z + ${va}.w * ${vb}.w)`;
+        }
+        return `dot(${a()}, ${b()})`;
+      }
       case 'vec_length': return `length(${a()})`;
       case 'vec_normalize': return `normalize(${a()})`;
       case 'vec_mix': return `mix(${a()}, ${b()}, ${a('t')})`;

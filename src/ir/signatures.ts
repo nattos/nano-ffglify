@@ -249,6 +249,9 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
     { inputs: { a: 'float2', b: 'float2' }, output: 'float' },
     { inputs: { a: 'float3', b: 'float3' }, output: 'float' },
     { inputs: { a: 'float4', b: 'float4' }, output: 'float' },
+    { inputs: { a: 'int2', b: 'int2' }, output: 'int' },
+    { inputs: { a: 'int3', b: 'int3' }, output: 'int' },
+    { inputs: { a: 'int4', b: 'int4' }, output: 'int' },
   ],
   'vec_mix': [
     { inputs: { a: 'float2', b: 'float2', t: 'float' }, output: 'float2' },

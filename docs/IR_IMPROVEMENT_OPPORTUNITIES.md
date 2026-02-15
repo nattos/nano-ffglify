@@ -60,11 +60,9 @@ The raymarch evolve shader repeats this pattern 7 times (self + 6 neighbors), to
 
 **Proposal**: A `grid_neighbor(gid, axis, direction, grid_size)` op, or more practically, a `clamp_offset(val, offset, min, max)` convenience op that combines `val + offset` and `clamp(result, min, max)` into one node. Even without a dedicated op, a helper function in the IR (`call_func` to a utility) could reduce repetition.
 
-### S3: Missing int-vector dot product [XS]
+### ~~S3: Missing int-vector dot product~~ [XS] — DONE
 
-**Current**: No `vec_dot` signature for `int3 * int3 -> int`. The flat index pattern `z*1024 + y*32 + x` is really `dot(int3(x,y,z), int3(1, 32, 1024))`. With an int dot product, this becomes a single node.
-
-**Proposal**: Add `vec_dot` signatures for `int2`, `int3`, `int4`. Combined with typed int literals, the entire flat index computation becomes: `vec_dot(gid, int3(1, 32, 1024))`.
+Added `vec_dot` signatures for `int2`, `int3`, `int4`. MSL backend emits manual sum-of-products (Metal's `dot()` only supports float vectors). Raymarcher evolve shader refactored to use `vec_dot(gid, int3(1, 32, 1024))` for flat index computation.
 
 ### S4: Default blend state shorthand [XS]
 
