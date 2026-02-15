@@ -863,10 +863,288 @@ export const PARTICLE_SHADER: IRDocument = {
   ]
 };
 
+export const HISTOGRAM_SHADER: IRDocument = {
+  version: '1.0.0',
+  meta: { name: 'RGB Histogram' },
+  comment: 'Builds an RGB histogram from an input texture using atomic counters on the GPU, then renders the histogram as an additive overlay in the bottom-right corner using cmd_draw with vertex/fragment shaders. Demonstrates atomic_add for concurrent binning, cmd_copy_buffer to move atomic data into readable buffers, and cmd_draw with blend modes.',
+  entryPoint: 'fn_main_cpu',
+
+  inputs: [
+    { id: 'input_visual', type: 'texture2d', format: 'rgba8', comment: 'Input video/image stream.' }
+  ],
+
+  structs: [
+    {
+      id: 'HistVertex',
+      members: [
+        { name: 'pos', type: 'float4' as DataType, builtin: 'position' as BuiltinName },
+        { name: 'color', type: 'float4' as DataType, location: 0 }
+      ]
+    }
+  ],
+
+  resources: [
+    {
+      id: 'output_tex',
+      type: 'texture2d',
+      format: TextureFormat.RGBA8,
+      size: { mode: 'viewport' },
+      isOutput: true,
+      persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
+    },
+    {
+      id: 'histogram',
+      type: 'atomic_counter',
+      dataType: 'int',
+      size: { mode: 'fixed', value: 768 },
+      comment: '256 bins x 3 channels (R: 0-255, G: 256-511, B: 512-767). Cleared each frame by compute kernel.',
+      persistence: { retain: true, clearOnResize: false, clearEveryFrame: false, cpuAccess: false }
+    },
+    {
+      id: 'hist_max',
+      type: 'atomic_counter',
+      dataType: 'int',
+      size: { mode: 'fixed', value: 3 },
+      comment: 'Per-channel max bin count for normalization (R, G, B).',
+      persistence: { retain: true, clearOnResize: false, clearEveryFrame: false, cpuAccess: false }
+    },
+    {
+      id: 'hist_read',
+      type: 'buffer',
+      dataType: 'int',
+      size: { mode: 'fixed', value: 768 },
+      comment: 'Readable copy of histogram for vertex shader. WebGPU vertex shaders require storage read-only, so atomic data is copied here via cmd_copy_buffer.',
+      persistence: { retain: true, clearOnResize: false, clearEveryFrame: false, cpuAccess: false }
+    },
+    {
+      id: 'max_read',
+      type: 'buffer',
+      dataType: 'int',
+      size: { mode: 'fixed', value: 3 },
+      comment: 'Readable copy of hist_max for vertex shader.',
+      persistence: { retain: true, clearOnResize: false, clearEveryFrame: false, cpuAccess: false }
+    }
+  ],
+
+  functions: [
+    {
+      id: 'fn_main_cpu',
+      type: 'cpu',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      comment: 'Orchestration: clear counters → accumulate histogram + copy input → find max → copy to readable buffers → draw overlay.',
+      nodes: [
+        { id: 'clr_hist', op: 'cmd_dispatch', func: 'fn_clear_hist', threads: [768, 1, 1], exec_out: 'clr_max' },
+        { id: 'clr_max', op: 'cmd_dispatch', func: 'fn_clear_max', threads: [3, 1, 1], exec_out: 'do_accum' },
+        { id: 'tex_size', op: 'resource_get_size', resource: 'output_tex' },
+        { id: 'do_accum', op: 'cmd_dispatch', func: 'fn_accumulate', threads: 'tex_size', exec_out: 'do_max' },
+        { id: 'do_max', op: 'cmd_dispatch', func: 'fn_find_max', threads: [256, 1, 1], exec_out: 'copy_hist' },
+        { id: 'copy_hist', op: 'cmd_copy_buffer', src: 'histogram', dst: 'hist_read', exec_out: 'copy_max', comment: 'Copy atomic counters to read-only buffers for vertex shader access.' },
+        { id: 'copy_max', op: 'cmd_copy_buffer', src: 'hist_max', dst: 'max_read', exec_out: 'draw_hist' },
+        {
+          id: 'draw_hist',
+          op: 'cmd_draw',
+          target: 'output_tex',
+          vertex: 'fn_hist_vertex',
+          fragment: 'fn_hist_fragment',
+          count: 4608,
+          comment: '256 bins × 3 channels × 6 verts/bar = 4608 vertices.',
+          pipeline: {
+            topology: 'triangle-list',
+            blend: {
+              color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
+              alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' }
+            }
+          }
+        }
+      ]
+    },
+
+    {
+      id: 'fn_clear_hist',
+      type: 'shader',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      workgroupSize: [256, 1, 1],
+      comment: 'Zero all 768 histogram bins.',
+      nodes: [
+        { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'clr', op: 'atomic_store', counter: 'histogram', index: 'gid.x', value: 0 }
+      ]
+    },
+
+    {
+      id: 'fn_clear_max',
+      type: 'shader',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      workgroupSize: [64, 1, 1],
+      comment: 'Zero per-channel max counters.',
+      nodes: [
+        { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'clr', op: 'atomic_store', counter: 'hist_max', index: 'gid.x', value: 0 }
+      ]
+    },
+
+    {
+      id: 'fn_accumulate',
+      type: 'shader',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      comment: 'Per-pixel: sample input, write to output, and atomicAdd to R/G/B histogram bins.',
+      nodes: [
+        { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
+        { id: 'color', op: 'texture_sample', tex: 'input_visual', coords: 'nuv.xy' },
+        { id: 'store_px', op: 'texture_store', tex: 'output_tex', coords: 'gid.xy', value: 'color', exec_out: 'add_r' },
+
+        { id: 'c_bin', op: 'comment', comment: 'Quantize R/G/B to 0-255 and add channel offset for flat layout.' },
+        { id: 'r_s', op: 'math_mul', a: 'color.x', b: 255.0 },
+        { id: 'r_c', op: 'math_clamp', val: 'r_s', min: 0.0, max: 255.0 },
+        { id: 'r_f', op: 'math_floor', val: 'r_c' },
+        { id: 'r_i', op: 'static_cast_int', val: 'r_f' },
+        { id: 'add_r', op: 'atomic_add', counter: 'histogram', index: 'r_i', value: 1, exec_out: 'add_g' },
+
+        { id: 'g_s', op: 'math_mul', a: 'color.y', b: 255.0 },
+        { id: 'g_c', op: 'math_clamp', val: 'g_s', min: 0.0, max: 255.0 },
+        { id: 'g_off', op: 'math_add', a: 'g_c', b: 256.0 },
+        { id: 'g_f', op: 'math_floor', val: 'g_off' },
+        { id: 'g_i', op: 'static_cast_int', val: 'g_f' },
+        { id: 'add_g', op: 'atomic_add', counter: 'histogram', index: 'g_i', value: 1, exec_out: 'add_b' },
+
+        { id: 'b_s', op: 'math_mul', a: 'color.z', b: 255.0 },
+        { id: 'b_c', op: 'math_clamp', val: 'b_s', min: 0.0, max: 255.0 },
+        { id: 'b_off', op: 'math_add', a: 'b_c', b: 512.0 },
+        { id: 'b_f', op: 'math_floor', val: 'b_off' },
+        { id: 'b_i', op: 'static_cast_int', val: 'b_f' },
+        { id: 'add_b', op: 'atomic_add', counter: 'histogram', index: 'b_i', value: 1 }
+      ]
+    },
+
+    {
+      id: 'fn_find_max',
+      type: 'shader',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      workgroupSize: [256, 1, 1],
+      comment: 'Each of 256 threads reads its R/G/B bins and atomicMax into per-channel max.',
+      nodes: [
+        { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'gf', op: 'static_cast_float', val: 'gid.x' },
+
+        { id: 'rv', op: 'atomic_load', counter: 'histogram', index: 'gid.x' },
+        { id: 'mr', op: 'atomic_max', counter: 'hist_max', index: 0, value: 'rv', exec_out: 'mg' },
+
+        { id: 'gi_f', op: 'math_add', a: 'gf', b: 256.0 },
+        { id: 'gi', op: 'static_cast_int', val: 'gi_f' },
+        { id: 'gv', op: 'atomic_load', counter: 'histogram', index: 'gi' },
+        { id: 'mg', op: 'atomic_max', counter: 'hist_max', index: 1, value: 'gv', exec_out: 'mb' },
+
+        { id: 'bi_f', op: 'math_add', a: 'gf', b: 512.0 },
+        { id: 'bi', op: 'static_cast_int', val: 'bi_f' },
+        { id: 'bv', op: 'atomic_load', counter: 'histogram', index: 'bi' },
+        { id: 'mb', op: 'atomic_max', counter: 'hist_max', index: 2, value: 'bv' }
+      ]
+    },
+
+    {
+      id: 'fn_hist_vertex',
+      type: 'shader',
+      comment: 'Vertex shader: generates bar quads for 256 bins × 3 channels. Reads histogram counts from int buffer, normalizes by per-channel max, and positions bars in the bottom-right corner of clip space.',
+      inputs: [
+        { id: 'v_idx', type: 'int' as DataType, builtin: 'vertex_index' as BuiltinName }
+      ],
+      outputs: [
+        { id: 'out', type: 'HistVertex' as DataType }
+      ],
+      localVars: [],
+      nodes: [
+        { id: 'vi', op: 'var_get', var: 'v_idx' },
+        { id: 'vi_f', op: 'static_cast_float', val: 'vi' },
+
+        { id: 'c_decompose', op: 'comment', comment: 'bar = floor(vi/6) → 0..767, corner = vi%6 → 0..5' },
+        { id: 'bar_raw', op: 'math_div', a: 'vi_f', b: 6 },
+        { id: 'bar_f', op: 'math_floor', val: 'bar_raw' },
+        { id: 'bar_i', op: 'static_cast_int', val: 'bar_f' },
+        { id: 'corner_f', op: 'math_mod', a: 'vi_f', b: 6 },
+        { id: 'corner_i', op: 'static_cast_int', val: 'corner_f' },
+
+        { id: 'c_channel', op: 'comment', comment: 'channel = floor(bar/256) → 0,1,2; bin = bar%256 → 0..255' },
+        { id: 'ch_raw', op: 'math_div', a: 'bar_f', b: 256 },
+        { id: 'ch_f', op: 'math_floor', val: 'ch_raw' },
+        { id: 'ch_i', op: 'static_cast_int', val: 'ch_f' },
+        { id: 'bin_f', op: 'math_mod', a: 'bar_f', b: 256 },
+
+        { id: 'c_quad', op: 'comment', comment: 'Quad offsets: 6 vertices forming 2 triangles.' },
+        { id: 'qx_arr', op: 'array_construct', values: [0, 1, 0, 0, 1, 1] },
+        { id: 'qy_arr', op: 'array_construct', values: [0, 0, 1, 1, 0, 1] },
+        { id: 'qx', op: 'array_extract', array: 'qx_arr', index: 'corner_i' },
+        { id: 'qy', op: 'array_extract', array: 'qy_arr', index: 'corner_i' },
+
+        { id: 'c_height', op: 'comment', comment: 'Read histogram count, normalize by per-channel max.' },
+        { id: 'count', op: 'buffer_load', buffer: 'hist_read', index: 'bar_i' },
+        { id: 'count_f', op: 'static_cast_float', val: 'count' },
+        { id: 'max_v', op: 'buffer_load', buffer: 'max_read', index: 'ch_i' },
+        { id: 'max_f', op: 'static_cast_float', val: 'max_v' },
+        { id: 'safe_max', op: 'math_max', a: 'max_f', b: 1.0 },
+        { id: 'height', op: 'math_div', a: 'count_f', b: 'safe_max' },
+
+        { id: 'c_pos', op: 'comment', comment: 'Clip-space position: histogram rect x [0.4, 0.98], y [-0.98, -0.5].' },
+        { id: 'bx', op: 'math_add', a: 'bin_f', b: 'qx' },
+        { id: 'bx_n', op: 'math_div', a: 'bx', b: 256.0 },
+        { id: 'bx_s', op: 'math_mul', a: 'bx_n', b: 0.58 },
+        { id: 'cx', op: 'math_add', a: 'bx_s', b: 0.4 },
+
+        { id: 'h_s', op: 'math_mul', a: 'height', b: 0.48 },
+        { id: 'y_off', op: 'math_mul', a: 'qy', b: 'h_s' },
+        { id: 'cy', op: 'math_add', a: -0.98, b: 'y_off' },
+
+        { id: 'pos', op: 'float4', x: 'cx', y: 'cy', z: 0.0, w: 1.0 },
+
+        { id: 'c_color', op: 'comment', comment: 'Channel color: R=(1,0,0), G=(0,1,0), B=(0,0,1) with alpha for blending.' },
+        { id: 'is_r', op: 'math_eq', a: 'ch_f', b: 0.0 },
+        { id: 'is_g', op: 'math_eq', a: 'ch_f', b: 1.0 },
+        { id: 'is_b', op: 'math_eq', a: 'ch_f', b: 2.0 },
+        { id: 'cr', op: 'static_cast_float', val: 'is_r' },
+        { id: 'cg', op: 'static_cast_float', val: 'is_g' },
+        { id: 'cb', op: 'static_cast_float', val: 'is_b' },
+        { id: 'color', op: 'float4', x: 'cr', y: 'cg', z: 'cb', w: 0.5 },
+
+        { id: 'ret', op: 'struct_construct', type: 'HistVertex', values: { pos: 'pos', color: 'color' } },
+        { id: 'out', op: 'func_return', val: 'ret' }
+      ]
+    },
+
+    {
+      id: 'fn_hist_fragment',
+      type: 'shader',
+      comment: 'Fragment shader: pass-through of interpolated bar color.',
+      inputs: [
+        { id: 'in', type: 'HistVertex' as DataType }
+      ],
+      outputs: [
+        { id: 'color', type: 'float4' as DataType }
+      ],
+      localVars: [],
+      nodes: [
+        { id: 'vin', op: 'var_get', var: 'in' },
+        { id: 'col', op: 'struct_extract', struct: 'vin', field: 'color' },
+        { id: 'ret', op: 'func_return', val: 'col' }
+      ]
+    }
+  ]
+};
+
 export const ALL_EXAMPLES = {
   noise_shader: NOISE_SHADER,
   effect_shader: EFFECT_SHADER,
   mixer_shader: MIXER_SHADER,
   raymarch_shader: RAYMARCH_SHADER,
   particle_shader: PARTICLE_SHADER,
+  histogram_shader: HISTOGRAM_SHADER,
 };
