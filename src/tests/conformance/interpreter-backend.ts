@@ -16,7 +16,7 @@ export const InterpreterBackend: TestBackend = {
     // Initialize viewport resources to default size (e.g. 64x64)
     // This ensures raymarcher works even if no explicit resize command is called
     ctx.resources.forEach((res, id) => {
-      if (res.def.size.mode === 'viewport') {
+      if (res.def.size?.mode === 'viewport') {
         const width = 64;
         const height = 64;
         res.width = width;

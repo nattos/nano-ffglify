@@ -629,7 +629,6 @@ export class RuntimeManager {
       const size = otherRes.def.size;
       if (otherRes.def.type === 'texture2d' &&
         size && size.mode === 'reference' &&
-        // @ts-ignore
         size.ref === id) {
         this.resizeResource(otherId, width, height);
       }

@@ -50,7 +50,7 @@ export enum TextureFormat {
 export type ResourceSize =
   | { mode: 'fixed'; value: number | [number, number] }
   | { mode: 'viewport'; scale?: number | [number, number] }
-  | { mode: 'reference'; target: string; scale?: number | [number, number] }
+  | { mode: 'reference'; ref: string; scale?: number | [number, number] }
   | { mode: 'cpu_driven' };
 
 export interface ResourceDef {

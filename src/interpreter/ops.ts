@@ -303,7 +303,12 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     return vec[index];
   },
 
-
+  'vec_set_element': (ctx, args) => {
+    const vec = (args.vec as number[]).slice();
+    const index = args.index as number;
+    vec[index] = args.value as number;
+    return vec as VectorValue;
+  },
 
   'vec_swizzle': (ctx, args) => {
     const vec = args.vec as number[];
@@ -400,6 +405,7 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   'int': (ctx, args) => args.val,
   'bool': (ctx, args) => args.val,
   'string': (ctx, args) => args.val,
+  'comment': () => undefined,
 
   // ----------------------------------------------------------------
   // Matrix Operations (Column Major)

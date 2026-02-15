@@ -80,7 +80,7 @@ export const CppMetalBackend: TestBackend = {
       });
 
       // Generate MSL with explicit bindings
-      const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map(s => s.id), { stages, bindings });
+      const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map(s => s.id), { stages, resourceBindings: bindings });
 
       // Write MSL source
       const mslPath = path.join(buildDir, 'shaders.metal');
@@ -126,16 +126,17 @@ export const CppMetalBackend: TestBackend = {
     const resourceSpecs = resourceIds.map((resId) => {
       const r = ir.resources.find(res => res.id === resId) || ir.inputs.find(inp => inp.id === resId);
       if (!r) return '0';
+      // Resources with size/sampler/dataType are always ResourceDef
+      const rd = r as import('../../ir/types').ResourceDef;
       if (r.type === 'texture2d') {
-        const size = r['size'] && typeof r['size'] === 'object' && 'value' in r['size'] ? r['size'].value : [256, 256];
+        const size = rd.size && typeof rd.size === 'object' && 'value' in rd.size ? rd.size.value : [256, 256];
         const [w, h] = Array.isArray(size) ? size : [size, 1];
-        const sampler = (r as any).sampler;
-        const wrap = sampler?.wrap === 'clamp' ? 1 : 0;
+        const wrap = rd.sampler?.wrap === 'clamp' ? 1 : 0;
         return `T:${w}:${h}:${wrap}`;
       }
       if (r.type === 'buffer') {
-        const size = r['size'] && typeof r['size'] === 'object' && 'value' in r['size'] ? r['size'].value : 100;
-        const dt = (r as any).dataType;
+        const size = rd.size && typeof rd.size === 'object' && 'value' in rd.size ? rd.size.value : 100;
+        const dt = rd.dataType;
         const structDef = ir.structs?.find(s => s.id === dt);
         const stride = structDef
           ? structDef.members.reduce((sum: number, m: any) => {
@@ -147,7 +148,7 @@ export const CppMetalBackend: TestBackend = {
         return `B:${size}:${stride}`;
       }
       if (r.type === 'atomic_counter') {
-        const size = r['size'] && typeof r['size'] === 'object' && 'value' in r['size'] ? r['size'].value : 1;
+        const size = rd.size && typeof rd.size === 'object' && 'value' in rd.size ? rd.size.value : 1;
         return `B:${size}:1`;
       }
       return '0';
