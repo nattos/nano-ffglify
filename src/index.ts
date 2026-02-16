@@ -135,9 +135,8 @@ export class App extends MobxLitElement {
   }
 
   async firstUpdated() {
-    await this.runDemoScript();
-
     await appState.initialized;
+    await this.runDemoScript();
     await appController.restoreTransportState();
 
     if (!llmManager.hasApiKey) {

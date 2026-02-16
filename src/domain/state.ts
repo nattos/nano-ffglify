@@ -61,11 +61,10 @@ export class AppState {
       local: observable
     });
 
-    // Load settings async
-    this.initialized = Promise.all([
-      this.loadSettings(),
-      this.initPersistence()
-    ]).then(() => { });
+    // Load settings FIRST, then database.
+    // Settings must be loaded before anything else runs, because processes
+    // triggered by database load can save default settings that stomp real ones.
+    this.initialized = this.loadSettings().then(() => this.initPersistence());
   }
 
   async loadSettings() {

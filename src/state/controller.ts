@@ -102,6 +102,7 @@ export class AppController {
   }
 
   private saveSettings() {
+    if (!settingsManager.settingsLoaded) return; // Don't stomp persisted settings with defaults
     settingsManager.saveSettings(toJS(appState.local.settings));
   }
 
@@ -173,14 +174,14 @@ export class AppController {
     runInAction(() => {
       appState.local.settings.chatOpen = open;
     });
-    settingsManager.saveSettings(toJS(appState.local.settings));
+    this.saveSettings();
   }
 
   public toggleMockLLM(useMock: boolean) {
     runInAction(() => {
       appState.local.settings.useMockLLM = useMock;
     });
-    settingsManager.saveSettings(toJS(appState.local.settings));
+    this.saveSettings();
   }
 
   public logLLMInteraction(entry: LLMLogEntry) {

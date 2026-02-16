@@ -44,6 +44,10 @@ interface AppDB extends DBSchema {
 export class SettingsManager {
   private dbPromise: Promise<IDBPDatabase<AppDB>> | null = null;
   public readonly databaseLoaded = new Resolvable<void>();
+  private _settingsLoaded = false;
+
+  /** True once settings have been loaded from IndexedDB (or confirmed absent). */
+  get settingsLoaded(): boolean { return this._settingsLoaded; }
 
   constructor() {
     if (typeof indexedDB !== 'undefined' && DB_NAME) {
@@ -66,6 +70,9 @@ export class SettingsManager {
   }
 
   public async saveSettings(settings: LocalSettings): Promise<void> {
+    if (!this._settingsLoaded) {
+      throw new Error('Attempted to save settings before they were loaded. This would stomp persisted settings with defaults.');
+    }
     if (!this.dbPromise) throw new Error("Database not initialized. Check VITE_DB_NAME.");
     try {
       const db = await this.dbPromise;
@@ -77,11 +84,17 @@ export class SettingsManager {
   }
 
   public async loadSettings(): Promise<LocalSettings | null> {
-    if (!this.dbPromise) throw new Error("Database not initialized. Check VITE_DB_NAME.");
+    if (!this.dbPromise) {
+      this._settingsLoaded = true;
+      throw new Error("Database not initialized. Check VITE_DB_NAME.");
+    }
     try {
       const db = await this.dbPromise;
-      return (await db.get(SETTINGS_STORE, 'localSettings')) || null;
+      const result = (await db.get(SETTINGS_STORE, 'localSettings')) || null;
+      this._settingsLoaded = true;
+      return result;
     } catch (e) {
+      this._settingsLoaded = true;
       console.error('Error loading settings:', e);
       throw e;
     }
