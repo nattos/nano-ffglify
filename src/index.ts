@@ -231,13 +231,32 @@ export class App extends MobxLitElement {
     this.isGlobalDragging = false;
     const file = e.dataTransfer?.files[0];
     if (file) {
-      const ids = appController.runtime.getTextureInputIds();
-      if (ids.length > 0) {
-        appController.runtime.setTextureSource(ids[0], { type: 'file', value: file });
-        appController.saveInputFile(ids[0], file);
+      if (file.name.endsWith('.json') || file.type === 'application/json') {
+        this.handleImportShaderJson(file);
+      } else {
+        const ids = appController.runtime.getTextureInputIds();
+        if (ids.length > 0) {
+          appController.runtime.setTextureSource(ids[0], { type: 'file', value: file });
+          appController.saveInputFile(ids[0], file);
+        }
       }
     }
   };
+
+  private async handleImportShaderJson(file: File) {
+    try {
+      const text = await file.text();
+      const ir = JSON.parse(text);
+      if (!ir.version || !ir.functions) {
+        console.error('Invalid shader JSON: missing required fields');
+        return;
+      }
+      const baseName = file.name.replace(/\.json$/i, '');
+      await appController.importWorkspaceFromIR(ir, baseName);
+    } catch (e) {
+      console.error('Failed to import shader JSON:', e);
+    }
+  }
 
   disconnectedCallback() {
     super.disconnectedCallback();
@@ -288,6 +307,20 @@ export class App extends MobxLitElement {
     }
   }
 
+  private handleDownloadShaderJson() {
+    const ir = appState.database.ir;
+    const json = JSON.stringify(ir, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const fileName = (ir.meta.name || 'shader').replace(/\s+/g, '_') + '.json';
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  }
+
   render() {
     const collapsed = this.leftCollapsed && this.dragTarget !== 'left';
     const isDraggingLeft = this.dragTarget === 'left';
@@ -314,7 +347,7 @@ export class App extends MobxLitElement {
         <ui-api-key-dialog @close=${() => this.showApiKeyDialog = false}></ui-api-key-dialog>
       ` : nothing}
 
-      <ui-title-bar @download-zip=${() => this.handleDownloadZip()}></ui-title-bar>
+      <ui-title-bar @download-zip=${() => this.handleDownloadZip()} @download-shader-json=${() => this.handleDownloadShaderJson()}></ui-title-bar>
 
       <div class="main-area" style="grid-template-columns: ${gridCols}">
         <ui-nav-bar></ui-nav-bar>
@@ -334,7 +367,7 @@ export class App extends MobxLitElement {
       </div>
 
       <div class="global-drop-zone ${this.isGlobalDragging ? 'active' : ''}">
-        Drop to Load into First Slot
+        Drop to Import
       </div>
     `;
   }

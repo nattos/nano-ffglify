@@ -661,6 +661,36 @@ export class AppController {
     return newId;
   }
 
+  public async importWorkspaceFromIR(ir: IRDocument, sourceName: string): Promise<string> {
+    const now = Date.now();
+    const newId = crypto.randomUUID();
+    const wsName = ir.meta.name || sourceName;
+    const entry: WorkspaceIndexEntry = {
+      id: newId,
+      name: wsName,
+      createdAt: now,
+      updatedAt: now,
+      forkedFrom: {
+        sourceId: '',
+        sourceName: sourceName,
+        forkedAt: now,
+      },
+    };
+    const dbState: DatabaseState = {
+      ir: JSON.parse(JSON.stringify(ir)),
+      chat_history: [],
+    };
+    await settingsManager.saveWorkspace(entry);
+    await settingsManager.saveDatabase(dbState, newId);
+
+    runInAction(() => {
+      appState.local.workspaces.unshift(entry);
+    });
+
+    await this.switchWorkspace(newId);
+    return newId;
+  }
+
   public async deleteWorkspace(id: string): Promise<void> {
     // Delete the data
     await settingsManager.deleteWorkspace(id);
