@@ -5,6 +5,7 @@ import { WebGpuHost } from '../webgpu/webgpu-host';
 import { ResourceState, RuntimeValue } from '../webgpu/host-interface';
 import { makeResourceStates } from './resources';
 import { PATCH_SIZE } from '../constants';
+import { TestCardRenderer } from './test-card-renderer';
 
 export type TransportState = 'playing' | 'paused' | 'stopped';
 
@@ -68,6 +69,9 @@ export class RuntimeManager {
   private inputs: Map<string, RuntimeValue> = new Map();
   private inputSources: Map<string, InputSourceState> = new Map();
   private textureInputIds: string[] = [];
+  private testCardRenderer = new TestCardRenderer();
+  private testCardNumbers: Map<string, number> = new Map();
+  private testCardInputIds: Set<string> = new Set();
 
   @observable
   public inputEntries: Map<string, RuntimeInputEntry> = new Map();
@@ -96,6 +100,8 @@ export class RuntimeManager {
     }
 
     const ir = artifacts.ir;
+
+    const pendingTestCards: { id: string; number: number }[] = [];
 
     runInAction(() => {
       this.currentCompiled = artifacts;
@@ -150,6 +156,9 @@ export class RuntimeManager {
       this.textureInputIds = [];
       this.inputEntries.clear();
 
+      this.testCardNumbers.clear();
+      this.testCardInputIds.clear();
+
       ir.inputs.forEach(inp => {
         const type = this.mapDataTypeToRuntimeType(inp.type);
         if (!type) return;
@@ -166,11 +175,16 @@ export class RuntimeManager {
 
         if (inp.type === 'texture2d') {
           this.textureInputIds.push(inp.id);
+          const textureIdx = this.textureInputIds.length - 1;
+          const tcNumber = (textureIdx % 2) + 1;
+          this.testCardNumbers.set(inp.id, tcNumber);
+
           if (savedFileInputIds?.has(inp.id)) {
             // Skip default — saved file will be restored by restoreSavedInputs
           } else if (!this.inputSources.has(inp.id)) {
-            // Initialize with test.png if not already set
-            this.setTextureSource(inp.id, { type: 'url', value: 'test.png' });
+            // Defer test card render (async) until after runInAction
+            pendingTestCards.push({ id: inp.id, number: tcNumber });
+            this.testCardInputIds.add(inp.id);
           } else {
             // Mark existing source as dirty so it gets re-blitted to the new GPU texture
             const existing = this.inputSources.get(inp.id)!;
@@ -185,6 +199,14 @@ export class RuntimeManager {
         this.inputEntries.set(inp.id, entry);
       });
     });
+
+    // Render test cards to default textures (async — must be outside runInAction)
+    for (const tc of pendingTestCards) {
+      const resource = this.resources.get(tc.id);
+      if (resource?.gpuTexture) {
+        await this.testCardRenderer.render(device, resource.gpuTexture, tc.number);
+      }
+    }
 
     // We assume the device passed in is either a real GPUDevice or a mock
     // For now, let's keep it flexible.
@@ -267,6 +289,17 @@ export class RuntimeManager {
     this.executor.setBuiltins({ time: this.elapsedTime, delta_time: deltaTime });
 
     try {
+      // Re-render test card textures each frame (animated)
+      if (this.device && this.testCardInputIds.size > 0) {
+        for (const id of this.testCardInputIds) {
+          const resource = this.resources.get(id);
+          const number = this.testCardNumbers.get(id) ?? 1;
+          if (resource?.gpuTexture) {
+            await this.testCardRenderer.render(this.device, resource.gpuTexture, number, this.elapsedTime);
+          }
+        }
+      }
+
       // Sync dynamic inputs
       this.syncInputsToGpu();
 
@@ -415,6 +448,9 @@ export class RuntimeManager {
   }
 
   public setTextureSource(id: string, source: TextureSource) {
+    // No longer a test card — stop per-frame animation for this slot
+    this.testCardInputIds.delete(id);
+
     let state = this.inputSources.get(id);
     if (!state) {
       state = { id, source, isDirty: true, isLoading: false };
@@ -440,6 +476,36 @@ export class RuntimeManager {
     const entry = this.inputEntries.get(id);
     if (entry) {
       entry.displayText = typeof source.value === 'string' ? source.value : source.value.name;
+    }
+  }
+
+  public async resetTextureToTestCard(id: string) {
+    // Clean up any existing input source
+    const source = this.inputSources.get(id);
+    if (source) {
+      if (source.videoElement) {
+        source.videoElement.pause();
+        source.videoElement.src = '';
+        source.videoElement.load();
+      }
+      if (source.loadedImage) {
+        source.loadedImage.close();
+      }
+      this.inputSources.delete(id);
+    }
+
+    // Re-render test card and re-enable per-frame animation
+    this.testCardInputIds.add(id);
+    const resource = this.resources.get(id);
+    const number = this.testCardNumbers.get(id) ?? 1;
+    if (resource?.gpuTexture && this.device) {
+      await this.testCardRenderer.render(this.device, resource.gpuTexture, number, this.elapsedTime);
+    }
+
+    // Clear display text
+    const entry = this.inputEntries.get(id);
+    if (entry) {
+      entry.displayText = undefined;
     }
   }
 

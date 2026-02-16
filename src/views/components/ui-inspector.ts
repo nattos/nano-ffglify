@@ -410,7 +410,7 @@ export class UiInspector extends MobxLitElement {
 
   private handleResetTexture(entry: RuntimeInputEntry) {
     if (!this.runtime) return;
-    this.runtime.setTextureSource(entry.id, { type: 'url', value: 'test.png' });
+    this.runtime.resetTextureToTestCard(entry.id);
     appController.saveInputValue(entry.id, undefined);
   }
 

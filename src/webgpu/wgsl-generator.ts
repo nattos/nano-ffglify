@@ -74,10 +74,9 @@ export class WgslGenerator {
       });
     }
 
-    // normalized_global_invocation_id requires gid and num_workgroups to compute
+    // normalized_global_invocation_id requires gid (uses u_dispatch_size from inputs buffer)
     if (this.allUsedBuiltins.has('normalized_global_invocation_id')) {
       this.allUsedBuiltins.add('global_invocation_id');
-      this.allUsedBuiltins.add('num_workgroups');
     }
 
     const fullIr: IRDocument = {
@@ -548,8 +547,7 @@ export class WgslGenerator {
         if (this.allUsedBuiltins.has('local_invocation_index')) lines.push(`  LocalInvocationIndex = lidx;`);
         if (this.allUsedBuiltins.has('num_workgroups')) lines.push(`  NumWorkgroups = nw;`);
         if (this.allUsedBuiltins.has('normalized_global_invocation_id')) {
-          const wg = options.workgroupSize || [16, 16, 1];
-          lines.push(`  NormalizedGlobalInvocationID = vec3<f32>(gid) / vec3<f32>(nw * vec3<u32>(${wg[0]}u, ${wg[1]}u, ${wg[2]}u));`);
+          lines.push(`  NormalizedGlobalInvocationID = (vec3<f32>(gid) + 0.5) / vec3<f32>(b_inputs.u_dispatch_size);`);
         }
 
         this.emitPlaceholders(lines, options, nonBuiltinInputs.length > 0, emittedFunctions);

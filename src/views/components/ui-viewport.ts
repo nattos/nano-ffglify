@@ -18,7 +18,6 @@ export class UiViewport extends MobxLitElement {
   private unsubscribe: (() => void) | null = null;
 
   private blitPipeline: GPURenderPipeline | null = null;
-  private sampler: GPUSampler | null = null;
   private uniformBuffer: GPUBuffer | null = null;
 
   private lastScaleX = 1;
@@ -144,45 +143,35 @@ export class UiViewport extends MobxLitElement {
         screenSize: vec2<f32>,
         texSize: vec2<f32>,
       }
-      @group(0) @binding(2) var<uniform> params: Params;
-
-      struct VertexOutput {
-        @builtin(position) position: vec4<f32>,
-        @location(0) uv: vec2<f32>,
-      }
+      @group(0) @binding(1) var<uniform> params: Params;
 
       @vertex
-      fn vert_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+      fn vert_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
         var pos = array<vec2<f32>, 4>(
           vec2<f32>(-1.0, -1.0),
           vec2<f32>(1.0, -1.0),
           vec2<f32>(-1.0, 1.0),
           vec2<f32>(1.0, 1.0)
         );
-        var uv = array<vec2<f32>, 4>(
-          vec2<f32>(0.0, 1.0),
-          vec2<f32>(1.0, 1.0),
-          vec2<f32>(0.0, 0.0),
-          vec2<f32>(1.0, 0.0)
-        );
-
-        var out: VertexOutput;
-        out.position = vec4<f32>(pos[vertexIndex] * params.scale + params.offset, 0.0, 1.0);
-        out.uv = uv[vertexIndex];
-        return out;
+        return vec4<f32>(pos[vertexIndex] * params.scale + params.offset, 0.0, 1.0);
       }
 
       @group(0) @binding(0) var t_src: texture_2d<f32>;
-      @group(0) @binding(1) var s_src: sampler;
 
       @fragment
-      fn frag_main(@location(0) uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) -> @location(0) vec4<f32> {
+      fn frag_main(@builtin(position) fragPos: vec4<f32>) -> @location(0) vec4<f32> {
         let gridSize = 16.0;
         let grid = floor(fragPos.xy / gridSize);
         let checker = (i32(grid.x) + i32(grid.y)) % 2;
         let bgColor = select(vec4<f32>(0.15, 0.15, 0.15, 1.0), vec4<f32>(0.2, 0.2, 0.2, 1.0), checker == 0);
 
-        let srcColor = textureSample(t_src, s_src, uv);
+        // Map fragment position directly to integer texel coordinate
+        let quadOrigin = (params.screenSize - params.screenSize * params.scale) * 0.5;
+        let quadSize = params.screenSize * params.scale;
+        let posInQuad = fragPos.xy - quadOrigin;
+        let texCoord = vec2<i32>(floor(posInQuad * params.texSize / quadSize));
+        let clamped = clamp(texCoord, vec2<i32>(0), vec2<i32>(params.texSize) - 1);
+        let srcColor = textureLoad(t_src, clamped, 0);
 
         return mix(bgColor, srcColor, srcColor.a);
       }
@@ -206,11 +195,6 @@ export class UiViewport extends MobxLitElement {
       primitive: { topology: 'triangle-strip' }
     });
 
-    this.sampler = device.createSampler({
-      magFilter: 'linear',
-      minFilter: 'linear',
-    });
-
     this.uniformBuffer = device.createBuffer({
       size: 32, // scale(8) + offset(8) + screen(8) + tex(8)
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
@@ -218,7 +202,7 @@ export class UiViewport extends MobxLitElement {
   }
 
   private renderBlit(device: GPUDevice, srcTexture: GPUTexture) {
-    if (!this.context || !this.blitPipeline || !this.sampler || !this.uniformBuffer) return;
+    if (!this.context || !this.blitPipeline || !this.uniformBuffer) return;
 
     const sw = this.canvas.width;
     const sh = this.canvas.height;
@@ -262,8 +246,7 @@ export class UiViewport extends MobxLitElement {
       layout: this.blitPipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: srcTexture.createView() },
-        { binding: 1, resource: this.sampler },
-        { binding: 2, resource: { buffer: this.uniformBuffer } }
+        { binding: 1, resource: { buffer: this.uniformBuffer } }
       ]
     });
 

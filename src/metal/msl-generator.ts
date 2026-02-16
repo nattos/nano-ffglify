@@ -1688,7 +1688,7 @@ export class MslGenerator {
           return 'int3(gid)';
         }
         if (name === 'normalized_global_invocation_id') {
-          return 'float3(gid) / float3(tpg)';
+          return '(float3(gid) + 0.5) / float3(tpg)';
         }
         if (name === 'output_size') {
           return 'v_output_size';
