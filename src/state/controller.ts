@@ -14,15 +14,21 @@
  */
 import { runInAction, toJS } from 'mobx';
 import { appState } from '../domain/state';
-import { AppSettings, ChatMsg, LLMLogEntry, IRDocument, DatabaseState, SavedInputFile } from '../domain/types';
+import { AppSettings, ChatMsg, LLMLogEntry, IRDocument, DatabaseState, SavedInputFile, WorkspaceIndexEntry } from '../domain/types';
+import { INITIAL_DATABASE_STATE } from '../domain/init';
 import { historyManager } from './history';
 import { settingsManager } from './settings';
 import { validateIR } from '../ir/validator';
 import { getSharedDevice } from '../webgpu/gpu-device';
 import { ReplManager } from '../runtime/repl-manager';
 import { RuntimeManager, RuntimeInputType } from '../runtime/runtime-manager';
-
 import { CompileResult } from './entity-api';
+
+// Late-bound reference to avoid circular dependency (chat-handler imports controller)
+let _chatHandler: { stop(): void } | null = null;
+export function registerChatHandler(handler: { stop(): void }) {
+  _chatHandler = handler;
+}
 
 export interface MutateOptions {
   needsCompile?: boolean;
@@ -40,7 +46,11 @@ export class AppController {
   private activeCompileResolver: ((res: CompileResult) => void) | null = null;
   private activeCompilePromise: Promise<CompileResult> | null = null;
 
-  public setActiveTab(tab: 'dashboard' | 'ir' | 'raw_code' | 'state' | 'script' | 'logs' | 'settings') {
+  public get activeWorkspaceId(): string {
+    return appState.local.settings.activeWorkspaceId || '';
+  }
+
+  public setActiveTab(tab: AppSettings['activeTab']) {
     runInAction(() => {
       appState.local.settings.activeTab = tab;
     });
@@ -90,10 +100,10 @@ export class AppController {
   public toggleLeftPanel(tabId: AppSettings['activeTab']) {
     runInAction(() => {
       if (appState.local.settings.activeTab === tabId && !appState.local.settings.leftPanelCollapsed) {
-        // Clicking active tab → collapse
+        // Clicking active tab -> collapse
         appState.local.settings.leftPanelCollapsed = true;
       } else {
-        // Clicking different tab or panel is collapsed → open to that tab
+        // Clicking different tab or panel is collapsed -> open to that tab
         appState.local.settings.activeTab = tabId;
         appState.local.settings.leftPanelCollapsed = false;
       }
@@ -110,15 +120,15 @@ export class AppController {
 
   public saveInputValue(id: string, value: any) {
     runInAction(() => {
-      if (!appState.local.settings.savedInputValues) {
-        appState.local.settings.savedInputValues = {};
+      if (!appState.database.savedInputValues) {
+        appState.database.savedInputValues = {};
       }
-      appState.local.settings.savedInputValues[id] = value;
+      appState.database.savedInputValues[id] = value;
     });
-    // Debounce settings save for rapid slider changes
+    // Debounce database save for rapid slider changes
     if (this.saveInputDebounceTimer) clearTimeout(this.saveInputDebounceTimer);
     this.saveInputDebounceTimer = setTimeout(() => {
-      this.saveSettings();
+      this.saveDatabaseWithTimestamp();
       this.saveInputDebounceTimer = null;
     }, 300);
   }
@@ -129,7 +139,7 @@ export class AppController {
       mimeType: file.type,
       blob: file,
     };
-    await settingsManager.saveInputFile(id, saved);
+    await settingsManager.saveInputFile(this.activeWorkspaceId, id, saved);
   }
 
   /**
@@ -137,12 +147,12 @@ export class AppController {
    * Called before setCompiled so we can skip loading default textures for those.
    */
   public async getSavedFileInputIds(): Promise<Set<string>> {
-    const savedFiles = await settingsManager.loadAllInputFiles();
+    const savedFiles = await settingsManager.loadAllInputFiles(this.activeWorkspaceId);
     return new Set(savedFiles.keys());
   }
 
   public async restoreSavedInputs() {
-    const savedValues = appState.local.settings.savedInputValues;
+    const savedValues = appState.database.savedInputValues;
     const entries = this.runtime.inputEntries;
 
     // Restore scalar values
@@ -156,7 +166,7 @@ export class AppController {
     }
 
     // Restore file inputs
-    const savedFiles = await settingsManager.loadAllInputFiles();
+    const savedFiles = await settingsManager.loadAllInputFiles(this.activeWorkspaceId);
     for (const [id, savedFile] of savedFiles) {
       const entry = entries.get(id);
       if (entry && entry.type === RuntimeInputType.Texture) {
@@ -195,19 +205,31 @@ export class AppController {
     });
   }
 
+  /** Persist database to IDB without touching updatedAt. */
   private saveDatabase() {
-    settingsManager.saveDatabase(toJS(appState.database));
+    if (!this.activeWorkspaceId) return;
+    settingsManager.saveDatabase(toJS(appState.database), this.activeWorkspaceId);
+  }
+
+  /** Persist database AND bump the workspace's updatedAt (for real content changes). */
+  private saveDatabaseWithTimestamp() {
+    this.saveDatabase();
+    const ws = appState.local.workspaces.find(w => w.id === this.activeWorkspaceId);
+    if (ws) {
+      runInAction(() => { ws.updatedAt = Date.now(); });
+      settingsManager.saveWorkspace(toJS(ws));
+    }
   }
 
   public undo() {
     historyManager.undo();
-    this.saveDatabase();
+    this.saveDatabaseWithTimestamp();
     this.performCompile();
   }
 
   public redo() {
     historyManager.redo();
-    this.saveDatabase();
+    this.saveDatabaseWithTimestamp();
     this.performCompile();
   }
 
@@ -424,7 +446,7 @@ export class AppController {
     const task: MutateTask = {};
     runInAction(() => {
       historyManager.record(description, source, recipe);
-      this.saveDatabase();
+      this.saveDatabaseWithTimestamp();
     });
 
     if (options?.needsCompile) {
@@ -555,8 +577,156 @@ export class AppController {
         draft.chat_history.push(fullMsg);
       });
       // Save after mutation
-      this.saveDatabase();
+      this.saveDatabaseWithTimestamp();
     });
+  }
+
+  // --- Workspace Methods ---
+
+  public async createWorkspace(name?: string): Promise<string> {
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    const entry: WorkspaceIndexEntry = {
+      id,
+      name: name || 'New Shader',
+      createdAt: now,
+      updatedAt: now,
+    };
+    await settingsManager.saveWorkspace(entry);
+    await settingsManager.saveDatabase(JSON.parse(JSON.stringify(INITIAL_DATABASE_STATE)), id);
+
+    runInAction(() => {
+      appState.local.workspaces.unshift(entry);
+    });
+
+    return id;
+  }
+
+  public async forkWorkspace(sourceId: string): Promise<string> {
+    const sourceEntry = appState.local.workspaces.find(w => w.id === sourceId);
+    if (!sourceEntry) throw new Error('Workspace not found');
+
+    // If forking the active workspace, use the live state
+    let sourceData: DatabaseState;
+    if (sourceId === this.activeWorkspaceId) {
+      sourceData = JSON.parse(JSON.stringify(toJS(appState.database)));
+    } else {
+      const loaded = await settingsManager.loadDatabase(sourceId);
+      if (!loaded) throw new Error('Workspace data not found');
+      sourceData = loaded;
+    }
+
+    const now = Date.now();
+    const newId = crypto.randomUUID();
+    const entry: WorkspaceIndexEntry = {
+      id: newId,
+      name: `${sourceEntry.name} (Fork)`,
+      createdAt: now,
+      updatedAt: now,
+      forkedFrom: {
+        sourceId: sourceId,
+        sourceName: sourceEntry.name,
+        forkedAt: now,
+      },
+    };
+    await settingsManager.saveWorkspace(entry);
+    await settingsManager.saveDatabase(sourceData, newId);
+
+    // Copy input files
+    const inputFiles = await settingsManager.loadAllInputFiles(sourceId);
+    for (const [inputId, file] of inputFiles) {
+      await settingsManager.saveInputFile(newId, inputId, file);
+    }
+
+    runInAction(() => {
+      appState.local.workspaces.unshift(entry);
+    });
+
+    return newId;
+  }
+
+  public async deleteWorkspace(id: string): Promise<void> {
+    // Delete the data
+    await settingsManager.deleteWorkspace(id);
+    await settingsManager.deleteWorkspaceData(id);
+
+    runInAction(() => {
+      const idx = appState.local.workspaces.findIndex(w => w.id === id);
+      if (idx !== -1) appState.local.workspaces.splice(idx, 1);
+    });
+
+    // If we deleted the active workspace, switch to another or create a new one
+    if (id === this.activeWorkspaceId) {
+      if (appState.local.workspaces.length > 0) {
+        await this.switchWorkspace(appState.local.workspaces[0].id);
+      } else {
+        // Create a fresh default workspace
+        const newId = await this.createWorkspace('New Shader');
+        await this.switchWorkspace(newId);
+      }
+    }
+  }
+
+  public async renameWorkspace(id: string, name: string): Promise<void> {
+    const entry = appState.local.workspaces.find(w => w.id === id);
+    if (!entry) return;
+
+    runInAction(() => {
+      entry.name = name;
+      entry.updatedAt = Date.now();
+    });
+    await settingsManager.saveWorkspace(toJS(entry));
+  }
+
+  public async switchWorkspace(targetId: string): Promise<void> {
+    if (targetId === this.activeWorkspaceId) return;
+
+    // 1. Save current workspace
+    this.saveDatabase();
+
+    // 2. Abort in-flight LLM
+    _chatHandler?.stop();
+
+    // 3. Clear undo/redo history
+    historyManager.clear();
+
+    // 4. Stop runtime
+    this.runtime.stop();
+
+    // 5. Load target workspace data
+    const targetData = await settingsManager.loadDatabase(targetId);
+    const data = targetData || JSON.parse(JSON.stringify(INITIAL_DATABASE_STATE));
+
+    runInAction(() => {
+      // Replace database state
+      Object.keys(appState.database).forEach(key => {
+        delete (appState.database as any)[key];
+      });
+      Object.assign(appState.database, data);
+
+      // Reset ephemeral state
+      appState.local.validationErrors = [];
+      appState.local.compilationResult = undefined;
+      appState.local.compileStatus = undefined;
+      appState.local.draftChat = '';
+      appState.local.activeRewindId = null;
+      appState.local.selectedEntity = undefined;
+      appState.local.selectionHistory = [];
+      appState.local.selectionFuture = [];
+      appState.local.llmBusy = false;
+      appState.local.llmStatus = undefined;
+
+      // Update active workspace
+      appState.local.settings.activeWorkspaceId = targetId;
+    });
+
+    // 6. Persist settings
+    this.saveSettings();
+
+    // 7. Reset compilation state and recompile
+    this.lastCompiledIRJson = null;
+    this.repl.currentArtifacts = null;
+    await this.restoreTransportState();
   }
 }
 

@@ -28,8 +28,22 @@ export interface ChatMsg {
   data?: any;
 }
 
+export interface WorkspaceForkInfo {
+  sourceId: string;
+  sourceName: string;
+  forkedAt: number;
+}
+
+export interface WorkspaceIndexEntry {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  forkedFrom?: WorkspaceForkInfo;
+}
+
 export interface AppSettings {
-  activeTab: 'dashboard' | 'ir' | 'raw_code' | 'state' | 'script' | 'logs' | 'settings';
+  activeTab: 'dashboard' | 'ir' | 'raw_code' | 'state' | 'script' | 'logs' | 'settings' | 'workspaces';
   chatOpen: boolean;
   useMockLLM: boolean;
   transportState?: 'playing' | 'paused' | 'stopped';
@@ -38,7 +52,7 @@ export interface AppSettings {
   leftPanelCollapsed?: boolean;
   leftPanelWidth?: number;
   chatPanelWidth?: number;
-  savedInputValues?: Record<string, any>;
+  activeWorkspaceId?: string;
   maxLLMTurns?: number;
 }
 
@@ -80,11 +94,14 @@ export interface LocalState {
   };
   compileStatus?: 'success' | 'fail' | 'compiling';
   lastCompileTime?: number;
+
+  workspaces: WorkspaceIndexEntry[];
 }
 
 export interface DatabaseState {
   ir: IRDocument;
   chat_history: ChatMsg[];
+  savedInputValues?: Record<string, any>;
 }
 
 export interface EphemeralState {

@@ -88,6 +88,12 @@ export class HistoryManager {
   }
 
   @action
+  clear() {
+    this.history.length = 0;
+    this.redoStack.length = 0;
+  }
+
+  @action
   rejectLastLLMAction() {
     // Find last LLM action
     // For simplicity, just pop until we find one, or search backwards and undo strictly that?

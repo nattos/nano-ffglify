@@ -9,8 +9,17 @@ vi.mock('../src/state/settings', () => ({
   settingsManager: {
     loadSettings: vi.fn().mockResolvedValue(null),
     saveSettings: vi.fn(),
-    loadDatabase: vi.fn(),
-    saveDatabase: vi.fn()
+    loadDatabase: vi.fn().mockResolvedValue(null),
+    saveDatabase: vi.fn(),
+    runMigrationIfNeeded: vi.fn().mockResolvedValue(undefined),
+    listWorkspaces: vi.fn().mockResolvedValue([]),
+    saveWorkspace: vi.fn().mockResolvedValue(undefined),
+    loadAllInputFiles: vi.fn().mockResolvedValue(new Map()),
+    saveInputFile: vi.fn().mockResolvedValue(undefined),
+    deleteWorkspace: vi.fn().mockResolvedValue(undefined),
+    deleteWorkspaceData: vi.fn().mockResolvedValue(undefined),
+    settingsLoaded: true,
+    databaseLoaded: { resolve: vi.fn() },
   }
 }));
 

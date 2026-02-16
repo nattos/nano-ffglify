@@ -15,6 +15,7 @@ interface NavTab {
 }
 
 const TABS: NavTab[] = [
+  { id: 'workspaces', icon: 'la-th-list', label: 'Workspaces', devOnly: false },
   { id: 'dashboard', icon: 'la-sliders-h', label: 'Dashboard', devOnly: false },
   { id: 'ir',        icon: 'la-project-diagram', label: 'IR Code', devOnly: true },
   { id: 'raw_code',  icon: 'la-code', label: 'Raw Code', devOnly: true },

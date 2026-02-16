@@ -3,7 +3,7 @@
  * @description The "Brain" of the application. Manages the conversation loop:
  * User Input -> Prompt Building -> LLM API -> Response Parsing -> Tool Execution -> State Mutation.
  */
-import { appController, AppController } from '../state/controller';
+import { appController, AppController, registerChatHandler } from '../state/controller';
 import { appState, AppState } from '../domain/state';
 import { GoogleGenAIManager, LLMManager, llmManager } from './llm-manager';
 import { PromptBuilder } from '../domain/prompt-builder';
@@ -209,3 +209,4 @@ export const chatHandler = new ChatHandler(
   llmManager,
   entityManager
 );
+registerChatHandler(chatHandler);

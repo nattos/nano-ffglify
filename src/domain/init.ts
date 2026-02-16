@@ -21,5 +21,6 @@ export const INITIAL_DATABASE_STATE: DatabaseState = {
       }
     ]
   },
-  chat_history: []
+  chat_history: [],
+  savedInputValues: {},
 };

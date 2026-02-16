@@ -1,9 +1,10 @@
 import './ui-button';
 import { MobxLitElement } from '../mobx-lit-element';
-import { css, html } from 'lit';
+import { css, html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { globalStyles } from '../../styles';
 import { appController } from '../../state/controller';
+import { appState } from '../../domain/state';
 
 @customElement('ui-title-bar')
 export class UiTitleBar extends MobxLitElement {
@@ -31,6 +32,16 @@ export class UiTitleBar extends MobxLitElement {
         color: var(--app-text-muted);
       }
 
+      .workspace-name {
+        font-weight: normal;
+        font-size: 0.85rem;
+        opacity: 0.6;
+      }
+
+      .workspace-sep {
+        opacity: 0.3;
+      }
+
       .center {
         display: flex;
         align-items: center;
@@ -54,7 +65,13 @@ export class UiTitleBar extends MobxLitElement {
 
   render() {
     return html`
-      <div class="left">Nano FFGLify</div>
+      <div class="left">
+        Nano FFGLify
+        ${(() => {
+          const ws = appState.local.workspaces.find(w => w.id === appController.activeWorkspaceId);
+          return ws ? html`<span class="workspace-sep">/</span><span class="workspace-name">${ws.name}</span>` : nothing;
+        })()}
+      </div>
 
       <div class="center">
         <ui-button icon="la-play" square @click=${() => appController.play()} .variant=${appController.runtime.transportState === 'playing' ? 'primary' : 'outline'} title="Play"></ui-button>

@@ -13,7 +13,7 @@
  */
 import { observable, makeObservable, configure, runInAction } from 'mobx';
 import { enableMapSet, setAutoFreeze } from 'immer';
-import { DatabaseState, LocalState } from './types';
+import { DatabaseState, LocalState, WorkspaceIndexEntry } from './types';
 import { settingsManager } from '../state/settings';
 import { INITIAL_DATABASE_STATE } from './init';
 
@@ -53,7 +53,8 @@ export class AppState {
       selectionHistory: [],
       selectionFuture: [],
       validationErrors: [],
-      compilationResult: undefined
+      compilationResult: undefined,
+      workspaces: [],
     } as any);
 
     makeObservable(this, {
@@ -85,14 +86,50 @@ export class AppState {
   }
 
   async initPersistence() {
-    const savedDb = await settingsManager.loadDatabase();
-    if (savedDb) {
-      runInAction(() => {
-        // Merge or replace. Since it's a snapshot, replacing properties is safer.
-        Object.assign(this.database, savedDb);
-      });
+    // Run v1→v2 migration if needed
+    await settingsManager.runMigrationIfNeeded();
+
+    // Load workspace index
+    const workspaces = await settingsManager.listWorkspaces();
+
+    // Resolve active workspace
+    let activeId = this.local.settings.activeWorkspaceId;
+
+    if (!activeId || !workspaces.find(w => w.id === activeId)) {
+      // Fall back to most recent workspace
+      if (workspaces.length > 0) {
+        activeId = workspaces[0].id; // Already sorted by updatedAt desc
+      }
     }
 
+    // If no workspaces exist, create a default one
+    if (!activeId || workspaces.length === 0) {
+      const now = Date.now();
+      const newId = crypto.randomUUID();
+      const entry: WorkspaceIndexEntry = {
+        id: newId,
+        name: 'New Shader',
+        createdAt: now,
+        updatedAt: now,
+      };
+      await settingsManager.saveWorkspace(entry);
+      await settingsManager.saveDatabase(JSON.parse(JSON.stringify(INITIAL_DATABASE_STATE)), newId);
+      workspaces.push(entry);
+      activeId = newId;
+    }
+
+    // Load the active workspace's data
+    const savedDb = await settingsManager.loadDatabase(activeId);
+    runInAction(() => {
+      this.local.workspaces = workspaces;
+      this.local.settings.activeWorkspaceId = activeId;
+      if (savedDb) {
+        Object.assign(this.database, savedDb);
+      }
+    });
+
+    // Persist the active workspace ID
+    settingsManager.saveSettings({ ...this.local.settings } as any);
   }
 }
 

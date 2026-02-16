@@ -2,6 +2,7 @@ import './ui-button';
 import './ui-ir-widget';
 import './ui-inspector';
 import './ui-settings-panel';
+import './ui-workspace-panel';
 import { MobxLitElement } from '../mobx-lit-element';
 import { css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
@@ -15,6 +16,7 @@ import { LLMLogEntry } from '../../domain/types';
 import { runInAction } from 'mobx';
 
 const TAB_LABELS: Record<string, string> = {
+  workspaces: 'Workspaces',
   dashboard: 'Dashboard',
   ir: 'IR Code',
   raw_code: 'Raw Code',
@@ -155,6 +157,7 @@ export class UiLeftPanel extends MobxLitElement {
         <span class="panel-title">${title}</span>
       </div>
       <div class="panel-body">
+        ${activeTab === 'workspaces' ? html`<ui-workspace-panel></ui-workspace-panel>` : nothing}
         ${activeTab === 'dashboard' ? this.renderDashboard() : nothing}
         ${activeTab === 'ir' ? this.renderIR() : nothing}
         ${activeTab === 'raw_code' ? this.renderRawCode() : nothing}
