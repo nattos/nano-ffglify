@@ -1308,6 +1308,217 @@ export const UV_WARP_SHADER: IRDocument = {
   ]
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Test Card — Resolume-style colour reference pattern
+// ─────────────────────────────────────────────────────────────────────────────
+// Digit bitmaps: 3 cols × 5 rows, row-major, LSB = top-left.
+// Bit i = floor(BITMAP / 2^i) mod 2.
+//
+// Digit 1:       Digit 2:
+//  .#.  (010)     ###  (111)
+//  ##.  (110)     ..#  (001)
+//  .#.  (010)     ###  (111)
+//  .#.  (010)     #..  (100)
+//  ###  (111)     ###  (111)
+const DIGIT_1 = 29850;
+const DIGIT_2 = 29671;
+const TC_COLS = 8;
+const TC_ROWS = 8;
+
+function testCardDigitNodes(prefix: string, bitmap: number, startCol: number, startRow: number): any[] {
+  return [
+    // Local col/row within the 3×5 digit grid
+    { id: `${prefix}_lc`, op: 'math_sub', a: 'cell_x', b: startCol },
+    { id: `${prefix}_lr`, op: 'math_sub', a: 'cell_y', b: startRow },
+
+    // Bounds: 0 ≤ lc < 3  and  0 ≤ lr < 5
+    { id: `${prefix}_lc_lo`, op: 'math_step', edge: 0.0, x: `${prefix}_lc` },
+    { id: `${prefix}_lc_hi`, op: 'math_step', edge: 3.0, x: `${prefix}_lc` },
+    { id: `${prefix}_lc_in`, op: 'math_sub', a: `${prefix}_lc_lo`, b: `${prefix}_lc_hi` },
+    { id: `${prefix}_lr_lo`, op: 'math_step', edge: 0.0, x: `${prefix}_lr` },
+    { id: `${prefix}_lr_hi`, op: 'math_step', edge: 5.0, x: `${prefix}_lr` },
+    { id: `${prefix}_lr_in`, op: 'math_sub', a: `${prefix}_lr_lo`, b: `${prefix}_lr_hi` },
+    { id: `${prefix}_in`, op: 'math_mul', a: `${prefix}_lc_in`, b: `${prefix}_lr_in` },
+
+    // Bit index = row × 3 + col
+    { id: `${prefix}_ri3`, op: 'math_mul', a: `${prefix}_lr`, b: 3.0 },
+    { id: `${prefix}_bi`, op: 'math_add', a: `${prefix}_ri3`, b: `${prefix}_lc` },
+
+    // Extract bit: floor(bitmap / 2^bi) mod 2
+    { id: `${prefix}_pw`, op: 'math_pow', a: 2.0, b: `${prefix}_bi` },
+    { id: `${prefix}_dv`, op: 'math_div', a: bitmap, b: `${prefix}_pw` },
+    { id: `${prefix}_fl`, op: 'math_floor', val: `${prefix}_dv` },
+    { id: `${prefix}_bit`, op: 'math_mod', a: `${prefix}_fl`, b: 2.0 },
+
+    // Final: in_bounds × bit_value
+    { id: `${prefix}_dot`, op: 'math_mul', a: `${prefix}_in`, b: `${prefix}_bit` },
+  ];
+}
+
+function buildTestCardRenderNodes(): any[] {
+  return [
+    // ── Setup ──
+    { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+    { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
+    { id: 'time', op: 'var_get', var: 'u_time' },
+    { id: 'number', op: 'var_get', var: 'u_number' },
+
+    // ── Texture size for pixel-accurate grid lines ──
+    { id: 'tex_size', op: 'resource_get_size', resource: 'output' },
+    { id: 'cell_w', op: 'math_div', a: 'tex_size.x', b: TC_COLS },
+    { id: 'cell_h', op: 'math_div', a: 'tex_size.y', b: TC_ROWS },
+
+    // ── Single-pixel grid lines (cast int gid to float) ──
+    { id: 'gid_xf', op: 'static_cast_float', val: 'gid.x' },
+    { id: 'gid_yf', op: 'static_cast_float', val: 'gid.y' },
+    { id: 'gx_mod', op: 'math_mod', a: 'gid_xf', b: 'cell_w' },
+    { id: 'gy_mod', op: 'math_mod', a: 'gid_yf', b: 'cell_h' },
+    { id: 'vl_step', op: 'math_step', edge: 0.5, x: 'gx_mod' },
+    { id: 'is_vline', op: 'math_sub', a: 1.0, b: 'vl_step' },
+    { id: 'hl_step', op: 'math_step', edge: 0.5, x: 'gy_mod' },
+    { id: 'is_hline', op: 'math_sub', a: 1.0, b: 'hl_step' },
+    { id: 'is_gridline', op: 'math_max', a: 'is_vline', b: 'is_hline' },
+
+    // ── Cell indices ──
+    { id: 'gu', op: 'math_mul', a: 'nuv.x', b: TC_COLS },
+    { id: 'gv', op: 'math_mul', a: 'nuv.y', b: TC_ROWS },
+    { id: 'cell_x', op: 'math_floor', val: 'gu' },
+    { id: 'cell_y', op: 'math_floor', val: 'gv' },
+
+    // ── Row type detection ──
+    // is_row1 = 1 when cell_y == 1 (colour wheel row)
+    { id: 'r1_lo', op: 'math_step', edge: 1.0, x: 'cell_y' },
+    { id: 'r1_hi', op: 'math_step', edge: 2.0, x: 'cell_y' },
+    { id: 'is_row1', op: 'math_sub', a: 'r1_lo', b: 'r1_hi' },
+    // is_row6 = 1 when cell_y == 6 (grayscale row)
+    { id: 'r6_lo', op: 'math_step', edge: 6.0, x: 'cell_y' },
+    { id: 'r6_hi', op: 'math_step', edge: 7.0, x: 'cell_y' },
+    { id: 'is_row6', op: 'math_sub', a: 'r6_lo', b: 'r6_hi' },
+
+    // ── Checkerboard background ──
+    { id: 'ck_sum', op: 'math_add', a: 'cell_x', b: 'cell_y' },
+    { id: 'ck_mod', op: 'math_mod', a: 'ck_sum', b: 2.0 },
+    { id: 'checker', op: 'math_mix', a: 0.35, b: 0.50, t: 'ck_mod' },
+
+    // ── Colour wheel (row 1): HSV with S=1, V=1, animated hue ──
+    { id: 'tscale', op: 'math_mul', a: 'time', b: 0.1 },
+    { id: 'hue', op: 'math_add', a: 'nuv.x', b: 'tscale' },
+    // R channel: abs(fract(h)*6-3)-1 clamped
+    { id: 'hr_fr', op: 'math_fract', val: 'hue' },
+    { id: 'hr6', op: 'math_mul', a: 'hr_fr', b: 6.0 },
+    { id: 'hr3', op: 'math_sub', a: 'hr6', b: 3.0 },
+    { id: 'hr_abs', op: 'math_abs', val: 'hr3' },
+    { id: 'hr_sub1', op: 'math_sub', a: 'hr_abs', b: 1.0 },
+    { id: 'spec_r', op: 'math_clamp', val: 'hr_sub1', min: 0.0, max: 1.0 },
+    // G channel (offset +2/3)
+    { id: 'hg_off', op: 'math_add', a: 'hue', b: 0.6667 },
+    { id: 'hg_fr', op: 'math_fract', val: 'hg_off' },
+    { id: 'hg6', op: 'math_mul', a: 'hg_fr', b: 6.0 },
+    { id: 'hg3', op: 'math_sub', a: 'hg6', b: 3.0 },
+    { id: 'hg_abs', op: 'math_abs', val: 'hg3' },
+    { id: 'hg_sub1', op: 'math_sub', a: 'hg_abs', b: 1.0 },
+    { id: 'spec_g', op: 'math_clamp', val: 'hg_sub1', min: 0.0, max: 1.0 },
+    // B channel (offset +1/3)
+    { id: 'hb_off', op: 'math_add', a: 'hue', b: 0.3333 },
+    { id: 'hb_fr', op: 'math_fract', val: 'hb_off' },
+    { id: 'hb6', op: 'math_mul', a: 'hb_fr', b: 6.0 },
+    { id: 'hb3', op: 'math_sub', a: 'hb6', b: 3.0 },
+    { id: 'hb_abs', op: 'math_abs', val: 'hb3' },
+    { id: 'hb_sub1', op: 'math_sub', a: 'hb_abs', b: 1.0 },
+    { id: 'spec_b', op: 'math_clamp', val: 'hb_sub1', min: 0.0, max: 1.0 },
+
+    // ── Grayscale (row 6): gray = nuv.x ──
+    { id: 'gray', op: 'math_mul', a: 'nuv.x', b: 1.0 },
+
+    // ── Background composition ──
+    // not_special = (1 - is_row1) * (1 - is_row6)
+    { id: 'nr1', op: 'math_sub', a: 1.0, b: 'is_row1' },
+    { id: 'nr6', op: 'math_sub', a: 1.0, b: 'is_row6' },
+    { id: 'not_special', op: 'math_mul', a: 'nr1', b: 'nr6' },
+    // bg = is_row1*spectrum + is_row6*gray + not_special*checker
+    { id: 'sr', op: 'math_mul', a: 'is_row1', b: 'spec_r' },
+    { id: 'sg', op: 'math_mul', a: 'is_row1', b: 'spec_g' },
+    { id: 'sb', op: 'math_mul', a: 'is_row1', b: 'spec_b' },
+    { id: 'gr', op: 'math_mul', a: 'is_row6', b: 'gray' },
+    { id: 'cr', op: 'math_mul', a: 'not_special', b: 'checker' },
+    { id: 'gr_cr', op: 'math_add', a: 'gr', b: 'cr' },
+    { id: 'bg_r', op: 'math_add', a: 'sr', b: 'gr_cr' },
+    { id: 'bg_g', op: 'math_add', a: 'sg', b: 'gr_cr' },
+    { id: 'bg_b', op: 'math_add', a: 'sb', b: 'gr_cr' },
+
+    // ── Digit selection (odd→1, even→2) ──
+    { id: 'abs_num', op: 'math_abs', val: 'number' },
+    { id: 'mod2', op: 'math_mod', a: 'abs_num', b: 2.0 },
+    { id: 'is_odd', op: 'math_step', edge: 0.5, x: 'mod2' },
+
+    // ── Digit bitmaps (both evaluated, then selected) ──
+    ...testCardDigitNodes('d1', DIGIT_1, 3, 1),
+    ...testCardDigitNodes('d2', DIGIT_2, 3, 1),
+    // Select active bitmap: odd → d1, even → d2
+    { id: 'digit_on', op: 'math_mix', a: 'd2_dot', b: 'd1_dot', t: 'is_odd' },
+    // Fill colour: white (1) for digit 1, black (0) for digit 2
+    { id: 'fill', op: 'math_mul', a: 'is_odd', b: 1.0 },
+
+    // ── Apply digit fill over background ──
+    { id: 'final_r', op: 'math_mix', a: 'bg_r', b: 'fill', t: 'digit_on' },
+    { id: 'final_g', op: 'math_mix', a: 'bg_g', b: 'fill', t: 'digit_on' },
+    { id: 'final_b', op: 'math_mix', a: 'bg_b', b: 'fill', t: 'digit_on' },
+
+    // ── Grid line overlay (dark gray) ──
+    { id: 'out_r', op: 'math_mix', a: 'final_r', b: 0.2, t: 'is_gridline' },
+    { id: 'out_g', op: 'math_mix', a: 'final_g', b: 0.2, t: 'is_gridline' },
+    { id: 'out_b', op: 'math_mix', a: 'final_b', b: 0.2, t: 'is_gridline' },
+
+    // ── Output ──
+    { id: 'color', op: 'float4', x: 'out_r', y: 'out_g', z: 'out_b', w: 1.0 },
+    { id: 'store', op: 'texture_store', tex: 'output', coords: 'gid.xy', value: 'color' },
+  ];
+}
+
+export const TEST_CARD_SHADER: IRDocument = {
+  version: '1.0.0',
+  meta: { name: 'Test Card' },
+  comment: 'Colour reference: 8×8 grid with spectrum row, grayscale row, checkerboard, and dot-matrix digit. Animated hue.',
+  entryPoint: 'main',
+  inputs: [
+    { id: 'u_time', type: 'float', default: 0.0, label: 'Time' },
+    { id: 'u_number', type: 'int', default: 1, label: 'Number', ui: { min: 0, max: 99 } },
+  ],
+  resources: [
+    {
+      id: 'output',
+      type: 'texture2d',
+      format: TextureFormat.RGBA8,
+      size: { mode: 'viewport' },
+      isOutput: true,
+      persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: true },
+    },
+  ],
+  structs: [],
+  functions: [
+    {
+      id: 'main',
+      type: 'cpu',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      nodes: [
+        { id: 'tex_size', op: 'resource_get_size', resource: 'output' },
+        { id: 'dispatch', op: 'cmd_dispatch', func: 'fn_render', threads: 'tex_size' },
+      ],
+    },
+    {
+      id: 'fn_render',
+      type: 'shader',
+      comment: 'Test card: spectrum row, grayscale row, checkerboard, single-pixel grid, dot-matrix digit.',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      nodes: buildTestCardRenderNodes(),
+    },
+  ],
+};
+
 export const ALL_EXAMPLES = {
   noise_shader: NOISE_SHADER,
   effect_shader: EFFECT_SHADER,
@@ -1317,4 +1528,5 @@ export const ALL_EXAMPLES = {
   histogram_shader: HISTOGRAM_SHADER,
   feedback_shader: FEEDBACK_SHADER,
   uv_warp_shader: UV_WARP_SHADER,
+  test_card_shader: TEST_CARD_SHADER,
 };
