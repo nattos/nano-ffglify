@@ -4,11 +4,13 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { MobxLitElement } from '../mobx-lit-element';
 import { RuntimeManager, RuntimeInputEntry, RuntimeInputType } from '../../runtime/runtime-manager';
 import { appController } from '../../state/controller';
+import { appState } from '../../domain/state';
 
 @customElement('ui-inspector')
 export class UiInspector extends MobxLitElement {
   @property({ type: Object }) runtime: RuntimeManager | null = null;
   @state() private draggingId: string | null = null;
+  @state() private editingValueId: string | null = null;
 
   static readonly styles = css`
     :host {
@@ -215,7 +217,8 @@ export class UiInspector extends MobxLitElement {
       pointer-events: none;
     }
 
-    .reset-btn {
+    .reset-btn,
+    .set-default-btn {
       display: flex;
       align-items: center;
       justify-content: center;
@@ -230,17 +233,43 @@ export class UiInspector extends MobxLitElement {
       flex-shrink: 0;
     }
 
-    .reset-btn:hover {
+    .reset-btn:hover,
+    .set-default-btn:hover {
       background: rgba(255, 255, 255, 0.1);
       color: var(--app-text-main, #ccc);
     }
 
-    .reset-btn.disabled {
+    .reset-btn.disabled,
+    .set-default-btn.disabled {
       opacity: 0.3;
       cursor: default;
       pointer-events: none;
     }
+
+    .value-display {
+      cursor: default;
+      user-select: none;
+    }
+
+    .value-edit {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--color-emerald-500, #10b981);
+      color: var(--color-emerald-500, #10b981);
+      font-family: monospace;
+      font-size: 0.7rem;
+      padding: 0.1rem 0.3rem;
+      border-radius: 2px;
+      width: 5em;
+      outline: none;
+    }
   `;
+
+  updated(changedProperties: Map<string, any>) {
+    if (changedProperties.has('editingValueId') && this.editingValueId) {
+      const input = this.shadowRoot?.querySelector('.value-edit') as HTMLInputElement | null;
+      if (input) input.focus();
+    }
+  }
 
   render() {
     if (!this.runtime) return html`<div style="padding: 0.5rem; color: var(--app-text-muted, #888); font-size: 0.8rem;">No runtime active</div>`;
@@ -297,13 +326,29 @@ export class UiInspector extends MobxLitElement {
     const percent = ((value - min) / (max - min)) * 100;
 
     const modified = !this.isDefault(entry);
+    const isEditing = this.editingValueId === entry.id;
 
     return html`
       <div class="input-item">
         <div class="label-row">
           <span class="label">${entry.label}</span>
           <span style="display:flex;align-items:center;gap:0.25rem;">
-            <span class="value-display">${isInt ? value : value.toFixed(3)}</span>
+            ${isEditing ? html`
+              <input
+                class="value-edit"
+                type="number"
+                .value=${String(isInt ? value : value.toFixed(3))}
+                .step=${isInt ? '1' : '0.001'}
+                @keydown=${(e: KeyboardEvent) => this.handleValueEditKey(e, entry)}
+                @blur=${(e: FocusEvent) => this.commitValueEdit(e, entry)}
+                @focus=${(e: FocusEvent) => (e.target as HTMLInputElement).select()}
+              />
+            ` : html`
+              <span class="value-display" @dblclick=${() => this.editingValueId = entry.id}>${isInt ? value : value.toFixed(3)}</span>
+            `}
+            <button class="set-default-btn ${modified ? '' : 'disabled'}" @click=${() => this.handleSetDefault(entry)} title="Set current value as default">
+              <ui-icon icon="la-thumbtack" style="--icon-size: 0.7rem;"></ui-icon>
+            </button>
             <button class="reset-btn ${modified ? '' : 'disabled'}" @click=${() => this.handleReset(entry)} title="Reset to default">
               <ui-icon icon="la-undo" style="--icon-size: 0.7rem;"></ui-icon>
             </button>
@@ -329,9 +374,14 @@ export class UiInspector extends MobxLitElement {
       <div class="input-item">
         <div class="label-row">
           <span class="label">${entry.label}</span>
-          <button class="reset-btn ${modified ? '' : 'disabled'}" @click=${() => this.handleReset(entry)} title="Reset to default">
-            <ui-icon icon="la-undo" style="--icon-size: 0.7rem;"></ui-icon>
-          </button>
+          <span style="display:flex;align-items:center;gap:0.25rem;">
+            <button class="set-default-btn ${modified ? '' : 'disabled'}" @click=${() => this.handleSetDefault(entry)} title="Set current value as default">
+              <ui-icon icon="la-thumbtack" style="--icon-size: 0.7rem;"></ui-icon>
+            </button>
+            <button class="reset-btn ${modified ? '' : 'disabled'}" @click=${() => this.handleReset(entry)} title="Reset to default">
+              <ui-icon icon="la-undo" style="--icon-size: 0.7rem;"></ui-icon>
+            </button>
+          </span>
         </div>
         <div class="toggle ${active ? 'active' : ''}" @click=${() => this.handleUpdate(entry.id, !active)}>
           <div class="toggle-track">
@@ -374,9 +424,14 @@ export class UiInspector extends MobxLitElement {
         <div class="input-item">
             <div class="label-row">
               <span class="label">${entry.label}</span>
-              <button class="reset-btn ${modified ? '' : 'disabled'}" @click=${() => this.handleReset(entry)} title="Reset to default">
-                <ui-icon icon="la-undo" style="--icon-size: 0.7rem;"></ui-icon>
-              </button>
+              <span style="display:flex;align-items:center;gap:0.25rem;">
+                <button class="set-default-btn ${modified ? '' : 'disabled'}" @click=${() => this.handleSetDefault(entry)} title="Set current value as default">
+                  <ui-icon icon="la-thumbtack" style="--icon-size: 0.7rem;"></ui-icon>
+                </button>
+                <button class="reset-btn ${modified ? '' : 'disabled'}" @click=${() => this.handleReset(entry)} title="Reset to default">
+                  <ui-icon icon="la-undo" style="--icon-size: 0.7rem;"></ui-icon>
+                </button>
+              </span>
             </div>
             <div class="vector-row">
                 ${[...Array(size)].map((_, i) => html`
@@ -422,6 +477,38 @@ export class UiInspector extends MobxLitElement {
         this.handleUpdate(entry.id, entry.defaultValue);
       }
     }
+  }
+
+  private handleValueEditKey(e: KeyboardEvent, entry: RuntimeInputEntry) {
+    if (e.key === 'Enter') {
+      (e.target as HTMLInputElement).blur();
+    } else if (e.key === 'Escape') {
+      this.editingValueId = null;
+    }
+  }
+
+  private commitValueEdit(e: FocusEvent, entry: RuntimeInputEntry) {
+    const input = e.target as HTMLInputElement;
+    const raw = parseFloat(input.value);
+    if (!isNaN(raw)) {
+      const isInt = entry.type === RuntimeInputType.Int;
+      const value = isInt ? Math.round(raw) : raw;
+      this.handleUpdate(entry.id, value);
+    }
+    this.editingValueId = null;
+  }
+
+  private handleSetDefault(entry: RuntimeInputEntry) {
+    const value = entry.currentValue;
+    const serialized = Array.isArray(value) ? [...value] : value;
+    appController.mutate('Set input default', 'user', (draft) => {
+      const inp = draft.ir.inputs?.find(i => i.id === entry.id);
+      if (inp) {
+        inp.default = serialized;
+      }
+    });
+    // Update the runtime entry's defaultValue so the UI reflects the change immediately
+    entry.defaultValue = serialized;
   }
 
   private handleUpdate(id: string, value: any) {
