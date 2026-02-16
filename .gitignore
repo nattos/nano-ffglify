@@ -18,7 +18,5 @@ Build/Windows/x64/Release/
 node_modules/
 dist
 
-assets/test.png
-
 /modules/
 generated/
