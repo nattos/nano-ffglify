@@ -1322,10 +1322,9 @@ export const UV_WARP_SHADER: IRDocument = {
 //  ###  (111)     ###  (111)
 const DIGIT_1 = 29850;
 const DIGIT_2 = 29671;
-const TC_COLS = 8;
-const TC_ROWS = 8;
+const TC_BASE_CELLS = 16; // Target cells on shorter dimension
 
-function testCardDigitNodes(prefix: string, bitmap: number, startCol: number, startRow: number): any[] {
+function testCardDigitNodes(prefix: string, bitmap: number, startCol: number | string, startRow: number | string): any[] {
   return [
     // Local col/row within the 3×5 digit grid
     { id: `${prefix}_lc`, op: 'math_sub', a: 'cell_x', b: startCol },
@@ -1355,71 +1354,145 @@ function testCardDigitNodes(prefix: string, bitmap: number, startCol: number, st
   ];
 }
 
+function buildTestCardCpuNodes(): any[] {
+  return [
+    // Compute grid dimensions for square cells
+    { id: 'tex_size', op: 'resource_get_size', resource: 'output' },
+    { id: 'dim_min', op: 'math_min', a: 'tex_size.x', b: 'tex_size.y' },
+    { id: 'cell_target', op: 'math_div', a: 'dim_min', b: TC_BASE_CELLS },
+    { id: 'cols_raw', op: 'math_div', a: 'tex_size.x', b: 'cell_target' },
+    { id: 'rows_raw', op: 'math_div', a: 'tex_size.y', b: 'cell_target' },
+    { id: 'cols_r', op: 'math_add', a: 'cols_raw', b: 0.5 },
+    { id: 'rows_r', op: 'math_add', a: 'rows_raw', b: 0.5 },
+    { id: 'cols', op: 'math_floor', val: 'cols_r' },
+    { id: 'rows', op: 'math_floor', val: 'rows_r' },
+    // Digit placement: centered
+    { id: 'half_cols', op: 'math_div', a: 'cols', b: 2.0 },
+    { id: 'half_cols_fl', op: 'math_floor', val: 'half_cols' },
+    { id: 'digit_col', op: 'math_sub', a: 'half_cols_fl', b: 1.0 },
+    { id: 'half_rows', op: 'math_div', a: 'rows', b: 2.0 },
+    { id: 'half_rows_fl', op: 'math_floor', val: 'half_rows' },
+    { id: 'digit_row', op: 'math_sub', a: 'half_rows_fl', b: 2.0 },
+    // Store grid params and dispatch
+    { id: 's0', op: 'buffer_store', buffer: 'grid_params', index: 0, value: 'cols', exec_out: 's1' },
+    { id: 's1', op: 'buffer_store', buffer: 'grid_params', index: 1, value: 'rows', exec_out: 's2' },
+    { id: 's2', op: 'buffer_store', buffer: 'grid_params', index: 2, value: 'digit_col', exec_out: 's3' },
+    { id: 's3', op: 'buffer_store', buffer: 'grid_params', index: 3, value: 'digit_row', exec_out: 'dispatch' },
+    { id: 'dispatch', op: 'cmd_dispatch', func: 'fn_render', threads: 'tex_size' },
+  ];
+}
+
 function buildTestCardRenderNodes(): any[] {
   return [
     // ── Setup ──
     { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
     { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
-    { id: 'time', op: 'var_get', var: 'u_time' },
+    { id: 'time', op: 'builtin_get', name: 'time' },
     { id: 'number', op: 'var_get', var: 'u_number' },
 
-    // ── Texture size for pixel-accurate grid lines ──
-    { id: 'tex_size', op: 'resource_get_size', resource: 'output' },
-    { id: 'cell_w', op: 'math_div', a: 'tex_size.x', b: TC_COLS },
-    { id: 'cell_h', op: 'math_div', a: 'tex_size.y', b: TC_ROWS },
+    // ── Load grid params from buffer ──
+    { id: 'cols', op: 'buffer_load', buffer: 'grid_params', index: 0 },
+    { id: 'rows', op: 'buffer_load', buffer: 'grid_params', index: 1 },
+    { id: 'digit_col', op: 'buffer_load', buffer: 'grid_params', index: 2 },
+    { id: 'digit_row', op: 'buffer_load', buffer: 'grid_params', index: 3 },
 
-    // ── Single-pixel grid lines (cast int gid to float) ──
+    // ── Cell indices from integer pixel coordinates ──
     { id: 'gid_xf', op: 'static_cast_float', val: 'gid.x' },
     { id: 'gid_yf', op: 'static_cast_float', val: 'gid.y' },
-    { id: 'gx_mod', op: 'math_mod', a: 'gid_xf', b: 'cell_w' },
-    { id: 'gy_mod', op: 'math_mod', a: 'gid_yf', b: 'cell_h' },
-    { id: 'vl_step', op: 'math_step', edge: 0.5, x: 'gx_mod' },
-    { id: 'is_vline', op: 'math_sub', a: 1.0, b: 'vl_step' },
-    { id: 'hl_step', op: 'math_step', edge: 0.5, x: 'gy_mod' },
-    { id: 'is_hline', op: 'math_sub', a: 1.0, b: 'hl_step' },
+    { id: 'tex_size', op: 'resource_get_size', resource: 'output' },
+    { id: 'cx_num', op: 'math_mul', a: 'gid_xf', b: 'cols' },
+    { id: 'cx_div', op: 'math_div', a: 'cx_num', b: 'tex_size.x' },
+    { id: 'cell_x', op: 'math_floor', val: 'cx_div' },
+    { id: 'cy_num', op: 'math_mul', a: 'gid_yf', b: 'rows' },
+    { id: 'cy_div', op: 'math_div', a: 'cy_num', b: 'tex_size.y' },
+    { id: 'cell_y', op: 'math_floor', val: 'cy_div' },
+
+    // ── Grid lines: boundary test against left/top neighbor ──
+    { id: 'left_x', op: 'math_sub', a: 'gid_xf', b: 1.0 },
+    { id: 'lcx_num', op: 'math_mul', a: 'left_x', b: 'cols' },
+    { id: 'lcx_div', op: 'math_div', a: 'lcx_num', b: 'tex_size.x' },
+    { id: 'left_cell', op: 'math_floor', val: 'lcx_div' },
+    { id: 'top_y', op: 'math_sub', a: 'gid_yf', b: 1.0 },
+    { id: 'tcy_num', op: 'math_mul', a: 'top_y', b: 'rows' },
+    { id: 'tcy_div', op: 'math_div', a: 'tcy_num', b: 'tex_size.y' },
+    { id: 'top_cell', op: 'math_floor', val: 'tcy_div' },
+    { id: 'dx', op: 'math_sub', a: 'cell_x', b: 'left_cell' },
+    { id: 'dx_abs', op: 'math_abs', val: 'dx' },
+    { id: 'is_vline', op: 'math_step', edge: 0.5, x: 'dx_abs' },
+    { id: 'dy', op: 'math_sub', a: 'cell_y', b: 'top_cell' },
+    { id: 'dy_abs', op: 'math_abs', val: 'dy' },
+    { id: 'is_hline', op: 'math_step', edge: 0.5, x: 'dy_abs' },
     { id: 'is_gridline', op: 'math_max', a: 'is_vline', b: 'is_hline' },
 
-    // ── Cell indices ──
-    { id: 'gu', op: 'math_mul', a: 'nuv.x', b: TC_COLS },
-    { id: 'gv', op: 'math_mul', a: 'nuv.y', b: TC_ROWS },
-    { id: 'cell_x', op: 'math_floor', val: 'gu' },
-    { id: 'cell_y', op: 'math_floor', val: 'gv' },
+    // ── Gradient position (smooth, for spectrum/grayscale) ──
+    { id: 'gu', op: 'math_mul', a: 'nuv.x', b: 'cols' },
 
     // ── Row type detection ──
-    // is_row1 = 1 when cell_y == 1 (colour wheel row)
     { id: 'r1_lo', op: 'math_step', edge: 1.0, x: 'cell_y' },
     { id: 'r1_hi', op: 'math_step', edge: 2.0, x: 'cell_y' },
     { id: 'is_row1', op: 'math_sub', a: 'r1_lo', b: 'r1_hi' },
-    // is_row6 = 1 when cell_y == 6 (grayscale row)
-    { id: 'r6_lo', op: 'math_step', edge: 6.0, x: 'cell_y' },
-    { id: 'r6_hi', op: 'math_step', edge: 7.0, x: 'cell_y' },
-    { id: 'is_row6', op: 'math_sub', a: 'r6_lo', b: 'r6_hi' },
+    { id: 'gray_row', op: 'math_sub', a: 'rows', b: 2.0 },
+    { id: 'gray_row_p1', op: 'math_add', a: 'gray_row', b: 1.0 },
+    { id: 'rg_lo', op: 'math_step', edge: 'gray_row', x: 'cell_y' },
+    { id: 'rg_hi', op: 'math_step', edge: 'gray_row_p1', x: 'cell_y' },
+    { id: 'is_gray_row', op: 'math_sub', a: 'rg_lo', b: 'rg_hi' },
 
-    // ── Checkerboard background ──
+    // ── Gradient inset: cols 1 through cols-2 ──
+    { id: 'cols_m1', op: 'math_sub', a: 'cols', b: 1.0 },
+    { id: 'inset_lo', op: 'math_step', edge: 1.0, x: 'cell_x' },
+    { id: 'inset_hi', op: 'math_step', edge: 'cols_m1', x: 'cell_x' },
+    { id: 'is_inset', op: 'math_sub', a: 'inset_lo', b: 'inset_hi' },
+    { id: 'is_spectrum', op: 'math_mul', a: 'is_row1', b: 'is_inset' },
+    { id: 'is_grayscale', op: 'math_mul', a: 'is_gray_row', b: 'is_inset' },
+
+    // ── Animated bell curve for checkerboard contrast ──
+    // Slanted coordinate: diagonal from top-left to bottom-right
+    { id: 'slant_y', op: 'math_mul', a: 'nuv.y', b: 0.5 },
+    { id: 'slant_t', op: 'math_add', a: 'nuv.x', b: 'slant_y' },
+    // Bell center sweeps across the slant range over time
+    { id: 'bell_spd', op: 'math_mul', a: 'time', b: 0.3 },
+    { id: 'bell_wrap', op: 'math_mod', a: 'bell_spd', b: 2.0 },
+    { id: 'bell_ctr', op: 'math_sub', a: 'bell_wrap', b: 0.25 },
+    // Distance from center, scaled for bell width
+    { id: 'bell_d', op: 'math_sub', a: 'slant_t', b: 'bell_ctr' },
+    { id: 'bell_ds', op: 'math_mul', a: 'bell_d', b: 2.0 },
+    { id: 'bell_dc', op: 'math_clamp', val: 'bell_ds', min: -1.0, max: 1.0 },
+    // cos bell: cos(d * PI) mapped from [-1,1] to [0,1]
+    { id: 'bell_rad', op: 'math_mul', a: 'bell_dc', b: 3.14159 },
+    { id: 'bell_cos', op: 'math_cos', val: 'bell_rad' },
+    { id: 'bell_p1', op: 'math_add', a: 'bell_cos', b: 1.0 },
+    { id: 'bell', op: 'math_mul', a: 'bell_p1', b: 0.5 },
+
+    // ── Checkerboard with animated contrast modulation ──
     { id: 'ck_sum', op: 'math_add', a: 'cell_x', b: 'cell_y' },
     { id: 'ck_mod', op: 'math_mod', a: 'ck_sum', b: 2.0 },
-    { id: 'checker', op: 'math_mix', a: 0.35, b: 0.50, t: 'ck_mod' },
+    { id: 'checker_full', op: 'math_mix', a: 0.15, b: 0.65, t: 'ck_mod' },
+    // Modulate contrast: flat baseline, bell brings contrast (50% intensity)
+    { id: 'bell_half', op: 'math_mul', a: 'bell', b: 0.5 },
+    { id: 'bell_bias', op: 'math_add', a: 'bell_half', b: 0.5 },
+    { id: 'checker', op: 'math_mix', a: 0.40, b: 'checker_full', t: 'bell_bias' },
 
-    // ── Colour wheel (row 1): HSV with S=1, V=1, animated hue ──
-    { id: 'tscale', op: 'math_mul', a: 'time', b: 0.1 },
-    { id: 'hue', op: 'math_add', a: 'nuv.x', b: 'tscale' },
-    // R channel: abs(fract(h)*6-3)-1 clamped
-    { id: 'hr_fr', op: 'math_fract', val: 'hue' },
+    // ── Gradient parameter: (gu - 1) / (cols - 2), clamped ──
+    { id: 'cols_m2', op: 'math_sub', a: 'cols', b: 2.0 },
+    { id: 'grad_raw', op: 'math_sub', a: 'gu', b: 1.0 },
+    { id: 'grad_div', op: 'math_div', a: 'grad_raw', b: 'cols_m2' },
+    { id: 'grad', op: 'math_clamp', val: 'grad_div', min: 0.0, max: 1.0 },
+
+    // ── Colour spectrum: HSV S=1 V=1, hue = grad (static) ──
+    { id: 'hr_fr', op: 'math_fract', val: 'grad' },
     { id: 'hr6', op: 'math_mul', a: 'hr_fr', b: 6.0 },
     { id: 'hr3', op: 'math_sub', a: 'hr6', b: 3.0 },
     { id: 'hr_abs', op: 'math_abs', val: 'hr3' },
     { id: 'hr_sub1', op: 'math_sub', a: 'hr_abs', b: 1.0 },
     { id: 'spec_r', op: 'math_clamp', val: 'hr_sub1', min: 0.0, max: 1.0 },
-    // G channel (offset +2/3)
-    { id: 'hg_off', op: 'math_add', a: 'hue', b: 0.6667 },
+    { id: 'hg_off', op: 'math_add', a: 'grad', b: 0.6667 },
     { id: 'hg_fr', op: 'math_fract', val: 'hg_off' },
     { id: 'hg6', op: 'math_mul', a: 'hg_fr', b: 6.0 },
     { id: 'hg3', op: 'math_sub', a: 'hg6', b: 3.0 },
     { id: 'hg_abs', op: 'math_abs', val: 'hg3' },
     { id: 'hg_sub1', op: 'math_sub', a: 'hg_abs', b: 1.0 },
     { id: 'spec_g', op: 'math_clamp', val: 'hg_sub1', min: 0.0, max: 1.0 },
-    // B channel (offset +1/3)
-    { id: 'hb_off', op: 'math_add', a: 'hue', b: 0.3333 },
+    { id: 'hb_off', op: 'math_add', a: 'grad', b: 0.3333 },
     { id: 'hb_fr', op: 'math_fract', val: 'hb_off' },
     { id: 'hb6', op: 'math_mul', a: 'hb_fr', b: 6.0 },
     { id: 'hb3', op: 'math_sub', a: 'hb6', b: 3.0 },
@@ -1427,36 +1500,29 @@ function buildTestCardRenderNodes(): any[] {
     { id: 'hb_sub1', op: 'math_sub', a: 'hb_abs', b: 1.0 },
     { id: 'spec_b', op: 'math_clamp', val: 'hb_sub1', min: 0.0, max: 1.0 },
 
-    // ── Grayscale (row 6): gray = nuv.x ──
-    { id: 'gray', op: 'math_mul', a: 'nuv.x', b: 1.0 },
-
     // ── Background composition ──
-    // not_special = (1 - is_row1) * (1 - is_row6)
-    { id: 'nr1', op: 'math_sub', a: 1.0, b: 'is_row1' },
-    { id: 'nr6', op: 'math_sub', a: 1.0, b: 'is_row6' },
-    { id: 'not_special', op: 'math_mul', a: 'nr1', b: 'nr6' },
-    // bg = is_row1*spectrum + is_row6*gray + not_special*checker
-    { id: 'sr', op: 'math_mul', a: 'is_row1', b: 'spec_r' },
-    { id: 'sg', op: 'math_mul', a: 'is_row1', b: 'spec_g' },
-    { id: 'sb', op: 'math_mul', a: 'is_row1', b: 'spec_b' },
-    { id: 'gr', op: 'math_mul', a: 'is_row6', b: 'gray' },
+    { id: 'ns1', op: 'math_sub', a: 1.0, b: 'is_spectrum' },
+    { id: 'ns2', op: 'math_sub', a: 1.0, b: 'is_grayscale' },
+    { id: 'not_special', op: 'math_mul', a: 'ns1', b: 'ns2' },
+    { id: 'sr', op: 'math_mul', a: 'is_spectrum', b: 'spec_r' },
+    { id: 'sg', op: 'math_mul', a: 'is_spectrum', b: 'spec_g' },
+    { id: 'sb', op: 'math_mul', a: 'is_spectrum', b: 'spec_b' },
+    { id: 'gscale', op: 'math_mul', a: 'is_grayscale', b: 'grad' },
     { id: 'cr', op: 'math_mul', a: 'not_special', b: 'checker' },
-    { id: 'gr_cr', op: 'math_add', a: 'gr', b: 'cr' },
-    { id: 'bg_r', op: 'math_add', a: 'sr', b: 'gr_cr' },
-    { id: 'bg_g', op: 'math_add', a: 'sg', b: 'gr_cr' },
-    { id: 'bg_b', op: 'math_add', a: 'sb', b: 'gr_cr' },
+    { id: 'gs_cr', op: 'math_add', a: 'gscale', b: 'cr' },
+    { id: 'bg_r', op: 'math_add', a: 'sr', b: 'gs_cr' },
+    { id: 'bg_g', op: 'math_add', a: 'sg', b: 'gs_cr' },
+    { id: 'bg_b', op: 'math_add', a: 'sb', b: 'gs_cr' },
 
     // ── Digit selection (odd→1, even→2) ──
     { id: 'abs_num', op: 'math_abs', val: 'number' },
     { id: 'mod2', op: 'math_mod', a: 'abs_num', b: 2.0 },
     { id: 'is_odd', op: 'math_step', edge: 0.5, x: 'mod2' },
 
-    // ── Digit bitmaps (both evaluated, then selected) ──
-    ...testCardDigitNodes('d1', DIGIT_1, 3, 1),
-    ...testCardDigitNodes('d2', DIGIT_2, 3, 1),
-    // Select active bitmap: odd → d1, even → d2
+    // ── Digit bitmaps (dynamic placement from buffer) ──
+    ...testCardDigitNodes('d1', DIGIT_1, 'digit_col', 'digit_row'),
+    ...testCardDigitNodes('d2', DIGIT_2, 'digit_col', 'digit_row'),
     { id: 'digit_on', op: 'math_mix', a: 'd2_dot', b: 'd1_dot', t: 'is_odd' },
-    // Fill colour: white (1) for digit 1, black (0) for digit 2
     { id: 'fill', op: 'math_mul', a: 'is_odd', b: 1.0 },
 
     // ── Apply digit fill over background ──
@@ -1478,10 +1544,9 @@ function buildTestCardRenderNodes(): any[] {
 export const TEST_CARD_SHADER: IRDocument = {
   version: '1.0.0',
   meta: { name: 'Test Card' },
-  comment: 'Colour reference: 8×8 grid with spectrum row, grayscale row, checkerboard, and dot-matrix digit. Animated hue.',
+  comment: 'Colour reference: dynamic grid with spectrum row, grayscale row, checkerboard with animated contrast, and dot-matrix digit.',
   entryPoint: 'main',
   inputs: [
-    { id: 'u_time', type: 'float', default: 0.0, label: 'Time' },
     { id: 'u_number', type: 'int', default: 1, label: 'Number', ui: { min: 0, max: 99 } },
   ],
   resources: [
@@ -1493,6 +1558,13 @@ export const TEST_CARD_SHADER: IRDocument = {
       isOutput: true,
       persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: true },
     },
+    {
+      id: 'grid_params',
+      type: 'buffer',
+      dataType: 'float',
+      size: { mode: 'fixed', value: 4 },
+      persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false },
+    },
   ],
   structs: [],
   functions: [
@@ -1502,10 +1574,7 @@ export const TEST_CARD_SHADER: IRDocument = {
       inputs: [],
       outputs: [],
       localVars: [],
-      nodes: [
-        { id: 'tex_size', op: 'resource_get_size', resource: 'output' },
-        { id: 'dispatch', op: 'cmd_dispatch', func: 'fn_render', threads: 'tex_size' },
-      ],
+      nodes: buildTestCardCpuNodes(),
     },
     {
       id: 'fn_render',
