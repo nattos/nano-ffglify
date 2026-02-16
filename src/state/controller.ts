@@ -201,11 +201,13 @@ export class AppController {
   public undo() {
     historyManager.undo();
     this.saveDatabase();
+    this.performCompile();
   }
 
   public redo() {
     historyManager.redo();
     this.saveDatabase();
+    this.performCompile();
   }
 
   public clearLogs() {
@@ -234,6 +236,20 @@ export class AppController {
     runInAction(() => {
       appState.local.llmStatus = status ?? undefined;
     });
+  }
+
+  public setCompileStatus(status: 'success' | 'fail' | 'compiling') {
+    runInAction(() => {
+      appState.local.compileStatus = status;
+      if (status === 'success') {
+        appState.local.lastCompileTime = Date.now();
+      }
+    });
+  }
+
+  public isIRStale(): boolean {
+    const irJson = JSON.stringify(appState.database.ir);
+    return irJson !== this.lastCompiledIRJson;
   }
 
   public setDraftChat(text: string) {
@@ -277,6 +293,7 @@ export class AppController {
     console.info("[AppController] Validating IR...");
     const ir = appState.database.ir;
     const errors = validateIR(ir);
+    console.log('[Validate] Manual validation found', errors.length, 'errors');
     runInAction(() => {
       appState.local.validationErrors = errors;
       if (errors.length) {
@@ -440,10 +457,15 @@ export class AppController {
     const ir = appState.database.ir;
     const irJson = JSON.stringify(ir);
     if (irJson === this.lastCompiledIRJson) {
+      runInAction(() => {
+        appState.local.validationErrors = [];
+      });
+      this.setCompileStatus('success');
       return { compileStatus: 'success' };
     }
 
     // 3. Start new compilation task
+    this.setCompileStatus('compiling');
     this.activeCompilePromise = new Promise<CompileResult>(async (resolve) => {
       this.activeCompileResolver = resolve;
 
@@ -455,8 +477,13 @@ export class AppController {
         }
       }, 10000);
 
-      const compileTask = (async (): Promise<CompileResult> => {
-        const artifacts = await this.repl.compile(ir);
+      const artifacts = await this.repl.compile(ir);
+      const errors = artifacts ? [] : toJS(this.repl.validationErrors);
+
+      // Only apply side effects if we haven't been superseded or timed out
+      if (this.activeCompileResolver === resolve) {
+        clearTimeout(timeoutTimer);
+
         if (artifacts) {
           this.repl.swap(artifacts);
 
@@ -475,25 +502,21 @@ export class AppController {
               jsInit: artifacts.compiled.initCode,
               wgsl: artifacts.wgsl
             };
+            appState.local.validationErrors = [];
           });
 
-          return { compileStatus: 'success' };
-        } else {
-          return {
-            compileStatus: 'fail',
-            errors: toJS(this.repl.validationErrors)
-          };
-        }
-      })();
-
-      const res = await compileTask;
-
-      // Only resolve if we haven't been superseded or timed out
-      if (this.activeCompileResolver === resolve) {
-        clearTimeout(timeoutTimer);
-        if (res.compileStatus === 'success') {
           this.lastCompiledIRJson = irJson;
+          this.setCompileStatus('success');
+        } else {
+          runInAction(() => {
+            appState.local.validationErrors = errors;
+          });
+          this.setCompileStatus('fail');
         }
+
+        const res: CompileResult = artifacts
+          ? { compileStatus: 'success' }
+          : { compileStatus: 'fail', errors };
         resolve(res);
         this.activeCompileResolver = null;
         this.activeCompilePromise = null;

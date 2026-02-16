@@ -78,6 +78,8 @@ export interface LocalState {
     jsInit: string;
     wgsl: Record<string, string>;
   };
+  compileStatus?: 'success' | 'fail' | 'compiling';
+  lastCompileTime?: number;
 }
 
 export interface DatabaseState {

@@ -1,8 +1,8 @@
 import './ui-button';
 import './ui-icon';
 import { MobxLitElement } from '../mobx-lit-element';
-import { css, html } from 'lit';
-import { customElement, query } from 'lit/decorators.js';
+import { css, html, nothing } from 'lit';
+import { customElement, query, state } from 'lit/decorators.js';
 import { globalStyles } from '../../styles';
 import { appState } from '../../domain/state';
 import { appController } from '../../state/controller';
@@ -12,6 +12,7 @@ import { chatHandler } from '../../llm/chat-handler';
 export class UiChatPanel extends MobxLitElement {
   @query('.chat-history') private chatHistory!: HTMLElement;
   @query('.chat-input') private chatInput!: HTMLTextAreaElement;
+  @state() private rewindConfirmId: string | null = null;
 
   private wasPinned = true;
 
@@ -63,6 +64,31 @@ export class UiChatPanel extends MobxLitElement {
       .msg.user {
         align-self: flex-end;
         background: #0c4a6e;
+        position: relative;
+        padding-right: 1.75rem;
+      }
+      .rewind-btn {
+        position: absolute;
+        right: 0.3rem;
+        bottom: 0.3rem;
+        cursor: pointer;
+        color: rgba(255, 255, 255, 0.25);
+        font-size: 1.1rem;
+        line-height: 1;
+        user-select: none;
+        transition: color 0.15s;
+      }
+      .rewind-btn:hover {
+        color: rgba(255, 255, 255, 0.7);
+      }
+      .rewind-confirm {
+        align-self: flex-end;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.75rem;
+        color: var(--app-text-muted);
+        padding: 0.25rem 0.5rem;
       }
       .msg.assistant {
         align-self: flex-start;
@@ -139,6 +165,22 @@ export class UiChatPanel extends MobxLitElement {
     chatHandler.stop();
   }
 
+  private handleRewindClick(msgId: string) {
+    this.rewindConfirmId = msgId;
+  }
+
+  private handleRewindConfirm() {
+    if (this.rewindConfirmId) {
+      appController.rewindToChat(this.rewindConfirmId);
+      this.rewindConfirmId = null;
+      this.autoResizeTextarea();
+    }
+  }
+
+  private handleRewindCancel() {
+    this.rewindConfirmId = null;
+  }
+
   private async handleSend() {
     const text = appState.local.draftChat;
     if (!text.trim()) return;
@@ -181,7 +223,19 @@ export class UiChatPanel extends MobxLitElement {
       </div>
 
       <div class="chat-history" @scroll=${() => this.handleScroll()}>
-        ${chat_history.map(msg => html`
+        ${chat_history.map(msg => msg.role === 'user' ? html`
+          ${this.rewindConfirmId === msg.id ? html`
+            <div class="rewind-confirm">
+              Rewind to here?
+              <ui-button size="small" @click=${() => this.handleRewindConfirm()}>Rewind</ui-button>
+              <ui-button size="small" variant="ghost" @click=${() => this.handleRewindCancel()}>Cancel</ui-button>
+            </div>
+          ` : nothing}
+          <div class="msg user">
+            ${msg.text}
+            ${!llmBusy ? html`<span class="rewind-btn" @click=${() => this.handleRewindClick(msg.id)} title="Rewind to this message">\u21ba</span>` : nothing}
+          </div>
+        ` : html`
           <div class="msg ${msg.role}">
             ${msg.role === 'tool-response'
               ? html`${msg.text || msg.data?.message || 'tool response'}`

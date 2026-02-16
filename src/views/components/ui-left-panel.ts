@@ -15,7 +15,7 @@ import { LLMLogEntry } from '../../domain/types';
 import { runInAction } from 'mobx';
 
 const TAB_LABELS: Record<string, string> = {
-  dashboard: 'Inspector',
+  dashboard: 'Dashboard',
   ir: 'IR Code',
   raw_code: 'Raw Code',
   state: 'State',
@@ -44,7 +44,7 @@ export class UiLeftPanel extends MobxLitElement {
       .panel-header {
         display: flex;
         align-items: center;
-        padding: 0.75rem 0.5rem;
+        padding: 1.0rem 0.5rem;
         flex-shrink: 0;
       }
 

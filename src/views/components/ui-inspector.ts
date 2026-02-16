@@ -187,6 +187,10 @@ export class UiInspector extends MobxLitElement {
 
     const entries = Array.from(this.runtime.inputEntries.values());
 
+    if (entries.length === 0) {
+      return html`<div style="padding: 1rem; color: var(--app-text-muted, #888); font-size: 0.85rem; text-align: center;">${'\u2661'} No parameters yet</div>`;
+    }
+
     return html`
       <div class="input-list">
         ${entries.map(entry => this.renderInput(entry))}

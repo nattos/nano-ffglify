@@ -1,9 +1,12 @@
-import { LitElement, html, css } from 'lit';
+import { html, css } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
+import { MobxLitElement } from '../mobx-lit-element';
 import { RuntimeManager } from '../../runtime/runtime-manager';
+import { appState } from '../../domain/state';
+import { appController } from '../../state/controller';
 
 @customElement('ui-viewport')
-export class UiViewport extends LitElement {
+export class UiViewport extends MobxLitElement {
   @property({ type: Object }) runtime: RuntimeManager | null = null;
 
   @query('canvas') private canvas!: HTMLCanvasElement;
@@ -272,9 +275,30 @@ export class UiViewport extends LitElement {
     device.queue.submit([commandEncoder.finish()]);
   }
 
+  private formatCompileAge(): string {
+    const t = appState.local.lastCompileTime;
+    if (!t) return '';
+    const ago = Math.floor((Date.now() - t) / 1000);
+    if (ago < 30) return 'just now';
+    if (ago < 90) return '1 min ago';
+    const mins = Math.floor(ago / 60);
+    if (mins < 60) return `${mins} min ago`;
+    return 'more than an hour ago';
+  }
+
+  private getCompileIndicator(): string {
+    const status = appState.local.compileStatus;
+    const errorCount = appState.local.validationErrors.filter(e => e.severity === 'error').length;
+    if (errorCount > 0) return `${errorCount} error${errorCount !== 1 ? 's' : ''}`;
+    if (status === 'compiling') return 'compiling\u2026';
+    return '';
+  }
+
   render() {
     const textureOutputId = this.runtime?.getPrimaryOutputId() ?? 't_output';
     const outRes = this.runtime?.getResource(textureOutputId);
+    const compileAge = this.formatCompileAge();
+    const indicator = this.getCompileIndicator();
     return html`
       <canvas
         @dragover=${this.handleDragOver}
@@ -285,7 +309,7 @@ export class UiViewport extends LitElement {
         Drop to Load Texture
       </div>
       <div class="stats" style="bottom: ${this.statsBottom}px">
-        ${outRes?.width || 0}x${outRes?.height || 0} ${this.runtime?.fps.toFixed(1) || 0} FPS
+        ${outRes?.width || 0}x${outRes?.height || 0} ${this.runtime?.fps.toFixed(1) || 0} FPS${compileAge ? ` \u00b7 ${compileAge}` : ''}${indicator ? ` \u00b7 ${indicator}` : ''}
       </div>
     `;
   }
