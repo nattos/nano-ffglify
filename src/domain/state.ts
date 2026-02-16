@@ -125,6 +125,11 @@ export class AppState {
       this.local.settings.activeWorkspaceId = activeId;
       if (savedDb) {
         Object.assign(this.database, savedDb);
+        // Sync cached comment from loaded IR into workspace index
+        const ws = workspaces.find(w => w.id === activeId);
+        if (ws) {
+          ws.comment = savedDb.ir?.comment || undefined;
+        }
       }
     });
 

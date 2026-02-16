@@ -21,10 +21,12 @@ function relativeTime(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
+type EditingField = { id: string; field: 'name' } | { id: string; field: 'comment' } | null;
+
 @customElement('ui-workspace-panel')
 export class UiWorkspacePanel extends MobxLitElement {
-  @state() private renamingId: string | null = null;
-  @state() private renameValue = '';
+  @state() private editing: EditingField = null;
+  @state() private editValue = '';
   @state() private confirmingDeleteId: string | null = null;
 
   static readonly styles = [
@@ -96,6 +98,27 @@ export class UiWorkspacePanel extends MobxLitElement {
         color: var(--app-text-muted);
       }
 
+      .workspace-comment {
+        font-size: 0.7rem;
+        color: var(--app-text-muted);
+        opacity: 0.8;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .workspace-entry.active .workspace-comment {
+        white-space: pre-wrap;
+        overflow: visible;
+      }
+
+      .comment-placeholder {
+        font-size: 0.7rem;
+        color: var(--app-text-muted);
+        opacity: 0.3;
+        font-style: italic;
+      }
+
       .fork-info {
         display: flex;
         align-items: center;
@@ -134,7 +157,7 @@ export class UiWorkspacePanel extends MobxLitElement {
         opacity: 1;
       }
 
-      .rename-input {
+      .edit-input {
         font-size: 0.85rem;
         background: #1a1a1a;
         border: 1px solid var(--color-emerald-500);
@@ -144,6 +167,21 @@ export class UiWorkspacePanel extends MobxLitElement {
         outline: none;
         width: 100%;
         font-family: inherit;
+      }
+
+      .edit-textarea {
+        font-size: 0.7rem;
+        background: #1a1a1a;
+        border: 1px solid var(--color-emerald-500);
+        color: var(--app-text-main);
+        border-radius: 3px;
+        padding: 2px 4px;
+        outline: none;
+        width: 100%;
+        font-family: inherit;
+        resize: vertical;
+        min-height: 2.5em;
+        field-sizing: content;
       }
 
       .action-btn {
@@ -261,36 +299,52 @@ export class UiWorkspacePanel extends MobxLitElement {
   private async handleGoToSource(e: Event, sourceId: string) {
     e.stopPropagation();
     if (this.busy) return;
-    // Check if the source workspace still exists
     const exists = appState.local.workspaces.some(w => w.id === sourceId);
     if (!exists) return;
     await appController.switchWorkspace(sourceId);
   }
 
-  private startRename(e: Event, entry: WorkspaceIndexEntry) {
+  private startEdit(e: Event, id: string, field: 'name' | 'comment', currentValue: string) {
     e.stopPropagation();
-    this.renamingId = entry.id;
-    this.renameValue = entry.name;
-    // Focus the input after render
+    this.editing = { id, field };
+    this.editValue = currentValue;
     this.updateComplete.then(() => {
-      const input = this.shadowRoot?.querySelector('.rename-input') as HTMLInputElement;
-      input?.focus();
-      input?.select();
+      const selector = field === 'name' ? '.edit-input' : '.edit-textarea';
+      const el = this.shadowRoot?.querySelector(selector) as HTMLElement;
+      if (el) {
+        el.focus();
+        if (el instanceof HTMLInputElement) el.select();
+        else if (el instanceof HTMLTextAreaElement) el.select();
+      }
     });
   }
 
-  private async commitRename() {
-    if (this.renamingId && this.renameValue.trim()) {
-      await appController.renameWorkspace(this.renamingId, this.renameValue.trim());
+  private async commitEdit() {
+    if (!this.editing) return;
+    const { id, field } = this.editing;
+    const value = this.editValue.trim();
+    this.editing = null;
+
+    if (field === 'name') {
+      if (value) await appController.renameWorkspace(id, value);
+    } else {
+      appController.setWorkspaceComment(value);
     }
-    this.renamingId = null;
   }
 
-  private handleRenameKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      this.commitRename();
+  private cancelEdit() {
+    this.editing = null;
+  }
+
+  private handleEditKeydown(e: KeyboardEvent) {
+    if (this.editing?.field === 'name' && e.key === 'Enter') {
+      e.preventDefault();
+      this.commitEdit();
+    } else if (this.editing?.field === 'comment' && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      this.commitEdit();
     } else if (e.key === 'Escape') {
-      this.renamingId = null;
+      this.cancelEdit();
     }
   }
 
@@ -312,29 +366,47 @@ export class UiWorkspacePanel extends MobxLitElement {
   }
 
   private renderEntry(ws: WorkspaceIndexEntry, activeId: string) {
+    const isActive = ws.id === activeId;
     const isConfirmingDelete = this.confirmingDeleteId === ws.id;
     const sourceExists = ws.forkedFrom
       ? appState.local.workspaces.some(w => w.id === ws.forkedFrom!.sourceId)
       : false;
+    const comment = isActive ? appState.database.ir.comment : ws.comment;
+    const isEditingName = this.editing?.id === ws.id && this.editing.field === 'name';
+    const isEditingComment = this.editing?.id === ws.id && this.editing.field === 'comment';
 
     return html`
       <div
-        class="workspace-entry ${ws.id === activeId ? 'active' : ''}"
+        class="workspace-entry ${isActive ? 'active' : ''}"
         @click=${() => this.handleSwitch(ws.id)}
       >
         <div class="workspace-info">
-          ${this.renamingId === ws.id ? html`
+          ${isEditingName ? html`
             <input
-              class="rename-input"
-              .value=${this.renameValue}
-              @input=${(e: Event) => this.renameValue = (e.target as HTMLInputElement).value}
-              @blur=${() => this.commitRename()}
-              @keydown=${(e: KeyboardEvent) => this.handleRenameKeydown(e)}
+              class="edit-input"
+              .value=${this.editValue}
+              @input=${(e: Event) => this.editValue = (e.target as HTMLInputElement).value}
+              @blur=${() => this.commitEdit()}
+              @keydown=${(e: KeyboardEvent) => this.handleEditKeydown(e)}
               @click=${(e: Event) => e.stopPropagation()}
             />
           ` : html`
-            <div class="workspace-name" @dblclick=${(e: Event) => this.startRename(e, ws)}>${ws.name}</div>
+            <div class="workspace-name" @dblclick=${(e: Event) => this.startEdit(e, ws.id, 'name', ws.name)}>${ws.name}</div>
           `}
+          ${isEditingComment ? html`
+            <textarea
+              class="edit-textarea"
+              .value=${this.editValue}
+              @input=${(e: Event) => this.editValue = (e.target as HTMLTextAreaElement).value}
+              @blur=${() => this.commitEdit()}
+              @keydown=${(e: KeyboardEvent) => this.handleEditKeydown(e)}
+              @click=${(e: Event) => e.stopPropagation()}
+            ></textarea>
+          ` : comment ? html`
+            <div class="workspace-comment" @dblclick=${isActive ? (e: Event) => this.startEdit(e, ws.id, 'comment', comment) : null}>${comment}</div>
+          ` : isActive ? html`
+            <div class="comment-placeholder" @dblclick=${(e: Event) => this.startEdit(e, ws.id, 'comment', '')}>Add description...</div>
+          ` : nothing}
           <div class="workspace-meta">${relativeTime(ws.updatedAt)}</div>
           ${ws.forkedFrom ? html`
             <div class="fork-info">

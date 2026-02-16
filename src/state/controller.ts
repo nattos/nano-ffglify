@@ -205,15 +205,31 @@ export class AppController {
     });
   }
 
+  /** Sync cached workspace index fields from live IR state. */
+  private syncWorkspaceIndex() {
+    const ws = appState.local.workspaces.find(w => w.id === this.activeWorkspaceId);
+    if (!ws) return;
+    const comment = appState.database.ir.comment || undefined;
+    if (ws.comment !== comment) {
+      runInAction(() => { ws.comment = comment; });
+    }
+    return ws;
+  }
+
   /** Persist database to IDB without touching updatedAt. */
   private saveDatabase() {
     if (!this.activeWorkspaceId) return;
+    this.syncWorkspaceIndex();
     settingsManager.saveDatabase(toJS(appState.database), this.activeWorkspaceId);
+    const ws = appState.local.workspaces.find(w => w.id === this.activeWorkspaceId);
+    if (ws) settingsManager.saveWorkspace(toJS(ws));
   }
 
   /** Persist database AND bump the workspace's updatedAt (for real content changes). */
   private saveDatabaseWithTimestamp() {
-    this.saveDatabase();
+    if (!this.activeWorkspaceId) return;
+    this.syncWorkspaceIndex();
+    settingsManager.saveDatabase(toJS(appState.database), this.activeWorkspaceId);
     const ws = appState.local.workspaces.find(w => w.id === this.activeWorkspaceId);
     if (ws) {
       runInAction(() => { ws.updatedAt = Date.now(); });
@@ -669,13 +685,22 @@ export class AppController {
 
   public async renameWorkspace(id: string, name: string): Promise<void> {
     const entry = appState.local.workspaces.find(w => w.id === id);
-    if (!entry) return;
+    if (!entry || entry.name === name) return;
 
     runInAction(() => {
       entry.name = name;
       entry.updatedAt = Date.now();
     });
     await settingsManager.saveWorkspace(toJS(entry));
+  }
+
+  public setWorkspaceComment(comment: string): void {
+    const current = appState.database.ir.comment || '';
+    if (current === comment) return;
+
+    this.mutate('Update comment', 'user', (draft) => {
+      draft.ir.comment = comment || undefined;
+    });
   }
 
   public async switchWorkspace(targetId: string): Promise<void> {
@@ -719,6 +744,9 @@ export class AppController {
       // Update active workspace
       appState.local.settings.activeWorkspaceId = targetId;
     });
+
+    // Sync cached fields (comment) from the now-loaded IR into the workspace index
+    this.syncWorkspaceIndex();
 
     // 6. Persist settings
     this.saveSettings();

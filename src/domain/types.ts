@@ -40,6 +40,7 @@ export interface WorkspaceIndexEntry {
   createdAt: number;
   updatedAt: number;
   forkedFrom?: WorkspaceForkInfo;
+  comment?: string;
 }
 
 export interface AppSettings {

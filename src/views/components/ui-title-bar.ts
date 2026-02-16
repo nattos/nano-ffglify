@@ -12,9 +12,9 @@ export class UiTitleBar extends MobxLitElement {
     globalStyles,
     css`
       :host {
-        display: flex;
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
         align-items: center;
-        justify-content: space-between;
         padding: 0 1rem;
         height: 48px;
         background: var(--app-header-bg);
@@ -30,16 +30,24 @@ export class UiTitleBar extends MobxLitElement {
         font-size: 1rem;
         white-space: nowrap;
         color: var(--app-text-muted);
+        min-width: 0;
+      }
+
+      .app-name {
+        flex-shrink: 0;
       }
 
       .workspace-name {
         font-weight: normal;
         font-size: 0.85rem;
         opacity: 0.6;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .workspace-sep {
         opacity: 0.3;
+        flex-shrink: 0;
       }
 
       .center {
@@ -51,6 +59,7 @@ export class UiTitleBar extends MobxLitElement {
       .right {
         display: flex;
         align-items: center;
+        justify-content: flex-end;
         gap: 0.25rem;
       }
 
@@ -64,13 +73,12 @@ export class UiTitleBar extends MobxLitElement {
   ];
 
   render() {
+    const ws = appState.local.workspaces.find(w => w.id === appController.activeWorkspaceId);
+
     return html`
       <div class="left">
-        Nano FFGLify
-        ${(() => {
-          const ws = appState.local.workspaces.find(w => w.id === appController.activeWorkspaceId);
-          return ws ? html`<span class="workspace-sep">/</span><span class="workspace-name">${ws.name}</span>` : nothing;
-        })()}
+        <span class="app-name">Nano FFGLify</span>
+        ${ws ? html`<span class="workspace-sep">/</span><span class="workspace-name">${ws.name}</span>` : nothing}
       </div>
 
       <div class="center">
