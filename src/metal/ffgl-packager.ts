@@ -256,7 +256,7 @@ export async function packageFFGLPlugin(vfs: IVirtualFileSystem, options: Packag
 
   // 2. Generate Logic and Shader Code
   const cppGen = new CppGenerator();
-  const { code: cppCode, shaderFunctions } = cppGen.compile(ir, 'fn_main_cpu');
+  const { code: cppCode, shaderFunctions } = cppGen.compile(ir, ir.entryPoint);
   vfs.writeFile(`${relGen}/logic.cpp`, cppCode);
 
   const mslGen = new MslGenerator();
