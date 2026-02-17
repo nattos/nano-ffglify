@@ -4,6 +4,7 @@ import { run } from 'vite-plugin-run';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig({
+  base: './',
   root: 'src',
   publicDir: '../assets',
   server: {
