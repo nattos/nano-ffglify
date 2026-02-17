@@ -48,6 +48,7 @@ export class AppState {
       llmLogs: [],
       llmBusy: false,
       draftChat: '',
+      draftImages: [],
       activeRewindId: null,
       selectedEntity: undefined,
       selectionHistory: [],

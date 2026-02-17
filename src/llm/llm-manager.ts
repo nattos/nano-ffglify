@@ -11,7 +11,7 @@
  * - Requires valid `GOOGLE_API_KEY`.
  * - Mock matching logic is fuzzy regex; collisions happen if mock prompts are too similar.
  */
-import { GoogleGenerativeAI, SchemaType, FunctionDeclaration, GenerativeModel, FunctionResponsePart, FunctionResponse } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType, FunctionDeclaration, GenerativeModel, FunctionResponsePart, FunctionResponse, Part } from "@google/generative-ai";
 
 import { AppController } from '../state/controller';
 import { generatePatchTool, generateReplaceTool } from '../domain/schemas';
@@ -42,12 +42,14 @@ export interface LLMOptions {
   executeTool?: (name: string, args: any) => Promise<{ end: boolean; response: any; }>;
 }
 
+export type PromptInput = string | Array<string | Part>;
+
 export interface LLMManager {
-  generateResponse(prompt: string, options?: LLMOptions): Promise<LLMResponse>;
+  generateResponse(prompt: PromptInput, options?: LLMOptions): Promise<LLMResponse>;
 }
 
 interface ChatSessionAdapter {
-  sendMessage(input: string | FunctionResponsePart[]): Promise<LLMResponse>;
+  sendMessage(input: PromptInput | FunctionResponsePart[]): Promise<LLMResponse>;
 }
 
 export class GoogleGenAIManager implements LLMManager {
@@ -155,7 +157,7 @@ export class GoogleGenAIManager implements LLMManager {
     });
   }
 
-  async generateResponse(prompt: string, options?: LLMOptions): Promise<LLMResponse> {
+  async generateResponse(prompt: PromptInput, options?: LLMOptions): Promise<LLMResponse> {
     const start = Date.now();
     const sessionId = crypto.randomUUID();
     let finalResponse: LLMResponse = { text: "" };
@@ -163,11 +165,16 @@ export class GoogleGenAIManager implements LLMManager {
     const maxTurns = options?.maxTurns || 25;
     let turns = 0;
 
+    // Extract text content for mock matching and logging
+    const promptText = typeof prompt === 'string'
+      ? prompt
+      : prompt.filter((p): p is string => typeof p === 'string').join('\n');
+
     // 1. Setup Session Adapter
     let session: ChatSessionAdapter;
 
     if (mocked) {
-      const lowerPrompt = prompt.toLowerCase();
+      const lowerPrompt = promptText.toLowerCase();
       const lines = lowerPrompt.split('\n');
       let registryMatch: LLMResponse[] | undefined;
       let maxLineIndex = -1;
@@ -190,7 +197,7 @@ export class GoogleGenAIManager implements LLMManager {
 
       const match = registryMatch;
       session = {
-        async sendMessage(_input: string | FunctionResponsePart[]) {
+        async sendMessage(_input: PromptInput | FunctionResponsePart[]) {
           if (!match || turns > match.length) {
             return { text: "[MOCK] No more mock steps or no match found." };
           }
@@ -208,7 +215,7 @@ export class GoogleGenAIManager implements LLMManager {
       const realChat = this.model.startChat({});
       const signal = options?.signal;
       session = {
-        sendMessage: async (input: string | FunctionResponsePart[]) => {
+        sendMessage: async (input: PromptInput | FunctionResponsePart[]) => {
           return this.withRetry(async () => {
             const result = await realChat.sendMessage(input);
             const apiResponse = result.response;
@@ -227,7 +234,7 @@ export class GoogleGenAIManager implements LLMManager {
     }
 
     // 2. Unified Multi-Turn Loop
-    let currentInput: string | FunctionResponsePart[] = prompt;
+    let currentInput: PromptInput | FunctionResponsePart[] = prompt;
     let endedNormally = false;
 
     try {
@@ -242,14 +249,21 @@ export class GoogleGenAIManager implements LLMManager {
         const response = await session.sendMessage(currentInput);
         finalResponse = response;
 
-        // Log this turn
+        // Log this turn (sanitize base64 image data from prompt)
+        const logInput = Array.isArray(currentInput)
+          ? JSON.stringify(currentInput.map((p: any) =>
+              typeof p === 'string' ? p
+              : p?.inlineData ? `[image:${p.inlineData.mimeType}]`
+              : p
+            ))
+          : typeof currentInput === 'string' ? currentInput : JSON.stringify(currentInput);
         this.appController.logLLMInteraction({
           id: sessionId,
           timestamp: Date.now(),
           turn_index: turns,
           type: 'chat',
           system_instruction_snapshot: this.systemInstruction,
-          prompt_snapshot: typeof currentInput === 'string' ? currentInput : JSON.stringify(currentInput),
+          prompt_snapshot: logInput,
           response_snapshot: JSON.stringify(response),
           duration_ms: mocked ? 0 : Date.now() - turnStart,
           mocked
@@ -325,7 +339,7 @@ export class GoogleGenAIManager implements LLMManager {
         turn_index: turns,
         type: 'error',
         system_instruction_snapshot: this.systemInstruction,
-        prompt_snapshot: prompt,
+        prompt_snapshot: promptText,
         response_snapshot: error?.toString() ?? 'Unknown',
         duration_ms: Date.now() - start,
         mocked

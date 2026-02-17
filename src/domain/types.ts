@@ -20,12 +20,18 @@ export interface ValidationError {
   severity: 'error' | 'warning';
 }
 
+export interface ChatImageAttachment {
+  mimeType: string;  // 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  data: string;      // base64 (no data URI prefix)
+}
+
 export interface ChatMsg {
   id: string; // UUID
   role: 'user' | 'tool-response' | 'assistant';
   text?: string;
   type?: 'text' | 'entity_update';
   data?: any;
+  images?: ChatImageAttachment[];
 }
 
 export interface WorkspaceForkInfo {
@@ -86,6 +92,8 @@ export interface LocalState {
   selectedEntity?: { id: string; type: 'IR' };
   selectionHistory: { id: string; type: 'IR' }[]; // Back stack
   selectionFuture: { id: string; type: 'IR' }[]; // Forward stack
+
+  draftImages: ChatImageAttachment[];
 
   validationErrors: LogicValidationError[];
   compilationResult?: {

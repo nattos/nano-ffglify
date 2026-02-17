@@ -7,12 +7,17 @@ import { globalStyles } from '../../styles';
 import { appState } from '../../domain/state';
 import { appController } from '../../state/controller';
 import { chatHandler } from '../../llm/chat-handler';
+import { ChatImageAttachment } from '../../domain/types';
+
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 @customElement('ui-chat-panel')
 export class UiChatPanel extends MobxLitElement {
   @query('.chat-history') private chatHistory!: HTMLElement;
   @query('.chat-input') private chatInput!: HTMLTextAreaElement;
+  @query('.file-input') private fileInput!: HTMLInputElement;
   @state() private rewindConfirmId: string | null = null;
+  @state() private dragOver = false;
 
   private wasPinned = true;
 
@@ -25,6 +30,7 @@ export class UiChatPanel extends MobxLitElement {
         background: #1a1a1a;
         border-left: 1px solid var(--app-border);
         overflow: hidden;
+        position: relative;
       }
 
       .header {
@@ -99,6 +105,19 @@ export class UiChatPanel extends MobxLitElement {
         opacity: 0.7;
       }
 
+      .msg-images {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 4px;
+      }
+      .msg-images img {
+        max-width: 200px;
+        max-height: 150px;
+        border-radius: 4px;
+        object-fit: cover;
+      }
+
       .thinking {
         align-self: flex-start;
         display: flex;
@@ -132,10 +151,52 @@ export class UiChatPanel extends MobxLitElement {
 
       .input-area {
         display: flex;
-        align-items: flex-end;
+        flex-direction: column;
         padding: 0.5rem;
-        gap: 0.5rem;
+        gap: 0.35rem;
         flex-shrink: 0;
+      }
+
+      .draft-previews {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .draft-preview {
+        position: relative;
+        width: 60px;
+        height: 60px;
+      }
+      .draft-preview img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: 4px;
+        border: 1px solid #444;
+      }
+      .draft-preview .remove-btn {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #e53e3e;
+        color: white;
+        border: none;
+        font-size: 10px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+
+      .input-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.5rem;
       }
 
       .chat-input {
@@ -157,6 +218,25 @@ export class UiChatPanel extends MobxLitElement {
       .chat-input:focus {
         outline: none;
         border-color: var(--color-emerald-500);
+      }
+
+      .file-input {
+        display: none;
+      }
+
+      .drop-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(16, 185, 129, 0.15);
+        border: 2px dashed var(--color-emerald-500);
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9rem;
+        color: var(--color-emerald-500);
+        pointer-events: none;
+        z-index: 10;
       }
     `
   ];
@@ -183,10 +263,12 @@ export class UiChatPanel extends MobxLitElement {
 
   private async handleSend() {
     const text = appState.local.draftChat;
-    if (!text.trim()) return;
+    const images = [...appState.local.draftImages];
+    if (!text.trim() && !images.length) return;
     appController.setDraftChat('');
+    appController.clearDraftImages();
     this.autoResizeTextarea();
-    await chatHandler.handleUserMessage(text);
+    await chatHandler.handleUserMessage(text, images.length ? images : undefined);
   }
 
   private handleInput(e: any) {
@@ -199,6 +281,61 @@ export class UiChatPanel extends MobxLitElement {
     if (!ta) return;
     ta.style.height = 'auto';
     ta.style.height = ta.scrollHeight + 'px';
+  }
+
+  private handleUploadClick() {
+    this.fileInput?.click();
+  }
+
+  private handleFileSelect(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (!input.files) return;
+    for (const file of Array.from(input.files)) {
+      this.addImageFromFile(file);
+    }
+    input.value = '';
+  }
+
+  private addImageFromFile(file: File) {
+    if (!file.type.startsWith('image/')) return;
+    if (file.size > MAX_IMAGE_SIZE) {
+      console.warn(`Skipping ${file.name}: exceeds 10MB limit`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1];
+      if (!base64) return;
+      const attachment: ChatImageAttachment = {
+        mimeType: file.type,
+        data: base64,
+      };
+      appController.addDraftImage(attachment);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  private handleDragOver(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.dragOver = true;
+  }
+
+  private handleDragLeave(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.dragOver = false;
+  }
+
+  private handleDrop(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.dragOver = false;
+    if (!e.dataTransfer?.files) return;
+    for (const file of Array.from(e.dataTransfer.files)) {
+      this.addImageFromFile(file);
+    }
   }
 
   protected updated() {
@@ -215,14 +352,21 @@ export class UiChatPanel extends MobxLitElement {
 
   render() {
     const { chat_history } = appState.database;
-    const { draftChat, llmBusy } = appState.local;
+    const { draftChat, draftImages, llmBusy } = appState.local;
 
     return html`
+      ${this.dragOver ? html`<div class="drop-overlay">Drop images here</div>` : nothing}
+
       <div class="header">
         <span class="header-title">Chat</span>
       </div>
 
-      <div class="chat-history" @scroll=${() => this.handleScroll()}>
+      <div class="chat-history"
+        @scroll=${() => this.handleScroll()}
+        @dragover=${(e: DragEvent) => this.handleDragOver(e)}
+        @dragleave=${(e: DragEvent) => this.handleDragLeave(e)}
+        @drop=${(e: DragEvent) => this.handleDrop(e)}
+      >
         ${chat_history.map(msg => msg.role === 'user' ? html`
           ${this.rewindConfirmId === msg.id ? html`
             <div class="rewind-confirm">
@@ -232,6 +376,13 @@ export class UiChatPanel extends MobxLitElement {
             </div>
           ` : nothing}
           <div class="msg user">
+            ${msg.images?.length ? html`
+              <div class="msg-images">
+                ${msg.images.map(img => html`
+                  <img src="data:${img.mimeType};base64,${img.data}" alt="attached image" />
+                `)}
+              </div>
+            ` : nothing}
             ${msg.text}
             ${!llmBusy ? html`<span class="rewind-btn" @click=${() => this.handleRewindClick(msg.id)} title="Rewind to this message">\u21ba</span>` : nothing}
           </div>
@@ -251,19 +402,33 @@ export class UiChatPanel extends MobxLitElement {
       </div>
 
       <div class="input-area">
-        <textarea
-          class="chat-input"
-          rows="1"
-          .value=${draftChat}
-          ?disabled=${llmBusy}
-          @input=${(e: any) => this.handleInput(e)}
-          @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.handleSend(); } }}
-          placeholder=${llmBusy ? 'Waiting for response...' : 'Type a message...'}
-        ></textarea>
-        ${llmBusy
-          ? html`<ui-button icon="la-stop" square @click=${() => this.handleStop()} title="Stop"></ui-button>`
-          : html`<ui-button icon="la-paper-plane" square @click=${() => this.handleSend()} title="Send"></ui-button>`
-        }
+        ${draftImages.length ? html`
+          <div class="draft-previews">
+            ${draftImages.map((img, i) => html`
+              <div class="draft-preview">
+                <img src="data:${img.mimeType};base64,${img.data}" alt="draft" />
+                <button class="remove-btn" @click=${() => appController.removeDraftImage(i)} title="Remove">\u00d7</button>
+              </div>
+            `)}
+          </div>
+        ` : nothing}
+        <div class="input-row">
+          <input class="file-input" type="file" accept="image/*" multiple @change=${(e: Event) => this.handleFileSelect(e)} />
+          <ui-button icon="la-image" square @click=${() => this.handleUploadClick()} title="Attach image" ?disabled=${llmBusy}></ui-button>
+          <textarea
+            class="chat-input"
+            rows="1"
+            .value=${draftChat}
+            ?disabled=${llmBusy}
+            @input=${(e: any) => this.handleInput(e)}
+            @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.handleSend(); } }}
+            placeholder=${llmBusy ? 'Waiting for response...' : 'Type a message...'}
+          ></textarea>
+          ${llmBusy
+            ? html`<ui-button icon="la-stop" square @click=${() => this.handleStop()} title="Stop"></ui-button>`
+            : html`<ui-button icon="la-paper-plane" square @click=${() => this.handleSend()} title="Send"></ui-button>`
+          }
+        </div>
       </div>
     `;
   }

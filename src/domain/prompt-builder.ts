@@ -11,9 +11,10 @@
  * - The `EXAMPLES` string is critical for teaching the LLM how to use tools. If tools change, examples MUST be updated.
  * - Context window size is finite; sending the *entire* database in `buildContext` will eventually hit limits. Pagination or RAG needed for large apps.
  */
+import { Part } from '@google/generative-ai';
 import { CHAT_HISTORY_LENGTH } from '../constants';
 import { PRIMITIVE_TYPES } from '../ir/types';
-import { CombinedAgentState } from './types';
+import { ChatImageAttachment, CombinedAgentState } from './types';
 
 export class PromptBuilder {
   static buildWorkerSystemInstruction(): string {
@@ -148,7 +149,7 @@ Execution Semantics:
 `.trim();
   }
 
-  static buildWorkerUserPrompt(state: CombinedAgentState, history: any[], currentText: string): string {
+  static buildWorkerUserPrompt(state: CombinedAgentState, history: any[], currentText: string, images?: ChatImageAttachment[]): string | Array<string | Part> {
     // Serialize state to JSON
     const cleanState = state.database.ir;
 
@@ -173,7 +174,7 @@ The current IR is valid and compiling correctly.
 `.trim();
     }
 
-    return `
+    const textPrompt = `
 ### ACTIVE STATE
 ${JSON.stringify(cleanState, null, 2)}
 
@@ -188,5 +189,11 @@ User: ${currentText}
 
 ### AGENT RESPONSE (Thought + Action)
 `.trim();
+
+    if (!images?.length) return textPrompt;
+
+    return [textPrompt, ...images.map(img => ({
+      inlineData: { mimeType: img.mimeType, data: img.data }
+    } as Part))];
   }
 }

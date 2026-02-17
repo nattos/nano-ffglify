@@ -12,6 +12,7 @@ import { IREditResponse, PatchIRRequest, ReplaceIRRequest } from '../state/entit
 import { BuiltinOp, OpDefs } from '../ir/builtin-schemas';
 import { opDefToFunctionDeclaration } from '../domain/schemas';
 import { ALL_EXAMPLES } from '../domain/example-ir';
+import { ChatImageAttachment } from '../domain/types';
 
 export class ChatHandler {
   private activeAbortController: AbortController | null = null;
@@ -30,15 +31,15 @@ export class ChatHandler {
     }
   }
 
-  async handleUserMessage(text: string) {
+  async handleUserMessage(text: string, images?: ChatImageAttachment[]) {
     // 1. Optimistic UI Update
-    this.appController.addChatMessage({ role: 'user', text });
+    this.appController.addChatMessage({ role: 'user', text, images: images?.length ? images : undefined });
     this.appController.setLLMBusy(true);
     this.activeAbortController = new AbortController();
 
     try {
       const previousHistory = this.appState.database.chat_history.slice(0, -1);
-      const fullPrompt = PromptBuilder.buildWorkerUserPrompt({ database: this.appState.database, ephemeral: this.appState.local }, previousHistory, text);
+      const fullPrompt = PromptBuilder.buildWorkerUserPrompt({ database: this.appState.database, ephemeral: this.appState.local }, previousHistory, text, images);
 
       const result = await this.llmManager.generateResponse(fullPrompt, {
         forceMock: this.appState.local.settings.useMockLLM,

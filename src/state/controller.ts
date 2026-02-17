@@ -14,7 +14,7 @@
  */
 import { runInAction, toJS } from 'mobx';
 import { appState } from '../domain/state';
-import { AppSettings, ChatMsg, LLMLogEntry, IRDocument, DatabaseState, SavedInputFile, WorkspaceIndexEntry } from '../domain/types';
+import { AppSettings, ChatMsg, ChatImageAttachment, LLMLogEntry, IRDocument, DatabaseState, SavedInputFile, WorkspaceIndexEntry } from '../domain/types';
 import { INITIAL_DATABASE_STATE } from '../domain/init';
 import { historyManager } from './history';
 import { settingsManager } from './settings';
@@ -297,6 +297,24 @@ export class AppController {
     });
   }
 
+  public addDraftImage(image: ChatImageAttachment) {
+    runInAction(() => {
+      appState.local.draftImages.push(image);
+    });
+  }
+
+  public removeDraftImage(index: number) {
+    runInAction(() => {
+      appState.local.draftImages.splice(index, 1);
+    });
+  }
+
+  public clearDraftImages() {
+    runInAction(() => {
+      appState.local.draftImages.length = 0;
+    });
+  }
+
   public setActiveRewindId(id: string | null) {
     runInAction(() => {
       appState.local.activeRewindId = id;
@@ -573,7 +591,8 @@ export class AppController {
       role: msg.role || 'assistant',
       text: msg.text,
       type: msg.type,
-      data: msg.data
+      data: msg.data,
+      images: msg.images,
     };
 
     runInAction(() => {
@@ -764,6 +783,7 @@ export class AppController {
       appState.local.compilationResult = undefined;
       appState.local.compileStatus = undefined;
       appState.local.draftChat = '';
+      appState.local.draftImages = [];
       appState.local.activeRewindId = null;
       appState.local.selectedEntity = undefined;
       appState.local.selectionHistory = [];
