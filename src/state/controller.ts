@@ -16,6 +16,7 @@ import { runInAction, toJS } from 'mobx';
 import { appState } from '../domain/state';
 import { AppSettings, ChatMsg, ChatImageAttachment, LLMLogEntry, IRDocument, DatabaseState, SavedInputFile, WorkspaceIndexEntry } from '../domain/types';
 import { INITIAL_DATABASE_STATE } from '../domain/init';
+import { ALL_EXAMPLES } from '../domain/example-ir';
 import { historyManager } from './history';
 import { settingsManager } from './settings';
 import { validateIR } from '../ir/validator';
@@ -227,10 +228,40 @@ export class AppController {
 
   /** Persist database AND bump the workspace's updatedAt (for real content changes). */
   private saveDatabaseWithTimestamp() {
-    if (!this.activeWorkspaceId) return;
+    if (!this.activeWorkspaceId) {
+      // Draft mode — materialize on first real mutation
+      if (appState.local.draftExampleKey) {
+        this.materializeDraft();
+      }
+      return;
+    }
     this.syncWorkspaceIndex();
     settingsManager.saveDatabase(toJS(appState.database), this.activeWorkspaceId);
     const ws = appState.local.workspaces.find(w => w.id === this.activeWorkspaceId);
+    if (ws) {
+      runInAction(() => { ws.updatedAt = Date.now(); });
+      settingsManager.saveWorkspace(toJS(ws));
+    }
+  }
+
+  /** Materialize a draft example into a real workspace. */
+  private async materializeDraft() {
+    const key = appState.local.draftExampleKey;
+    if (!key) return;
+    const ir = appState.database.ir;
+    const name = ir.meta?.name || key;
+    const id = await this.createWorkspace(name);
+
+    runInAction(() => {
+      appState.local.settings.activeWorkspaceId = id;
+      appState.local.draftExampleKey = null;
+    });
+    this.saveSettings();
+
+    // Now save the (potentially mutated) database into the new workspace
+    this.syncWorkspaceIndex();
+    settingsManager.saveDatabase(toJS(appState.database), id);
+    const ws = appState.local.workspaces.find(w => w.id === id);
     if (ws) {
       runInAction(() => { ws.updatedAt = Date.now(); });
       settingsManager.saveWorkspace(toJS(ws));
@@ -628,6 +659,48 @@ export class AppController {
     });
   }
 
+  // --- Example Draft Methods ---
+
+  public async openExample(key: string) {
+    // Save current workspace if any
+    this.saveDatabase();
+    _chatHandler?.stop();
+    historyManager.clear();
+    this.runtime.stop();
+
+    const ir = (ALL_EXAMPLES as Record<string, any>)[key];
+    if (!ir) return;
+    const data = JSON.parse(JSON.stringify({ ...INITIAL_DATABASE_STATE, ir }));
+
+    runInAction(() => {
+      // Replace database state with example IR
+      Object.keys(appState.database).forEach(k => delete (appState.database as any)[k]);
+      Object.assign(appState.database, data);
+
+      // Reset ephemeral state (same as switchWorkspace)
+      appState.local.validationErrors = [];
+      appState.local.compilationResult = undefined;
+      appState.local.compileStatus = undefined;
+      appState.local.draftChat = '';
+      appState.local.draftImages = [];
+      appState.local.activeRewindId = null;
+      appState.local.selectedEntity = undefined;
+      appState.local.selectionHistory = [];
+      appState.local.selectionFuture = [];
+      appState.local.llmBusy = false;
+      appState.local.llmStatus = undefined;
+
+      // Enter draft mode: clear workspace ID, set draft key
+      appState.local.settings.activeWorkspaceId = '';
+      appState.local.draftExampleKey = key;
+    });
+
+    this.saveSettings();
+    this.lastCompiledIRJson = null;
+    this.repl.currentArtifacts = null;
+    await this.restoreTransportState();
+  }
+
   // --- Workspace Methods ---
 
   public async createWorkspace(name?: string): Promise<string> {
@@ -803,8 +876,9 @@ export class AppController {
       appState.local.llmBusy = false;
       appState.local.llmStatus = undefined;
 
-      // Update active workspace
+      // Update active workspace & clear draft mode
       appState.local.settings.activeWorkspaceId = targetId;
+      appState.local.draftExampleKey = null;
     });
 
     // Sync cached fields (comment) from the now-loaded IR into the workspace index

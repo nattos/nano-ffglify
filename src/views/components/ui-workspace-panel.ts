@@ -7,6 +7,7 @@ import { globalStyles } from '../../styles';
 import { appState } from '../../domain/state';
 import { appController } from '../../state/controller';
 import { WorkspaceIndexEntry } from '../../domain/types';
+import { ALL_EXAMPLES } from '../../domain/example-ir';
 
 function relativeTime(ts: number): string {
   const delta = Date.now() - ts;
@@ -252,6 +253,67 @@ export class UiWorkspacePanel extends MobxLitElement {
       .confirm-btn.no:hover {
         background: rgba(255, 255, 255, 0.1);
       }
+
+      .examples-divider {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 1rem 0.5rem 0.5rem;
+        color: var(--app-text-muted);
+        font-size: 0.7rem;
+      }
+
+      .examples-divider::before,
+      .examples-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--app-border);
+      }
+
+      .examples-list {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 0 0.25rem;
+      }
+
+      .example-entry {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 0.5rem;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.1s;
+        border-left: 3px solid transparent;
+      }
+
+      .example-entry:hover {
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .example-entry.active {
+        border-left-color: var(--color-emerald-500);
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .example-name {
+        font-size: 0.85rem;
+      }
+
+      .example-comment {
+        font-size: 0.7rem;
+        color: var(--app-text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .example-entry.active .example-comment {
+        white-space: pre-wrap;
+        overflow: visible;
+      }
     `
   ];
 
@@ -348,16 +410,39 @@ export class UiWorkspacePanel extends MobxLitElement {
     }
   }
 
+  private async handleOpenExample(key: string) {
+    if (this.busy) return;
+    if (appState.local.draftExampleKey === key) return;
+    await appController.openExample(key);
+  }
+
   render() {
     // Sort reverse chronologically by updatedAt, then createdAt as tiebreaker
     const workspaces = [...appState.local.workspaces].sort((a, b) =>
       b.updatedAt - a.updatedAt || b.createdAt - a.createdAt
     );
     const activeId = appController.activeWorkspaceId;
+    const draftExampleKey = appState.local.draftExampleKey;
 
     return html`
       <div class="list">
         ${workspaces.map(ws => this.renderEntry(ws, activeId))}
+      </div>
+      <div class="examples-divider">
+        <span>Examples</span>
+      </div>
+      <div class="examples-list">
+        ${Object.entries(ALL_EXAMPLES).map(([key, example]) => html`
+          <div
+            class="example-entry ${draftExampleKey === key ? 'active' : ''}"
+            @click=${() => this.handleOpenExample(key)}
+          >
+            <div class="example-name">${example.meta.name || key}</div>
+            ${example.comment ? html`
+              <div class="example-comment">${example.comment}</div>
+            ` : nothing}
+          </div>
+        `)}
       </div>
     `;
   }

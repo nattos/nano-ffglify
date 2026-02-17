@@ -93,6 +93,7 @@ export interface LocalState {
   selectionHistory: { id: string; type: 'IR' }[]; // Back stack
   selectionFuture: { id: string; type: 'IR' }[]; // Forward stack
 
+  draftExampleKey: string | null;  // key into ALL_EXAMPLES, or null when not in draft mode
   draftImages: ChatImageAttachment[];
 
   validationErrors: LogicValidationError[];

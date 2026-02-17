@@ -53,6 +53,7 @@ export class AppState {
       selectedEntity: undefined,
       selectionHistory: [],
       selectionFuture: [],
+      draftExampleKey: null,
       validationErrors: [],
       compilationResult: undefined,
       workspaces: [],
