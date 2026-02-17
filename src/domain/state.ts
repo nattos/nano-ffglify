@@ -39,7 +39,7 @@ export class AppState {
 
     this.local = observable({
       settings: {
-        activeTab: 'dashboard',
+        activeTab: 'workspaces',
         chatOpen: true,
         useMockLLM: false,
         transportState: 'playing',
