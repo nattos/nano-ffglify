@@ -450,9 +450,15 @@ export class AppController {
     const msg = history.find(m => m.id === targetId);
     if (!msg) return;
 
-    // 2. Set draft
-    if (msg.role === 'user' && msg.text) {
-      this.setDraftChat(msg.text);
+    // 2. Set draft text and images
+    if (msg.role === 'user') {
+      if (msg.text) this.setDraftChat(msg.text);
+      this.clearDraftImages();
+      if (msg.images?.length) {
+        for (const img of msg.images) {
+          this.addDraftImage({ ...img });
+        }
+      }
     }
 
     // 3. Undo loop

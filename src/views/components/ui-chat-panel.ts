@@ -276,6 +276,18 @@ export class UiChatPanel extends MobxLitElement {
     this.autoResizeTextarea();
   }
 
+  private handlePaste(e: ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) this.addImageFromFile(file);
+      }
+    }
+  }
+
   private autoResizeTextarea() {
     const ta = this.chatInput;
     if (!ta) return;
@@ -421,6 +433,7 @@ export class UiChatPanel extends MobxLitElement {
             .value=${draftChat}
             ?disabled=${llmBusy}
             @input=${(e: any) => this.handleInput(e)}
+            @paste=${(e: ClipboardEvent) => this.handlePaste(e)}
             @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.handleSend(); } }}
             placeholder=${llmBusy ? 'Waiting for response...' : 'Type a message...'}
           ></textarea>

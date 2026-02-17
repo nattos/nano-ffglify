@@ -1,9 +1,10 @@
-import { html, css } from 'lit';
+import { html, css, nothing } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
 import { MobxLitElement } from '../mobx-lit-element';
 import { RuntimeManager } from '../../runtime/runtime-manager';
 import { appState } from '../../domain/state';
 import { appController } from '../../state/controller';
+import './ui-icon';
 
 @customElement('ui-viewport')
 export class UiViewport extends MobxLitElement {
@@ -53,16 +54,43 @@ export class UiViewport extends MobxLitElement {
     .overlay.active {
       opacity: 1;
     }
-    .stats {
+    .stats-bar {
       position: absolute;
       left: 0;
-      padding: 4px 0;
+      right: 0;
+      padding: 0 0;
+      display: flex;
+      align-items: center;
       font-family: monospace;
       font-size: 10px;
       color: rgba(255, 255, 255, 0.25);
-      pointer-events: none;
       z-index: 10;
       white-space: nowrap;
+      line-height: 18px;
+    }
+    .stats-text {
+      pointer-events: none;
+    }
+    .stats-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 2px;
+      transition: opacity 0.15s;
+    }
+    .stats-actions button {
+      all: unset;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      color: rgba(255, 255, 255, 0.25);
+      --icon-size: 11px;
+    }
+    .stats-actions button:hover {
+      color: rgba(255, 255, 255, 0.5);
     }
   `;
 
@@ -126,12 +154,12 @@ export class UiViewport extends MobxLitElement {
     // Convert to pixels from top of host
     const contentBottomPx = hostRect.height * (1 + contentBottomFromCenter) / 2;
     // Position stats 8px below content bottom
-    const desiredTop = contentBottomPx + 8;
+    const desiredTop = contentBottomPx + 4;
     // But clamp so it doesn't exceed the host (leave 20px for the label itself)
-    const maxTop = hostRect.height - 20;
+    const maxTop = hostRect.height - 16;
     const clampedTop = Math.min(desiredTop, maxTop);
     // Convert to "bottom" offset for CSS
-    this.statsBottom = hostRect.height - clampedTop - 18;
+    this.statsBottom = hostRect.height - clampedTop - 14;
     if (this.statsBottom < 4) this.statsBottom = 4;
   }
 
@@ -291,10 +319,52 @@ export class UiViewport extends MobxLitElement {
       <div class="overlay ${this.isDragging ? 'active' : ''}">
         Drop to Load Texture
       </div>
-      <div class="stats" style="bottom: ${this.statsBottom}px">
-        ${outRes?.width || 0}x${outRes?.height || 0} ${this.runtime?.fps.toFixed(1) || 0} FPS${compileAge ? ` \u00b7 ${compileAge}` : ''}${indicator ? ` \u00b7 ${indicator}` : ''}
+      <div class="stats-bar" style="bottom: ${this.statsBottom}px">
+        <span class="stats-text">${outRes?.width || 0}x${outRes?.height || 0} ${this.runtime?.fps.toFixed(1) || 0} FPS${compileAge ? ` \u00b7 ${compileAge}` : ''}${indicator ? ` \u00b7 ${indicator}` : ''}</span>
+        ${outRes ? html`
+          <div class="stats-actions">
+            <button @click=${() => this.handleDownload()} title="Download screenshot"><ui-icon icon="la-download"></ui-icon></button>
+            <button @click=${() => this.handleAttachToChat()} title="Attach to chat"><ui-icon icon="la-comment-alt"></ui-icon></button>
+          </div>
+        ` : nothing}
       </div>
     `;
+  }
+
+  private captureCanvasBlob(): Promise<Blob | null> {
+    return new Promise(resolve => {
+      if (!this.canvas) return resolve(null);
+      this.canvas.toBlob(blob => resolve(blob), 'image/png');
+    });
+  }
+
+  private async handleDownload() {
+    const blob = await this.captureCanvasBlob();
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const name = appState.database.ir?.meta?.name || 'viewport';
+    a.download = `${name.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private async handleAttachToChat() {
+    const blob = await this.captureCanvasBlob();
+    if (!blob) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1];
+      if (!base64) return;
+      appController.addDraftImage({ mimeType: 'image/png', data: base64 });
+      // Open chat panel if closed
+      if (!appState.local.settings.chatOpen) {
+        appController.setChatOpen(true);
+      }
+    };
+    reader.readAsDataURL(blob);
   }
 
   private handleDragOver(e: DragEvent) {
