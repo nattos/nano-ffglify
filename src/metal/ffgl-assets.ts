@@ -21,6 +21,7 @@ import pluginMm from './ffgl-plugin.mm?raw';
 import interopM from './InteropTexture.m?raw';
 import interopH from './InteropTexture.h?raw';
 import intrinsicsH from './intrinsics.incl.h?raw';
+import mslIntrinsicsH from './msl-intrinsics.incl.h?raw';
 
 export const FFGL_ASSETS: Record<string, string> = {
   // FFGL SDK
@@ -44,5 +45,6 @@ export const FFGL_ASSETS: Record<string, string> = {
   'ffgl-plugin.mm': pluginMm,
   'InteropTexture.m': interopM,
   'InteropTexture.h': interopH,
-  'intrinsics.incl.h': intrinsicsH
+  'intrinsics.incl.h': intrinsicsH,
+  'msl-intrinsics.incl.h': mslIntrinsicsH
 };

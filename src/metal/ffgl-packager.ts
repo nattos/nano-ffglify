@@ -224,6 +224,51 @@ export interface PackagingOptions {
   ir: IRDocument;
 }
 
+// GitHub raw URLs for downloadable files
+const GITHUB_FFGL = 'https://raw.githubusercontent.com/resolume/ffgl/master/source/lib/ffgl';
+const GITHUB_NANO = 'https://raw.githubusercontent.com/nattos/nano-ffglify/main/src/metal';
+const LOCAL_FFGL = 'modules/ffgl/source/lib/ffgl';
+const LOCAL_NANO = 'src/metal';
+
+const FFGL_SDK_FILES = [
+  'FFGL.cpp', 'FFGL.h', 'FFGLLib.h', 'FFGLLog.cpp', 'FFGLLog.h',
+  'FFGLPlatform.h', 'FFGLPluginInfo.cpp', 'FFGLPluginInfo.h',
+  'FFGLPluginInfoData.cpp', 'FFGLPluginManager.cpp', 'FFGLPluginManager.h',
+  'FFGLPluginSDK.cpp', 'FFGLPluginSDK.h', 'FFGLThumbnailInfo.cpp', 'FFGLThumbnailInfo.h'
+];
+
+const NANO_PROJECT_FILES: Array<{ file: string; vfsDir: string }> = [
+  { file: 'ffgl-plugin.mm', vfsDir: 'src' },
+  { file: 'InteropTexture.m', vfsDir: 'src' },
+  { file: 'InteropTexture.h', vfsDir: 'src' },
+  { file: 'intrinsics.incl.h', vfsDir: 'src' },
+  { file: 'msl-intrinsics.incl.h', vfsDir: 'generated' },
+];
+
+/**
+ * Register all downloadable files as remote on a shell script VFS.
+ * For ZipFileSystem this is a harmless no-op per file (registerRemote is no-op).
+ */
+export function registerFFGLRemotes(vfs: IVirtualFileSystem): void {
+  if (!vfs.registerRemote) return;
+
+  for (const file of FFGL_SDK_FILES) {
+    vfs.registerRemote(
+      `ffgl-sdk/ffgl/${file}`,
+      `${GITHUB_FFGL}/${file}`,
+      `${LOCAL_FFGL}/${file}`
+    );
+  }
+
+  for (const { file, vfsDir } of NANO_PROJECT_FILES) {
+    vfs.registerRemote(
+      `${vfsDir}/${file}`,
+      `${GITHUB_NANO}/${file}`,
+      `${LOCAL_NANO}/${file}`
+    );
+  }
+}
+
 /**
  * Packages a complete FFGL plugin build environment into a virtual filesystem.
  */
@@ -252,6 +297,11 @@ export async function packageFFGLPlugin(vfs: IVirtualFileSystem, options: Packag
     } else {
       vfs.writeFile(`${relSrc}/${name}`, content);
     }
+  }
+
+  // 1b. Write MSL intrinsics header to generated/ (same dir as shaders.metal)
+  if (assets['msl-intrinsics.incl.h']) {
+    vfs.writeFile(`${relGen}/msl-intrinsics.incl.h`, assets['msl-intrinsics.incl.h']);
   }
 
   // 2. Generate Logic and Shader Code

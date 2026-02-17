@@ -17,8 +17,8 @@ import { chatHandler } from './llm/chat-handler';
 import { llmManager } from './llm/llm-manager';
 import { AUTO_PLAY_SCRIPT_LINES } from './constants';
 import { DEMO_SCRIPT } from './domain/mock-responses';
-import { ZipFileSystem } from './metal/virtual-fs';
-import { packageFFGLPlugin } from './metal/ffgl-packager';
+import { ZipFileSystem, ShellScriptFileSystem } from './metal/virtual-fs';
+import { packageFFGLPlugin, registerFFGLRemotes } from './metal/ffgl-packager';
 
 const LEFT_PANEL_DEFAULT = 300;
 const LEFT_PANEL_MIN = 150;
@@ -289,22 +289,38 @@ export class App extends MobxLitElement {
   }
 
   private async handleDownloadZip() {
+    const useZip = appState.local.settings.useZipExport;
     try {
-      const vfs = new ZipFileSystem();
-      await packageFFGLPlugin(vfs, { ir: appState.database.ir });
-      const zipData = await vfs.generateZip();
-      const blob = new Blob([zipData as any], { type: 'application/zip' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const fileName = (appState.database.ir.meta.name || 'NanoFFGL').replace(/\s+/g, '_') + '_Build.zip';
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+      const ir = appState.database.ir;
+      const baseName = (ir.meta.name || 'NanoFFGL').replace(/\s+/g, '_');
+
+      if (useZip) {
+        const vfs = new ZipFileSystem();
+        await packageFFGLPlugin(vfs, { ir });
+        const zipData = await vfs.generateZip();
+        this.downloadBlob(zipData, 'application/zip', `${baseName}_Build.zip`);
+      } else {
+        const buildName = (ir.meta.name || 'NanoFFGL').replace(/\s+/g, '');
+        const vfs = new ShellScriptFileSystem({ buildName });
+        registerFFGLRemotes(vfs);
+        await packageFFGLPlugin(vfs, { ir });
+        const scriptData = await vfs.generateZip();
+        this.downloadBlob(scriptData, 'application/x-sh', `${baseName}_Build.sh`);
+      }
     } catch (e) {
       console.error('Failed to package plugin:', e);
     }
+  }
+
+  private downloadBlob(data: Uint8Array, mimeType: string, fileName: string) {
+    const blob = new Blob([data as any], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
   }
 
   private handleDownloadShaderJson() {

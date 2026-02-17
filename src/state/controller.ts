@@ -293,6 +293,13 @@ export class AppController {
     this.saveSettings();
   }
 
+  public setUseZipExport(useZip: boolean) {
+    runInAction(() => {
+      appState.local.settings.useZipExport = useZip;
+    });
+    this.saveSettings();
+  }
+
   public setLLMBusy(busy: boolean) {
     runInAction(() => {
       appState.local.llmBusy = busy;

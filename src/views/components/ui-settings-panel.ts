@@ -1,6 +1,6 @@
 import './ui-button';
 import { MobxLitElement } from '../mobx-lit-element';
-import { css, html } from 'lit';
+import { css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { globalStyles } from '../../styles';
 import { appState } from '../../domain/state';
@@ -210,6 +210,15 @@ export class UiSettingsPanel extends MobxLitElement {
           </div>
           ${this.renderToggle(settings.useMockLLM, () => appController.toggleMockLLM(!settings.useMockLLM))}
         </div>
+        ${settings.devMode ? html`
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Use ZIP Export</div>
+              <div class="setting-description">Export FFGL build as ZIP instead of shell script</div>
+            </div>
+            ${this.renderToggle(!!settings.useZipExport, () => appController.setUseZipExport(!settings.useZipExport))}
+          </div>
+        ` : nothing}
       </div>
     `;
   }

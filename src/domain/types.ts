@@ -61,6 +61,7 @@ export interface AppSettings {
   chatPanelWidth?: number;
   activeWorkspaceId?: string;
   maxLLMTurns?: number;
+  useZipExport?: boolean;
 }
 
 export interface SavedInputFile {

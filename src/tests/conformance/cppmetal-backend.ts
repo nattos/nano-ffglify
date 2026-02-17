@@ -15,6 +15,8 @@ import { CppGenerator } from '../../metal/cpp-generator';
 import { MslGenerator } from '../../metal/msl-generator';
 import { makeResourceStates } from '../../runtime/resources';
 import { validateIR } from '../../ir/validator';
+// @ts-ignore: raw import for header file
+import mslIntrinsicsH from '../../metal/msl-intrinsics.incl.h?raw';
 
 function getCppMetalBuildDir(): string {
   // Use unique subdirectory for each call to avoid parallel test conflicts
@@ -82,9 +84,10 @@ export const CppMetalBackend: TestBackend = {
       // Generate MSL with explicit bindings
       const { code: mslCode } = mslGen.compileLibrary(ir, shaderFunctions.map(s => s.id), { stages, resourceBindings: bindings });
 
-      // Write MSL source
+      // Write MSL source and intrinsics header
       const mslPath = path.join(buildDir, 'shaders.metal');
       fs.writeFileSync(mslPath, mslCode);
+      fs.writeFileSync(path.join(buildDir, 'msl-intrinsics.incl.h'), mslIntrinsicsH);
       if (process.env.MSL_DEBUG === '1') {
         console.log('--- Generated MSL Code ---');
         console.log(mslCode);

@@ -14,6 +14,8 @@ import { InterpretedExecutor } from '../../interpreter/executor';
 import { TestBackend } from './types';
 import { MslGenerator } from '../../metal/msl-generator';
 import { WebGpuBackend } from './webgpu-backend';
+// @ts-ignore: raw import for header file
+import mslIntrinsicsH from '../../metal/msl-intrinsics.incl.h?raw';
 
 // Build directory for Metal GPU tests
 function getMetalBuildDir(): string {
@@ -107,8 +109,11 @@ export const MetalBackend: TestBackend = {
     }
 
     // 2. Write .metal source file
+    // The Metal GPU harness uses newLibraryWithSource: which doesn't support #include,
+    // so we inline the intrinsics header directly into the source.
+    const resolvedMslCode = mslCode.replace('#include "msl-intrinsics.incl.h"', mslIntrinsicsH);
     const sourceFile = path.join(buildDir, 'generated.metal');
-    fs.writeFileSync(sourceFile, mslCode);
+    fs.writeFileSync(sourceFile, resolvedMslCode);
 
     // 3. Build buffer definitions for command line
     // Get binding indices from generator metadata
