@@ -294,6 +294,8 @@ export async function packageFFGLPlugin(vfs: IVirtualFileSystem, options: Packag
   for (const [name, content] of Object.entries(assets)) {
     if (name.startsWith('ffgl/')) {
       vfs.writeFile(`${relSdk}/${name}`, content);
+    } else if (name === 'msl-intrinsics.incl.h') {
+      // Handled below — written to generated/ not src/
     } else {
       vfs.writeFile(`${relSrc}/${name}`, content);
     }

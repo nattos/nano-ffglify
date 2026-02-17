@@ -305,7 +305,13 @@ export class App extends MobxLitElement {
         registerFFGLRemotes(vfs);
         await packageFFGLPlugin(vfs, { ir });
         const scriptData = await vfs.generateZip();
-        this.downloadBlob(scriptData, 'application/x-sh', `${baseName}_Build.sh`);
+
+        // Wrap in a tiny ZIP to preserve the executable bit
+        const wrapperZip = new ZipFileSystem();
+        wrapperZip.writeFile(`${baseName}.sh`, scriptData);
+        wrapperZip.chmod(`${baseName}.sh`, '755');
+        const zipData = await wrapperZip.generateZip();
+        this.downloadBlob(zipData, 'application/zip', `${baseName}.zip`);
       }
     } catch (e) {
       console.error('Failed to package plugin:', e);

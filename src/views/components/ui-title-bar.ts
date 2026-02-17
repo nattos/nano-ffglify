@@ -206,7 +206,7 @@ export class UiTitleBar extends MobxLitElement {
           <div class="export-panel">
             <div class="export-section">
               <div class="section-title">FFGL Plugin</div>
-              <div class="section-desc">Native macOS plugin for Resolume, VDMX, and other VJ software. Run build.sh, then copy the .bundle to your plugins folder.</div>
+              <div class="section-desc">Native macOS plugin for Resolume, VDMX, and other VJ software. Unzip and run the .sh script, then copy the .bundle to your plugins folder.</div>
               <button class="section-btn" @click=${() => this.handleExportFFGL()}>
                 <i class="las la-download"></i> Download FFGL
               </button>

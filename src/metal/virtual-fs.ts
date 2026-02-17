@@ -121,13 +121,20 @@ export class ShellScriptFileSystem implements IVirtualFileSystem {
 
   async generateZip(): Promise<Uint8Array> {
     // Returns UTF-8 encoded shell script (not a ZIP)
-    return new TextEncoder().encode(this.generateScript());
+    return new TextEncoder().encode(await this.generateScript());
   }
 
-  private makeEofMarker(base: string, content: string): string {
-    let marker = `__${base}_EOF__`;
+  private async hashContent(content: string): Promise<string> {
+    const data = new TextEncoder().encode(content);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hash)).slice(0, 16)
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  private makeEofMarkerSync(content: string, precomputedHash: string): string {
+    let marker = precomputedHash;
     while (content.includes(marker)) {
-      marker = `__${base}_${Math.random().toString(36).slice(2, 8)}_EOF__`;
+      marker = marker + 'f';
     }
     return marker;
   }
@@ -145,11 +152,14 @@ export class ShellScriptFileSystem implements IVirtualFileSystem {
     return [...dirs].sort();
   }
 
-  private generateScript(): string {
+  private async generateScript(): Promise<string> {
     const lines: string[] = [];
 
     lines.push('#!/bin/bash');
     lines.push('set -e');
+    lines.push('');
+    // Error trap — print the failing command on error
+    lines.push('trap \'echo ""; echo "ERROR: Command failed at line $LINENO: $BASH_COMMAND"; exit 1\' ERR');
     lines.push('');
     lines.push('SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"');
     lines.push(`BUILD_NAME="${this.buildName}"`);
@@ -181,8 +191,13 @@ export class ShellScriptFileSystem implements IVirtualFileSystem {
 
     // Remote files (download or copy)
     if (this.remoteFiles.size > 0) {
-      lines.push('echo "Downloading dependencies..."');
-      for (const [vfsPath, { url, localPath }] of this.remoteFiles) {
+      const remoteEntries = [...this.remoteFiles.entries()];
+      const total = remoteEntries.length;
+      lines.push(`echo "Downloading ${total} dependencies..."`);
+      for (let i = 0; i < remoteEntries.length; i++) {
+        const [vfsPath, { url, localPath }] = remoteEntries[i];
+        const fileName = vfsPath.split('/').pop() || vfsPath;
+        lines.push(`echo "  [${i + 1}/${total}] ${fileName}"`);
         if (this.localMode) {
           const fullLocal = `${this.localBasePath}/${localPath}`;
           lines.push(`cp "${fullLocal}" "${vfsPath}"`);
@@ -193,13 +208,16 @@ export class ShellScriptFileSystem implements IVirtualFileSystem {
       lines.push('');
     }
 
-    // Inlined files (heredocs)
+    // Inlined files (heredocs with content-addressed markers)
     if (this.inlinedFiles.size > 0) {
       lines.push('echo "Writing generated code..."');
       lines.push('');
-      for (const [filePath, content] of this.inlinedFiles) {
-        const baseName = filePath.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase();
-        const marker = this.makeEofMarker(baseName, content);
+      // Pre-compute all hashes in parallel
+      const entries = [...this.inlinedFiles.entries()];
+      const hashes = await Promise.all(entries.map(([, content]) => this.hashContent(content)));
+      for (let i = 0; i < entries.length; i++) {
+        const [filePath, content] = entries[i];
+        const marker = this.makeEofMarkerSync(content, hashes[i]);
         lines.push(`cat <<'${marker}' > "${filePath}"`);
         lines.push(content);
         lines.push(marker);
@@ -215,10 +233,22 @@ export class ShellScriptFileSystem implements IVirtualFileSystem {
     }
 
     // Build step
-    lines.push('echo "Building..."');
+    lines.push('echo ""');
+    lines.push('echo "Building plugin..."');
     lines.push('./build.sh');
     lines.push('');
-    lines.push('echo "Done! Plugin built at: $BUILD_DIR/../${BUILD_NAME}.bundle"');
+    // Clean up build directory, script, and source zip on success
+    lines.push('echo "Cleaning up..."');
+    lines.push('cd "$SCRIPT_DIR"');
+    lines.push('rm -rf "$BUILD_DIR"');
+    lines.push('# Remove the .zip the script was extracted from (same name, .sh → .zip)');
+    lines.push('SCRIPT_PATH="$0"');
+    lines.push('ZIP_PATH="${SCRIPT_PATH%.sh}.zip"');
+    lines.push('[ -f "$ZIP_PATH" ] && rm -f "$ZIP_PATH"');
+    lines.push('rm -f "$SCRIPT_PATH"');
+    lines.push('');
+    lines.push('echo ""');
+    lines.push('echo "Done! Plugin built at: $SCRIPT_DIR/${BUILD_NAME}.bundle"');
 
     return lines.join('\n') + '\n';
   }

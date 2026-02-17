@@ -66,12 +66,25 @@ describe('FFGL Packager', () => {
     expect(script).toContain('shaders.metal');
     expect(script).toContain('build.sh');
 
+    // Verify error trap
+    expect(script).toContain('trap');
+    expect(script).toContain('ERROR: Command failed');
+
+    // Verify progress output
+    expect(script).toMatch(/\[\d+\/\d+\]/);
+
     // Verify build step
     expect(script).toContain('./build.sh');
 
     // Verify FFGL SDK source code is NOT inlined (only referenced by path in build.sh)
     // The actual C++ code content should not appear in the script
     expect(script).not.toContain('FreeFrame is an open-source');
+
+    // Verify msl-intrinsics is downloaded, not inlined as a heredoc
+    // It should appear in curl commands but not in cat heredocs
+    expect(script).toContain('curl -sfL');
+    expect(script).toMatch(/curl.*msl-intrinsics\.incl\.h/);
+    expect(script).not.toContain('inline float safe_div');
   });
 
   test('should use cp in local mode', async () => {
