@@ -356,9 +356,6 @@ export class UiWorkspacePanel extends MobxLitElement {
     const activeId = appController.activeWorkspaceId;
 
     return html`
-      <div class="header">
-        <ui-button @click=${() => this.handleCreate()} ?disabled=${this.busy}>New</ui-button>
-      </div>
       <div class="list">
         ${workspaces.map(ws => this.renderEntry(ws, activeId))}
       </div>

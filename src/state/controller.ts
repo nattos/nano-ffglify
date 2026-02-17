@@ -622,6 +622,12 @@ export class AppController {
     });
   }
 
+  public clearChatHistory() {
+    this.mutate('Clear chat history', 'user', (draft) => {
+      draft.chat_history = [];
+    });
+  }
+
   // --- Workspace Methods ---
 
   public async createWorkspace(name?: string): Promise<string> {

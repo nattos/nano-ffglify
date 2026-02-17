@@ -247,8 +247,12 @@ export class UiInspector extends MobxLitElement {
     }
 
     .value-display {
-      cursor: default;
+      cursor: pointer;
       user-select: none;
+      transition: background 0.1s;
+    }
+    .value-display:hover {
+      background: rgba(16, 185, 129, 0.2);
     }
 
     .value-edit {
@@ -280,17 +284,7 @@ export class UiInspector extends MobxLitElement {
       return html`<div style="padding: 1rem; color: var(--app-text-muted, #888); font-size: 0.85rem; text-align: center;">${'\u2661'} No parameters yet</div>`;
     }
 
-    const anyModified = entries.some(e =>
-      e.type === RuntimeInputType.Texture ? !!e.displayText : !this.isDefault(e)
-    );
-
     return html`
-      <div class="reset-all-row">
-        <button class="reset-all-btn ${anyModified ? '' : 'disabled'}" @click=${() => this.handleResetAll(entries)} title="Reset all parameters to defaults">
-          <ui-icon icon="la-undo" style="--icon-size: 0.7rem;"></ui-icon>
-          Reset all
-        </button>
-      </div>
       <div class="input-list">
         ${entries.map(entry => this.renderInput(entry))}
       </div>

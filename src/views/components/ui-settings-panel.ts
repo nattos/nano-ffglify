@@ -157,26 +157,7 @@ export class UiSettingsPanel extends MobxLitElement {
 
     return html`
       <div class="section">
-        <h3>General</h3>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">Dev Mode</div>
-            <div class="setting-description">Show advanced tabs (IR, Raw Code, State, Script, LLM Logs)</div>
-          </div>
-          ${this.renderToggle(settings.devMode, () => appController.setDevMode(!settings.devMode))}
-        </div>
-      </div>
-
-      <div class="section">
         <h3>LLM</h3>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">Use Mock LLM</div>
-            <div class="setting-description">Use pre-recorded responses instead of calling the API</div>
-          </div>
-          ${this.renderToggle(settings.useMockLLM, () => appController.toggleMockLLM(!settings.useMockLLM))}
-        </div>
-
         <div>
           <div class="setting-label">API Key</div>
           <div class="setting-description"><a href="https://ai.google.dev/gemini-api/docs/api-key" target="_blank">Google Generative AI API key</a></div>
@@ -210,6 +191,24 @@ export class UiSettingsPanel extends MobxLitElement {
             style="width: 60px; padding: 0.3rem; background: #222; color: var(--app-text-main); border: 1px solid var(--app-border); border-radius: 4px; font-family: monospace; font-size: 0.85rem; text-align: center;"
             @change=${(e: any) => appController.setMaxLLMTurns(parseInt(e.target.value) || 25)}
           />
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Debug</h3>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Dev Mode</div>
+            <div class="setting-description">Show advanced tabs (IR, Raw Code, State, Script, LLM Logs)</div>
+          </div>
+          ${this.renderToggle(settings.devMode, () => appController.setDevMode(!settings.devMode))}
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Use Mock LLM</div>
+            <div class="setting-description">Use pre-recorded responses instead of calling the API</div>
+          </div>
+          ${this.renderToggle(settings.useMockLLM, () => appController.toggleMockLLM(!settings.useMockLLM))}
         </div>
       </div>
     `;

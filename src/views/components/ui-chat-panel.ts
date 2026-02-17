@@ -18,6 +18,8 @@ export class UiChatPanel extends MobxLitElement {
   @query('.file-input') private fileInput!: HTMLInputElement;
   @state() private rewindConfirmId: string | null = null;
   @state() private dragOver = false;
+  @state() private menuOpen = false;
+  @state() private confirmingClear = false;
 
   private wasPinned = true;
 
@@ -46,6 +48,58 @@ export class UiChatPanel extends MobxLitElement {
         text-transform: uppercase;
         letter-spacing: 0.05em;
         color: var(--app-text-muted);
+      }
+
+      .menu-anchor {
+        margin-left: auto;
+        position: relative;
+      }
+      .menu-btn {
+        all: unset;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 3px;
+        color: var(--app-text-muted);
+        --icon-size: 14px;
+      }
+      .menu-btn:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--app-text-main);
+      }
+      .dropdown {
+        position: absolute;
+        right: 0;
+        top: 100%;
+        margin-top: 2px;
+        background: #2a2a2a;
+        border: 1px solid #444;
+        border-radius: 4px;
+        min-width: 140px;
+        z-index: 20;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        overflow: hidden;
+      }
+      .dropdown-item {
+        all: unset;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        width: 100%;
+        padding: 0.4rem 0.6rem;
+        font-size: 0.75rem;
+        color: #e0e0e0;
+        cursor: pointer;
+        box-sizing: border-box;
+      }
+      .dropdown-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .dropdown-item.danger {
+        color: #f87171;
       }
 
       .chat-history {
@@ -201,7 +255,7 @@ export class UiChatPanel extends MobxLitElement {
 
       .chat-input {
         flex: 1;
-        padding: 0.5rem;
+        padding: 0.4rem 0.5rem;
         background: #2a2a2a;
         color: #e0e0e0;
         border: 1px solid #444;
@@ -213,6 +267,7 @@ export class UiChatPanel extends MobxLitElement {
         max-height: 150px;
         line-height: 1.4;
         box-sizing: border-box;
+        height: calc(0.85rem * 1.4 + 0.8rem + 1px);
       }
 
       .chat-input:focus {
@@ -261,6 +316,33 @@ export class UiChatPanel extends MobxLitElement {
     this.rewindConfirmId = null;
   }
 
+  private toggleMenu() {
+    this.menuOpen = !this.menuOpen;
+    this.confirmingClear = false;
+    if (this.menuOpen) {
+      // Close on outside click
+      const close = (e: MouseEvent) => {
+        const path = e.composedPath();
+        if (!path.some(el => (el as HTMLElement)?.classList?.contains('menu-anchor'))) {
+          this.menuOpen = false;
+          this.confirmingClear = false;
+          document.removeEventListener('click', close, true);
+        }
+      };
+      requestAnimationFrame(() => document.addEventListener('click', close, true));
+    }
+  }
+
+  private handleClearHistory() {
+    if (!this.confirmingClear) {
+      this.confirmingClear = true;
+      return;
+    }
+    appController.clearChatHistory();
+    this.menuOpen = false;
+    this.confirmingClear = false;
+  }
+
   private async handleSend() {
     const text = appState.local.draftChat;
     const images = [...appState.local.draftImages];
@@ -268,6 +350,8 @@ export class UiChatPanel extends MobxLitElement {
     appController.setDraftChat('');
     appController.clearDraftImages();
     this.autoResizeTextarea();
+    // Re-focus after clearing so the user can keep typing
+    requestAnimationFrame(() => this.chatInput?.focus());
     await chatHandler.handleUserMessage(text, images.length ? images : undefined);
   }
 
@@ -291,8 +375,8 @@ export class UiChatPanel extends MobxLitElement {
   private autoResizeTextarea() {
     const ta = this.chatInput;
     if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = ta.scrollHeight + 'px';
+    ta.style.height = '';
+    ta.style.height = Math.max(ta.scrollHeight, ta.offsetHeight) + 'px';
   }
 
   private handleUploadClick() {
@@ -371,6 +455,18 @@ export class UiChatPanel extends MobxLitElement {
 
       <div class="header">
         <span class="header-title">Chat</span>
+        <div class="menu-anchor">
+          <button class="menu-btn" @click=${() => this.toggleMenu()} title="Options">
+            <ui-icon icon="la-ellipsis-v"></ui-icon>
+          </button>
+          ${this.menuOpen ? html`
+            <div class="dropdown">
+              <button class="dropdown-item ${this.confirmingClear ? 'danger' : ''}" @click=${() => this.handleClearHistory()}>
+                ${this.confirmingClear ? 'Confirm clear?' : 'Clear history'}
+              </button>
+            </div>
+          ` : nothing}
+        </div>
       </div>
 
       <div class="chat-history"

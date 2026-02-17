@@ -1,4 +1,5 @@
 import './ui-button';
+import './ui-icon';
 import './ui-ir-widget';
 import './ui-inspector';
 import './ui-settings-panel';
@@ -13,6 +14,7 @@ import { DEMO_SCRIPT } from '../../domain/mock-responses';
 import { ALL_EXAMPLES } from '../../domain/example-ir';
 import { runScriptDebug } from '../../debug/script-runner';
 import { LLMLogEntry } from '../../domain/types';
+import { RuntimeInputType } from '../../runtime/runtime-manager';
 import { runInAction } from 'mobx';
 
 const TAB_LABELS: Record<string, string> = {
@@ -56,6 +58,33 @@ export class UiLeftPanel extends MobxLitElement {
         text-transform: uppercase;
         letter-spacing: 0.05em;
         color: var(--app-text-muted);
+      }
+
+      .header-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+      }
+      .header-action-btn {
+        all: unset;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.65rem;
+        font-family: inherit;
+        color: var(--app-text-muted);
+        padding: 0.15rem 0.35rem;
+        border-radius: 3px;
+      }
+      .header-action-btn:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--app-text-main);
+      }
+      .header-action-btn.disabled {
+        opacity: 0.3;
+        pointer-events: none;
       }
 
       .panel-body {
@@ -148,6 +177,33 @@ export class UiLeftPanel extends MobxLitElement {
     }, { needsCompile: true });
   }
 
+  private handleResetAll() {
+    const runtime = appController.runtime;
+    if (!runtime) return;
+    for (const entry of runtime.inputEntries.values()) {
+      if (entry.type === RuntimeInputType.Texture) {
+        if (entry.displayText) {
+          runtime.setTextureSource(entry.id, undefined as any);
+        }
+      } else {
+        runtime.setInput(entry.id, entry.defaultValue);
+      }
+    }
+  }
+
+  private get anyInputModified(): boolean {
+    const runtime = appController.runtime;
+    if (!runtime) return false;
+    for (const entry of runtime.inputEntries.values()) {
+      if (entry.type === RuntimeInputType.Texture) {
+        if (entry.displayText) return true;
+      } else if (entry.currentValue !== entry.defaultValue) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   render() {
     const { activeTab } = appState.local.settings;
     const title = TAB_LABELS[activeTab] ?? activeTab;
@@ -155,6 +211,20 @@ export class UiLeftPanel extends MobxLitElement {
     return html`
       <div class="panel-header">
         <span class="panel-title">${title}</span>
+        <div class="header-actions">
+          ${activeTab === 'workspaces' ? html`
+            <button class="header-action-btn" @click=${() => appController.createWorkspace().then(id => appController.switchWorkspace(id))}>
+              <ui-icon icon="la-plus" style="--icon-size: 0.65rem;"></ui-icon>
+              New
+            </button>
+          ` : nothing}
+          ${activeTab === 'dashboard' ? html`
+            <button class="header-action-btn ${this.anyInputModified ? '' : 'disabled'}" @click=${() => this.handleResetAll()} title="Reset all parameters to defaults">
+              <ui-icon icon="la-undo" style="--icon-size: 0.65rem;"></ui-icon>
+              Reset all
+            </button>
+          ` : nothing}
+        </div>
       </div>
       <div class="panel-body">
         ${activeTab === 'workspaces' ? html`<ui-workspace-panel></ui-workspace-panel>` : nothing}
