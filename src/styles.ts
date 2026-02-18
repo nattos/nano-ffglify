@@ -52,6 +52,7 @@ export const globalStyles = [
 
     --font-serif: "Merriweather", "Georgia", serif;
     --font-sans: "Inter", "Helvetica Neue", sans-serif;
+    --font-ui: monospace;
 
     /* Legacy mapping */
     --app-color1: var(--app-bg);
@@ -62,6 +63,28 @@ export const globalStyles = [
     background-color: var(--app-bg);
     color: var(--app-text-main);
     font-family: var(--font-sans);
+  }
+
+  /* Action buttons */
+  .action-btn {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.65rem;
+    font-family: var(--font-ui, monospace);
+    color: var(--app-text-muted);
+    padding: 0.15rem 0.35rem;
+    border-radius: 3px;
+  }
+  .action-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--app-text-main);
+  }
+  .action-btn.disabled {
+    opacity: 0.3;
+    pointer-events: none;
   }
 
   /* Utility classes */

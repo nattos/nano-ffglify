@@ -66,26 +66,7 @@ export class UiLeftPanel extends MobxLitElement {
         align-items: center;
         gap: 0.25rem;
       }
-      .header-action-btn {
-        all: unset;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-        font-size: 0.65rem;
-        font-family: inherit;
-        color: var(--app-text-muted);
-        padding: 0.15rem 0.35rem;
-        border-radius: 3px;
-      }
-      .header-action-btn:hover {
-        background: rgba(255, 255, 255, 0.08);
-        color: var(--app-text-main);
-      }
-      .header-action-btn.disabled {
-        opacity: 0.3;
-        pointer-events: none;
-      }
+
 
       .panel-body {
         flex: 1;
@@ -181,6 +162,7 @@ export class UiLeftPanel extends MobxLitElement {
     const runtime = appController.runtime;
     if (!runtime) return;
     for (const entry of runtime.inputEntries.values()) {
+      if (entry.isTuningParam) continue;
       if (entry.type === RuntimeInputType.Texture) {
         if (entry.displayText) {
           runtime.setTextureSource(entry.id, undefined as any);
@@ -195,6 +177,7 @@ export class UiLeftPanel extends MobxLitElement {
     const runtime = appController.runtime;
     if (!runtime) return false;
     for (const entry of runtime.inputEntries.values()) {
+      if (entry.isTuningParam) continue;
       if (entry.type === RuntimeInputType.Texture) {
         if (entry.displayText) return true;
       } else if (entry.currentValue !== entry.defaultValue) {
@@ -213,13 +196,13 @@ export class UiLeftPanel extends MobxLitElement {
         <span class="panel-title">${title}</span>
         <div class="header-actions">
           ${activeTab === 'workspaces' ? html`
-            <button class="header-action-btn" @click=${() => appController.createWorkspace().then(id => appController.switchWorkspace(id))}>
+            <button class="action-btn" @click=${() => appController.createWorkspace().then(id => appController.switchWorkspace(id))}>
               <ui-icon icon="la-plus" style="--icon-size: 0.65rem;"></ui-icon>
               New
             </button>
           ` : nothing}
           ${activeTab === 'dashboard' ? html`
-            <button class="header-action-btn ${this.anyInputModified ? '' : 'disabled'}" @click=${() => this.handleResetAll()} title="Reset all parameters to defaults">
+            <button class="action-btn ${this.anyInputModified ? '' : 'disabled'}" @click=${() => this.handleResetAll()} title="Reset all parameters to defaults">
               <ui-icon icon="la-undo" style="--icon-size: 0.65rem;"></ui-icon>
               Reset all
             </button>

@@ -1,5 +1,6 @@
 import './ui-icon';
-import { html, css, nothing } from 'lit';
+import { html, css, nothing, CSSResultGroup } from 'lit';
+import { globalStyles } from '../../styles';
 import { customElement, property, state } from 'lit/decorators.js';
 import { MobxLitElement } from '../mobx-lit-element';
 import { RuntimeProxy, RuntimeInputEntry, RuntimeInputType } from '../../runtime/runtime-proxy';
@@ -12,21 +13,22 @@ export class UiInspector extends MobxLitElement {
   @state() private draggingId: string | null = null;
   @state() private editingValueId: string | null = null;
 
-  static readonly styles = css`
+  static readonly styles: CSSResultGroup = [
+    ...globalStyles,
+    css`
     :host {
       display: flex;
       flex-direction: column;
       height: 100%;
       overflow-y: auto;
       color: #ccc;
-      font-family: var(--font-sans, sans-serif);
       font-size: 0.85rem;
     }
 
     .input-list {
       display: flex;
       flex-direction: column;
-      padding: 0.5rem;
+      padding: 0.5rem 0.5rem 50vh;
       gap: 1rem;
     }
 
@@ -162,7 +164,6 @@ export class UiInspector extends MobxLitElement {
     /* Vector/Color Row */
     .vector-row {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
         gap: 0.25rem;
     }
 
@@ -188,10 +189,13 @@ export class UiInspector extends MobxLitElement {
     .section-heading {
       color: #777;
       font-size: 0.65rem;
+      padding: 0.3rem 0 0 0;
+    }
+
+    .section-heading-label {
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      padding: 0.3rem 0 0 0;
     }
 
     .reset-all-row {
@@ -225,6 +229,7 @@ export class UiInspector extends MobxLitElement {
       cursor: default;
       pointer-events: none;
     }
+
 
     .reset-btn,
     .set-default-btn {
@@ -275,7 +280,7 @@ export class UiInspector extends MobxLitElement {
       width: 5em;
       outline: none;
     }
-  `;
+  `];
 
   updated(changedProperties: Map<string, any>) {
     if (changedProperties.has('editingValueId') && this.editingValueId) {
@@ -300,7 +305,21 @@ export class UiInspector extends MobxLitElement {
       <div class="input-list">
         ${params.map(entry => this.renderInput(entry))}
         ${tuning.length > 0 ? html`
-          <div class="section-heading">Tuning</div>
+          <div class="section-heading" style="display:flex;justify-content:space-between;align-items:center;">
+            <span class="section-heading-label">Tuning</span>
+            <span style="display:flex;gap:0.25rem;">
+              <button class="action-btn ${tuning.some(e => !this.isDefault(e)) ? '' : 'disabled'}"
+                @click=${() => this.handleApplyAllTuning(tuning)}>
+                <ui-icon icon="la-thumbtack" style="--icon-size: 0.65rem;"></ui-icon>
+                Apply All
+              </button>
+              <button class="action-btn ${tuning.some(e => !this.isDefault(e)) ? '' : 'disabled'}"
+                @click=${() => this.handleResetAll(tuning)}>
+                <ui-icon icon="la-undo" style="--icon-size: 0.65rem;"></ui-icon>
+                Reset All
+              </button>
+            </span>
+          </div>
           ${tuning.map(entry => this.renderInput(entry))}
         ` : nothing}
       </div>
@@ -316,6 +335,10 @@ export class UiInspector extends MobxLitElement {
         return this.renderBool(entry);
       case RuntimeInputType.Texture:
         return this.renderTexture(entry);
+      case RuntimeInputType.Float2:
+        return this.renderVector(entry, 2);
+      case RuntimeInputType.Float3:
+        return this.renderVector(entry, 3);
       case RuntimeInputType.Float4:
         return this.renderVector(entry, 4);
       default:
@@ -443,7 +466,7 @@ export class UiInspector extends MobxLitElement {
                 </button>
               </span>
             </div>
-            <div class="vector-row">
+            <div class="vector-row" style="grid-template-columns: repeat(${size}, 1fr)">
                 ${[...Array(size)].map((_, i) => html`
                     <input
                         type="number"
@@ -513,13 +536,27 @@ export class UiInspector extends MobxLitElement {
     const serialized = Array.isArray(value) ? [...value] : value;
     appController.mutate('Set input default', 'user', (draft) => {
       const inp = draft.ir.inputs?.find(i => i.id === entry.id)
-               ?? draft.ir.tuningParams?.find(i => i.id === entry.id);
+        ?? draft.ir.tuningParams?.find(i => i.id === entry.id);
       if (inp) {
         inp.default = serialized;
       }
     });
     // Update the runtime entry's defaultValue so the UI reflects the change immediately
     entry.defaultValue = serialized;
+  }
+
+  private handleApplyAllTuning(entries: RuntimeInputEntry[]) {
+    appController.mutate('Apply all tuning defaults', 'user', (draft) => {
+      for (const entry of entries) {
+        const inp = draft.ir.tuningParams?.find(i => i.id === entry.id);
+        if (inp) {
+          inp.default = Array.isArray(entry.currentValue) ? [...entry.currentValue] : entry.currentValue;
+        }
+      }
+    });
+    for (const entry of entries) {
+      entry.defaultValue = Array.isArray(entry.currentValue) ? [...entry.currentValue] : entry.currentValue;
+    }
   }
 
   private handleUpdate(id: string, value: any) {

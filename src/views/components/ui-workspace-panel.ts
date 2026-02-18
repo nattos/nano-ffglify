@@ -275,7 +275,7 @@ export class UiWorkspacePanel extends MobxLitElement {
         display: flex;
         flex-direction: column;
         gap: 2px;
-        padding: 0 0.25rem;
+        padding: 0 0.25rem 50vh;
       }
 
       .example-entry {

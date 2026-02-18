@@ -19,7 +19,7 @@ export class UiSettingsPanel extends MobxLitElement {
       :host {
         display: flex;
         flex-direction: column;
-        padding: 0.5rem;
+        padding: 0.5rem 0.5rem 50vh;
         overflow-y: auto;
         gap: 1.5rem;
         color: var(--app-text-main);
