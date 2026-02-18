@@ -227,10 +227,16 @@ require('./intrinsics.js');
               inputBinding: 1,
               nodeTypes: fsNodeTypes as any
             });
+            // Merge vertex + fragment metadata so bind group includes all resources from both stages
+            const mergedMetadata: CompilationMetadata = {
+              ...vsRes.metadata,
+              resourceBindings: new Map([...vsRes.metadata.resourceBindings, ...fsRes.metadata.resourceBindings]),
+              resourceTypes: new Map([...vsRes.metadata.resourceTypes, ...fsRes.metadata.resourceTypes]),
+            };
             renderPipelines.set(key, {
               vsCode: WgslGenerator.resolveImports(vsRes),
               fsCode: WgslGenerator.resolveImports(fsRes),
-              metadata: vsRes.metadata,
+              metadata: mergedMetadata,
               vertexId: n['vertex'],
               pipelineDef: n['pipeline']
             });
