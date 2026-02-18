@@ -552,7 +552,7 @@ require('./intrinsics.js');
       const bufferId = node['buffer'];
       const idx = this.resolveArg(node, 'index', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
       const val = this.resolveArg(node, 'value', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
-      lines.push(`${indent}ctx.resources.get('${bufferId}').data[${idx}] = ${val};`);
+      lines.push(`${indent}{ const _s = ctx.resources.get('${bufferId}'); _s.data[${idx}] = ${val}; if (_s.flags) _s.flags.cpuDirty = true; }`);
     }
     else if (node.op === 'atomic_store') {
       const counterId = node['counter'];

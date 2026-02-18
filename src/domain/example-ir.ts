@@ -1694,9 +1694,9 @@ export const SIDECHANNEL_CARDS_SHADER: IRDocument = {
     {
       id: 'card_params',
       type: 'buffer',
-      comment: 'CPU→GPU parameter passing: [0]=cos_spin. Vertex shaders cannot access CPU builtins like time directly, so the CPU pre-computes and stores here.',
+      comment: 'CPU→GPU parameter passing: [0]=cos_spin, [1..4]=x_position per card slot. Vertex shaders cannot access CPU builtins like time directly, so the CPU pre-computes and stores here.',
       dataType: 'float',
-      size: { mode: 'fixed', value: 1 },
+      size: { mode: 'fixed', value: 5 },
       persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
     }
   ],
@@ -1708,14 +1708,75 @@ export const SIDECHANNEL_CARDS_SHADER: IRDocument = {
       inputs: [],
       outputs: [],
       localVars: [],
-      comment: 'CPU entry: pre-compute spin, dispatch background blit, then draw 4 card quads (24 vertices). Unbound sidechannel textures produce transparent quads via alpha blending.',
+      comment: 'CPU entry: pre-compute spin + dynamic card positions, dispatch background blit, then draw card quads. Cards are centered based on how many sidechannels are bound.',
       nodes: [
-        { id: 'c_spin', op: 'comment', comment: 'Pre-compute cos(time * spin_speed) for the vertex shader (builtins like time are only available on the CPU side).' },
+        { id: 'c_spin', op: 'comment', comment: 'Pre-compute cos(time * spin_speed) for the vertex shader.' },
         { id: 'time', op: 'builtin_get', name: 'time' },
         { id: 'v_spin', op: 'var_get', var: 'spin_speed' },
         { id: 'spin_angle', op: 'math_mul', a: 'time', b: 'v_spin' },
         { id: 'cos_spin', op: 'math_cos', val: 'spin_angle' },
-        { id: 'store_spin', op: 'buffer_store', buffer: 'card_params', index: 0, value: 'cos_spin', exec_out: 'dispatch_blit' },
+        { id: 'store_spin', op: 'buffer_store', buffer: 'card_params', index: 0, value: 'cos_spin', exec_out: 'store_pos0' },
+
+        { id: 'c_bound', op: 'comment', comment: 'Count bound sidechannel textures (branchless: cast bool to float).' },
+        { id: 'b1', op: 'resource_is_bound', resource: 'in_sc1' },
+        { id: 'b2', op: 'resource_is_bound', resource: 'in_sc2' },
+        { id: 'b3', op: 'resource_is_bound', resource: 'in_sc3' },
+        { id: 'b4', op: 'resource_is_bound', resource: 'in_sc4' },
+        { id: 'f1', op: 'static_cast_float', val: 'b1' },
+        { id: 'f2', op: 'static_cast_float', val: 'b2' },
+        { id: 'f3', op: 'static_cast_float', val: 'b3' },
+        { id: 'f4', op: 'static_cast_float', val: 'b4' },
+        { id: 'count12', op: 'math_add', a: 'f1', b: 'f2' },
+        { id: 'count123', op: 'math_add', a: 'count12', b: 'f3' },
+        { id: 'count_all', op: 'math_add', a: 'count123', b: 'f4' },
+
+        { id: 'c_positions', op: 'comment', comment: 'Dynamic centering: spacing=0.4, start_x = -0.2*(count-1). Cumulative index tracks position of each card in the compacted row.' },
+        { id: 'spacing', op: 'math_add', a: 0.4, b: 0, comment: 'Card spacing in clip space.' },
+        { id: 'count_m1', op: 'math_sub', a: 'count_all', b: 1.0 },
+        { id: 'half_span', op: 'math_mul', a: 'count_m1', b: 0.2 },
+        { id: 'start_x', op: 'math_mul', a: 'half_span', b: -1.0 },
+
+        { id: 'c_cum', op: 'comment', comment: 'Cumulative indices: cum0=0, cum1=f1, cum2=f1+f2, cum3=f1+f2+f3. Position = (start_x + cumN * spacing) * boundN, or 99 if unbound (offscreen).' },
+        { id: 'cum0', op: 'math_add', a: 0, b: 0 },
+        { id: 'cum1', op: 'math_add', a: 'cum0', b: 'f1' },
+        { id: 'cum2', op: 'math_add', a: 'cum1', b: 'f2' },
+        { id: 'cum3', op: 'math_add', a: 'cum2', b: 'f3' },
+
+        { id: 'off0', op: 'math_mul', a: 'cum0', b: 'spacing' },
+        { id: 'off1', op: 'math_mul', a: 'cum1', b: 'spacing' },
+        { id: 'off2', op: 'math_mul', a: 'cum2', b: 'spacing' },
+        { id: 'off3', op: 'math_mul', a: 'cum3', b: 'spacing' },
+
+        { id: 'raw_x0', op: 'math_add', a: 'start_x', b: 'off0' },
+        { id: 'raw_x1', op: 'math_add', a: 'start_x', b: 'off1' },
+        { id: 'raw_x2', op: 'math_add', a: 'start_x', b: 'off2' },
+        { id: 'raw_x3', op: 'math_add', a: 'start_x', b: 'off3' },
+
+        { id: 'c_hide', op: 'comment', comment: 'Move unbound cards offscreen (x=99) so degenerate triangles are not needed.' },
+        { id: 'pos0_bound', op: 'math_mul', a: 'raw_x0', b: 'f1' },
+        { id: 'pos0_hide', op: 'math_sub', a: 1.0, b: 'f1' },
+        { id: 'pos0_offscreen', op: 'math_mul', a: 'pos0_hide', b: 99.0 },
+        { id: 'pos0', op: 'math_add', a: 'pos0_bound', b: 'pos0_offscreen' },
+
+        { id: 'pos1_bound', op: 'math_mul', a: 'raw_x1', b: 'f2' },
+        { id: 'pos1_hide', op: 'math_sub', a: 1.0, b: 'f2' },
+        { id: 'pos1_offscreen', op: 'math_mul', a: 'pos1_hide', b: 99.0 },
+        { id: 'pos1', op: 'math_add', a: 'pos1_bound', b: 'pos1_offscreen' },
+
+        { id: 'pos2_bound', op: 'math_mul', a: 'raw_x2', b: 'f3' },
+        { id: 'pos2_hide', op: 'math_sub', a: 1.0, b: 'f3' },
+        { id: 'pos2_offscreen', op: 'math_mul', a: 'pos2_hide', b: 99.0 },
+        { id: 'pos2', op: 'math_add', a: 'pos2_bound', b: 'pos2_offscreen' },
+
+        { id: 'pos3_bound', op: 'math_mul', a: 'raw_x3', b: 'f4' },
+        { id: 'pos3_hide', op: 'math_sub', a: 1.0, b: 'f4' },
+        { id: 'pos3_offscreen', op: 'math_mul', a: 'pos3_hide', b: 99.0 },
+        { id: 'pos3', op: 'math_add', a: 'pos3_bound', b: 'pos3_offscreen' },
+
+        { id: 'store_pos0', op: 'buffer_store', buffer: 'card_params', index: 1, value: 'pos0', exec_out: 'store_pos1' },
+        { id: 'store_pos1', op: 'buffer_store', buffer: 'card_params', index: 2, value: 'pos1', exec_out: 'store_pos2' },
+        { id: 'store_pos2', op: 'buffer_store', buffer: 'card_params', index: 3, value: 'pos2', exec_out: 'store_pos3' },
+        { id: 'store_pos3', op: 'buffer_store', buffer: 'card_params', index: 4, value: 'pos3', exec_out: 'dispatch_blit' },
 
         { id: 'size', op: 'resource_get_size', resource: 'output_tex' },
         { id: 'dispatch_blit', op: 'cmd_dispatch', func: 'fn_blit_gpu', threads: 'size', exec_out: 'draw_cards' },
@@ -1729,6 +1790,7 @@ export const SIDECHANNEL_CARDS_SHADER: IRDocument = {
           fragment: 'fn_card_fragment',
           count: 'vert_count',
           pipeline: {
+            loadOp: 'load',
             topology: 'triangle-list',
             blend: {
               color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
@@ -1755,7 +1817,7 @@ export const SIDECHANNEL_CARDS_SHADER: IRDocument = {
     {
       id: 'fn_card_vertex',
       type: 'shader',
-      comment: 'Vertex shader: generates 4 card quads from vertex_index. Each quad is positioned at a fixed horizontal slot. Y-axis spin effect via pre-computed cos(time * spin_speed) read from card_params buffer.',
+      comment: 'Vertex shader: generates 4 card quads from vertex_index. Position is read from card_params buffer (CPU pre-computes dynamic centering). Y-axis spin effect via cos_spin also from buffer.',
       inputs: [
         { id: 'v_idx', type: 'int' as DataType, builtin: 'vertex_index' as BuiltinName }
       ],
@@ -1794,10 +1856,10 @@ export const SIDECHANNEL_CARDS_SHADER: IRDocument = {
         { id: 'aspect', op: 'math_div', a: 'os_x', b: 'os_y' },
         { id: 'inv_aspect', op: 'math_div', a: 1.0, b: 'aspect' },
 
-        { id: 'c_position', op: 'comment', comment: 'Fixed horizontal slots for 4 cards, evenly distributed.' },
-        { id: 'x_pos_arr', op: 'array_construct', values: [-0.6, -0.2, 0.2, 0.6] },
-        { id: 'pidx_i', op: 'static_cast_int', val: 'pidx_f' },
-        { id: 'base_x', op: 'array_extract', array: 'x_pos_arr', index: 'pidx_i' },
+        { id: 'c_position', op: 'comment', comment: 'Read dynamic X position from card_params buffer (CPU pre-computes centered positions). Index = quad_id + 1.' },
+        { id: 'buf_idx_f', op: 'math_add', a: 'pidx_f', b: 1.0 },
+        { id: 'buf_idx', op: 'static_cast_int', val: 'buf_idx_f' },
+        { id: 'base_x', op: 'buffer_load', buffer: 'card_params', index: 'buf_idx' },
 
         { id: 'c_spin', op: 'comment', comment: 'Read pre-computed cos(time * spin_speed) from CPU-side buffer.' },
         { id: 'cos_spin', op: 'buffer_load', buffer: 'card_params', index: 0 },
