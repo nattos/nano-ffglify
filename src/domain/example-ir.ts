@@ -1652,6 +1652,209 @@ export const TEST_CARD_SHADER: IRDocument = {
   ],
 };
 
+export const SIDECHANNEL_CARDS_SHADER: IRDocument = {
+  version: '1.0.0',
+  meta: { name: 'Sidechannel Cards' },
+  comment: 'Demonstrates sidechannel texture inputs. Blits a background texture, then renders up to 4 spinning card quads from optional sidechannel inputs. Unbound sidechannels sample as transparent black, so alpha blending makes them invisible.',
+  entryPoint: 'fn_main_cpu',
+
+  inputs: [
+    { id: 'in_bg', type: 'texture2d', comment: 'Background texture input (blitted to output).' },
+    { id: 'in_sc1', type: 'texture2d', sidechannel: true, comment: 'Optional sidechannel texture 1.' },
+    { id: 'in_sc2', type: 'texture2d', sidechannel: true, comment: 'Optional sidechannel texture 2.' },
+    { id: 'in_sc3', type: 'texture2d', sidechannel: true, comment: 'Optional sidechannel texture 3.' },
+    { id: 'in_sc4', type: 'texture2d', sidechannel: true, comment: 'Optional sidechannel texture 4.' },
+  ],
+
+  tuningParams: [
+    { id: 'spin_speed', type: 'float', default: 1.0, ui: { min: 0, max: 5 }, comment: 'Card Y-axis rotation speed.' },
+    { id: 'card_height', type: 'float', default: 0.6, ui: { min: 0.1, max: 1.0 }, comment: 'Card height in clip space (full range -1..1).' },
+  ],
+
+  structs: [
+    {
+      id: 'CardVarying',
+      members: [
+        { name: 'pos', type: 'float4' as DataType, builtin: 'position' as BuiltinName },
+        { name: 'uv', type: 'float2' as DataType, location: 0 },
+        { name: 'quad_id', type: 'float' as DataType, location: 1 }
+      ]
+    }
+  ],
+
+  resources: [
+    {
+      id: 'output_tex',
+      type: 'texture2d',
+      format: TextureFormat.RGBA8,
+      size: { mode: 'viewport' },
+      isOutput: true,
+      persistence: { retain: false, clearOnResize: true, clearEveryFrame: true, cpuAccess: false }
+    },
+    {
+      id: 'card_params',
+      type: 'buffer',
+      comment: 'CPU→GPU parameter passing: [0]=cos_spin. Vertex shaders cannot access CPU builtins like time directly, so the CPU pre-computes and stores here.',
+      dataType: 'float',
+      size: { mode: 'fixed', value: 1 },
+      persistence: { retain: false, clearEveryFrame: false, clearOnResize: false, cpuAccess: false }
+    }
+  ],
+
+  functions: [
+    {
+      id: 'fn_main_cpu',
+      type: 'cpu',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      comment: 'CPU entry: pre-compute spin, dispatch background blit, then draw 4 card quads (24 vertices). Unbound sidechannel textures produce transparent quads via alpha blending.',
+      nodes: [
+        { id: 'c_spin', op: 'comment', comment: 'Pre-compute cos(time * spin_speed) for the vertex shader (builtins like time are only available on the CPU side).' },
+        { id: 'time', op: 'builtin_get', name: 'time' },
+        { id: 'v_spin', op: 'var_get', var: 'spin_speed' },
+        { id: 'spin_angle', op: 'math_mul', a: 'time', b: 'v_spin' },
+        { id: 'cos_spin', op: 'math_cos', val: 'spin_angle' },
+        { id: 'store_spin', op: 'buffer_store', buffer: 'card_params', index: 0, value: 'cos_spin', exec_out: 'dispatch_blit' },
+
+        { id: 'size', op: 'resource_get_size', resource: 'output_tex' },
+        { id: 'dispatch_blit', op: 'cmd_dispatch', func: 'fn_blit_gpu', threads: 'size', exec_out: 'draw_cards' },
+        { id: 'vert_count_f', op: 'math_mul', a: 4, b: 6, comment: '4 quads × 6 vertices per quad.' },
+        { id: 'vert_count', op: 'static_cast_int', val: 'vert_count_f' },
+        {
+          id: 'draw_cards',
+          op: 'cmd_draw',
+          target: 'output_tex',
+          vertex: 'fn_card_vertex',
+          fragment: 'fn_card_fragment',
+          count: 'vert_count',
+          pipeline: {
+            topology: 'triangle-list',
+            blend: {
+              color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+            }
+          }
+        }
+      ]
+    },
+    {
+      id: 'fn_blit_gpu',
+      type: 'shader',
+      comment: 'Compute kernel: sample background texture at normalized UV, write to output.',
+      inputs: [],
+      outputs: [],
+      localVars: [],
+      nodes: [
+        { id: 'gid', op: 'builtin_get', name: 'global_invocation_id' },
+        { id: 'nuv', op: 'builtin_get', name: 'normalized_global_invocation_id' },
+        { id: 'color', op: 'texture_sample', tex: 'in_bg', coords: 'nuv.xy' },
+        { id: 'store', op: 'texture_store', tex: 'output_tex', coords: 'gid.xy', value: 'color' }
+      ]
+    },
+    {
+      id: 'fn_card_vertex',
+      type: 'shader',
+      comment: 'Vertex shader: generates 4 card quads from vertex_index. Each quad is positioned at a fixed horizontal slot. Y-axis spin effect via pre-computed cos(time * spin_speed) read from card_params buffer.',
+      inputs: [
+        { id: 'v_idx', type: 'int' as DataType, builtin: 'vertex_index' as BuiltinName }
+      ],
+      outputs: [
+        { id: 'out', type: 'CardVarying' as DataType }
+      ],
+      localVars: [],
+      nodes: [
+        { id: 'vi', op: 'var_get', var: 'v_idx' },
+        { id: 'vi_f', op: 'static_cast_float', val: 'vi' },
+
+        { id: 'c_decompose', op: 'comment', comment: 'Decompose vertex_index: quad_id = floor(vi/6), corner = vi % 6.' },
+        { id: 'pidx_raw', op: 'math_div', a: 'vi_f', b: 6 },
+        { id: 'pidx_f', op: 'math_floor', val: 'pidx_raw' },
+        { id: 'corner_f', op: 'math_mod', a: 'vi_f', b: 6 },
+        { id: 'corner_i', op: 'static_cast_int', val: 'corner_f' },
+
+        { id: 'c_corners', op: 'comment', comment: 'Quad corner offsets: two triangles (6 vertices) spanning [-1,1].' },
+        { id: 'quad_x', op: 'array_construct', values: [-1, 1, -1, -1, 1, 1] },
+        { id: 'quad_y', op: 'array_construct', values: [-1, -1, 1, 1, -1, 1] },
+        { id: 'qx', op: 'array_extract', array: 'quad_x', index: 'corner_i' },
+        { id: 'qy', op: 'array_extract', array: 'quad_y', index: 'corner_i' },
+
+        { id: 'c_uv', op: 'comment', comment: 'UV: remap corner [-1,1] to texture coords [0,1], Y flipped for top-left origin.' },
+        { id: 'qx_p1', op: 'math_add', a: 'qx', b: 1.0 },
+        { id: 'uv_x', op: 'math_mul', a: 'qx_p1', b: 0.5 },
+        { id: 'qy_p1', op: 'math_add', a: 'qy', b: 1.0 },
+        { id: 'uv_y_raw', op: 'math_mul', a: 'qy_p1', b: 0.5 },
+        { id: 'uv_y', op: 'math_sub', a: 1.0, b: 'uv_y_raw' },
+        { id: 'uv', op: 'float2', x: 'uv_x', y: 'uv_y' },
+
+        { id: 'c_aspect', op: 'comment', comment: 'Aspect ratio correction for square-looking cards.' },
+        { id: 'os', op: 'builtin_get', name: 'output_size' },
+        { id: 'os_x', op: 'static_cast_float', val: 'os.x' },
+        { id: 'os_y', op: 'static_cast_float', val: 'os.y' },
+        { id: 'aspect', op: 'math_div', a: 'os_x', b: 'os_y' },
+        { id: 'inv_aspect', op: 'math_div', a: 1.0, b: 'aspect' },
+
+        { id: 'c_position', op: 'comment', comment: 'Fixed horizontal slots for 4 cards, evenly distributed.' },
+        { id: 'x_pos_arr', op: 'array_construct', values: [-0.6, -0.2, 0.2, 0.6] },
+        { id: 'pidx_i', op: 'static_cast_int', val: 'pidx_f' },
+        { id: 'base_x', op: 'array_extract', array: 'x_pos_arr', index: 'pidx_i' },
+
+        { id: 'c_spin', op: 'comment', comment: 'Read pre-computed cos(time * spin_speed) from CPU-side buffer.' },
+        { id: 'cos_spin', op: 'buffer_load', buffer: 'card_params', index: 0 },
+
+        { id: 'c_card_dims', op: 'comment', comment: 'Card dimensions: ~2:3 aspect ratio, width modulated by spin, corrected for screen aspect.' },
+        { id: 'v_height', op: 'var_get', var: 'card_height' },
+        { id: 'half_h', op: 'math_mul', a: 'v_height', b: 0.5 },
+        { id: 'half_w_base', op: 'math_mul', a: 'half_h', b: 0.667 },
+        { id: 'half_w_spin', op: 'math_mul', a: 'half_w_base', b: 'cos_spin' },
+        { id: 'half_w', op: 'math_mul', a: 'half_w_spin', b: 'inv_aspect' },
+
+        { id: 'ox', op: 'math_mul', a: 'qx', b: 'half_w' },
+        { id: 'oy', op: 'math_mul', a: 'qy', b: 'half_h' },
+        { id: 'clip_x', op: 'math_add', a: 'base_x', b: 'ox' },
+
+        { id: 'pos', op: 'float4', x: 'clip_x', y: 'oy', z: 0.0, w: 1.0 },
+        { id: 'ret_struct', op: 'struct_construct', type: 'CardVarying', values: { pos: 'pos', uv: 'uv', quad_id: 'pidx_f' } },
+        { id: 'ret', op: 'func_return', val: 'ret_struct' }
+      ]
+    },
+    {
+      id: 'fn_card_fragment',
+      type: 'shader',
+      comment: 'Fragment shader: selects sidechannel texture based on quad_id via cascading mix/step. Unbound textures sample as (0,0,0,0) — alpha blending makes them invisible.',
+      inputs: [
+        { id: 'in', type: 'CardVarying' as DataType }
+      ],
+      outputs: [
+        { id: 'color', type: 'float4' as DataType }
+      ],
+      localVars: [],
+      nodes: [
+        { id: 'get_in', op: 'var_get', var: 'in' },
+        { id: 'uv', op: 'struct_extract', struct: 'get_in', field: 'uv' },
+        { id: 'qid', op: 'struct_extract', struct: 'get_in', field: 'quad_id' },
+
+        { id: 'c_sample', op: 'comment', comment: 'Sample all 4 sidechannel textures. Unbound ones return (0,0,0,0).' },
+        { id: 'c1', op: 'texture_sample', tex: 'in_sc1', coords: 'uv' },
+        { id: 'c2', op: 'texture_sample', tex: 'in_sc2', coords: 'uv' },
+        { id: 'c3', op: 'texture_sample', tex: 'in_sc3', coords: 'uv' },
+        { id: 'c4', op: 'texture_sample', tex: 'in_sc4', coords: 'uv' },
+
+        { id: 'c_select', op: 'comment', comment: 'Cascading select: step transitions at each quad_id boundary, mix interpolates between adjacent textures.' },
+        { id: 's1', op: 'math_step', edge: 0.5, x: 'qid' },
+        { id: 's2', op: 'math_step', edge: 1.5, x: 'qid' },
+        { id: 's3', op: 'math_step', edge: 2.5, x: 'qid' },
+
+        { id: 'm1', op: 'math_mix', a: 'c1', b: 'c2', t: 's1' },
+        { id: 'm2', op: 'math_mix', a: 'm1', b: 'c3', t: 's2' },
+        { id: 'final_color', op: 'math_mix', a: 'm2', b: 'c4', t: 's3' },
+
+        { id: 'ret', op: 'func_return', val: 'final_color' }
+      ]
+    }
+  ]
+};
+
 export const ALL_EXAMPLES = {
   noise_shader: NOISE_SHADER,
   effect_shader: EFFECT_SHADER,
@@ -1662,4 +1865,5 @@ export const ALL_EXAMPLES = {
   feedback_shader: FEEDBACK_SHADER,
   uv_warp_shader: UV_WARP_SHADER,
   test_card_shader: TEST_CARD_SHADER,
+  sidechannel_cards_shader: SIDECHANNEL_CARDS_SHADER,
 };
