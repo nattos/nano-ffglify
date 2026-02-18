@@ -45,6 +45,14 @@ export class EvaluationContext {
     this.ir = ir;
     this.inputs = inputs;
     this.resources = makeResourceStates(ir);
+    // Populate tuning param defaults for any not already in inputs
+    if (ir.tuningParams) {
+      for (const tp of ir.tuningParams) {
+        if (!this.inputs.has(tp.id) && tp.default !== undefined) {
+          this.inputs.set(tp.id, tp.default);
+        }
+      }
+    }
   }
 
   // -------------------------------------------------------
@@ -115,8 +123,8 @@ export class EvaluationContext {
   getInput(id: string): RuntimeValue {
     const val = this.inputs.get(id);
     if (val === undefined) {
-      // Try find default
-      const def = this.ir.inputs.find(i => i.id === id);
+      // Try find default in inputs or tuning params
+      const def = this.ir.inputs.find(i => i.id === id) ?? this.ir.tuningParams?.find(i => i.id === id);
       if (def?.default !== undefined) return def.default;
       throw new Error(`Runtime Error: Input '${id}' not provided`);
     }

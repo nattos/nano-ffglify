@@ -78,6 +78,9 @@ export const EFFECT_SHADER: IRDocument = {
     { id: 'input_visual', type: 'texture2d', format: 'rgba8', comment: 'Input video stream.' },
     { id: 'intensity', type: 'float', default: 1.0, ui: { min: 0.0, max: 1.0, widget: 'slider' }, comment: 'Desaturation amount: 0 = original, 1 = full grayscale.' }
   ],
+  tuningParams: [
+    { id: 'lum_weights', type: 'float3', default: [0.2126, 0.7152, 0.0722], comment: 'BT.709 luminance coefficients (R, G, B). Tweak for artistic desaturation.' },
+  ],
   resources: [
     {
       id: 'output_tex',
@@ -114,7 +117,7 @@ export const EFFECT_SHADER: IRDocument = {
         { id: 'color', op: 'texture_sample', tex: 'input_visual', coords: 'nuv.xy' },
 
         { id: 'c_gray', op: 'comment', comment: 'Grayscale via perceptual luminance weights (BT.709).' },
-        { id: 'lum_coeffs', op: 'float3', x: 0.2126, y: 0.7152, z: 0.0722 },
+        { id: 'lum_coeffs', op: 'var_get', var: 'lum_weights' },
         { id: 'luma', op: 'vec_dot', a: 'color.xyz', b: 'lum_coeffs' },
         { id: 'gray_vec', op: 'float3', xyz: 'luma' },
 
@@ -192,6 +195,19 @@ export const RAYMARCH_SHADER: IRDocument = {
   inputs: [
     { id: 'scale', type: 'float', default: 0.4, ui: { min: 0.05, max: 1.5, widget: 'slider' }, comment: 'Sphere radius.' }
   ],
+  tuningParams: [
+    { id: 'orbit_speed', type: 'float', default: 0.7, ui: { min: 0.0, max: 3.0 }, comment: 'Orbital animation speed.' },
+    { id: 'orbit_radius', type: 'float', default: 0.8, ui: { min: 0.1, max: 2.0 }, comment: 'Orbit radius in XZ plane.' },
+    { id: 'bob_speed', type: 'float', default: 1.3, ui: { min: 0.0, max: 5.0 }, comment: 'Vertical bobbing speed.' },
+    { id: 'bob_amplitude', type: 'float', default: 0.1, ui: { min: 0.0, max: 0.5 }, comment: 'Vertical bobbing amplitude.' },
+    { id: 'bob_offset', type: 'float', default: 0.15, ui: { min: -0.5, max: 1.0 }, comment: 'Vertical center offset.' },
+    { id: 'pulse_speed', type: 'float', default: 2.5, ui: { min: 0.0, max: 10.0 }, comment: 'Radius pulse frequency.' },
+    { id: 'pulse_amount', type: 'float', default: 0.3, ui: { min: 0.0, max: 1.0 }, comment: 'Radius pulse amplitude.' },
+    { id: 'smooth_k', type: 'float', default: 0.4, ui: { min: 0.01, max: 2.0 }, comment: 'Smooth-min blending radius.' },
+    { id: 'fog_density', type: 'float', default: 0.15, ui: { min: 0.0, max: 1.0 }, comment: 'Exponential fog density.' },
+    { id: 'spec_power', type: 'float', default: 32.0, ui: { min: 1.0, max: 128.0 }, comment: 'Specular highlight sharpness.' },
+    { id: 'sphere_color', type: 'float3', default: [0.9, 0.45, 0.2], comment: 'Sphere surface color.' },
+  ],
   resources: [
     {
       id: 'output_ray',
@@ -246,22 +262,29 @@ export const RAYMARCH_SHADER: IRDocument = {
 
         { id: 'c_sphere', op: 'comment', comment: 'Pulsing sphere: radius oscillates with sin(time*2.5), creating periodic expansion/contraction.' },
         { id: 'val_time', op: 'builtin_get', name: 'time' },
-        { id: 't_orbit', op: 'math_mul', a: 'val_time', b: 0.7 },
+        { id: 'v_orbit_speed', op: 'var_get', var: 'orbit_speed' },
+        { id: 'v_orbit_radius', op: 'var_get', var: 'orbit_radius' },
+        { id: 'v_bob_speed', op: 'var_get', var: 'bob_speed' },
+        { id: 'v_bob_amplitude', op: 'var_get', var: 'bob_amplitude' },
+        { id: 'v_bob_offset', op: 'var_get', var: 'bob_offset' },
+        { id: 'v_pulse_speed', op: 'var_get', var: 'pulse_speed' },
+        { id: 'v_pulse_amount', op: 'var_get', var: 'pulse_amount' },
+        { id: 't_orbit', op: 'math_mul', a: 'val_time', b: 'v_orbit_speed' },
         { id: 'sin_orbit', op: 'math_sin', val: 't_orbit' },
         { id: 'cos_orbit', op: 'math_cos', val: 't_orbit' },
-        { id: 'sc_x', op: 'math_mul', a: 'sin_orbit', b: 0.8 },
-        { id: 'sc_z', op: 'math_mul', a: 'cos_orbit', b: 0.8 },
-        { id: 't_bob', op: 'math_mul', a: 'val_time', b: 1.3 },
+        { id: 'sc_x', op: 'math_mul', a: 'sin_orbit', b: 'v_orbit_radius' },
+        { id: 'sc_z', op: 'math_mul', a: 'cos_orbit', b: 'v_orbit_radius' },
+        { id: 't_bob', op: 'math_mul', a: 'val_time', b: 'v_bob_speed' },
         { id: 'sin_bob', op: 'math_sin', val: 't_bob' },
-        { id: 'sc_y_wave', op: 'math_mul', a: 'sin_bob', b: 0.1 },
-        { id: 'sc_y', op: 'math_add', a: 'sc_y_wave', b: 0.15 },
+        { id: 'sc_y_wave', op: 'math_mul', a: 'sin_bob', b: 'v_bob_amplitude' },
+        { id: 'sc_y', op: 'math_add', a: 'sc_y_wave', b: 'v_bob_offset' },
         { id: 'sphere_center', op: 'float3', x: 'sc_x', y: 'sc_y', z: 'sc_z' },
         { id: 'p_sub_c', op: 'math_sub', a: 'world_p', b: 'sphere_center' },
         { id: 'len_psc', op: 'vec_length', a: 'p_sub_c' },
         { id: 'base_radius', op: 'var_get', var: 'scale' },
-        { id: 't_pulse', op: 'math_mul', a: 'val_time', b: 2.5 },
+        { id: 't_pulse', op: 'math_mul', a: 'val_time', b: 'v_pulse_speed' },
         { id: 'sin_pulse', op: 'math_sin', val: 't_pulse' },
-        { id: 'pulse_mod', op: 'math_mul', a: 'sin_pulse', b: 0.3 },
+        { id: 'pulse_mod', op: 'math_mul', a: 'sin_pulse', b: 'v_pulse_amount' },
         { id: 'pulse_fac', op: 'math_add', a: 0.7, b: 'pulse_mod' },
         { id: 'sphere_radius', op: 'math_mul', a: 'base_radius', b: 'pulse_fac' },
         { id: 'd_sphere', op: 'math_sub', a: 'len_psc', b: 'sphere_radius' },
@@ -377,18 +400,23 @@ export const RAYMARCH_SHADER: IRDocument = {
 
         { id: 'c_anim', op: 'comment', comment: 'Animation: sphere orbits in xz plane, bobs vertically. Uses builtin time.' },
         { id: 'val_time', op: 'builtin_get', name: 'time' },
-        { id: 't_orbit', op: 'math_mul', a: 'val_time', b: 0.7 },
+        { id: 'v_orbit_speed', op: 'var_get', var: 'orbit_speed' },
+        { id: 'v_orbit_radius', op: 'var_get', var: 'orbit_radius' },
+        { id: 'v_bob_speed', op: 'var_get', var: 'bob_speed' },
+        { id: 'v_bob_amplitude', op: 'var_get', var: 'bob_amplitude' },
+        { id: 'v_bob_offset', op: 'var_get', var: 'bob_offset' },
+        { id: 't_orbit', op: 'math_mul', a: 'val_time', b: 'v_orbit_speed' },
         { id: 'sin_orbit', op: 'math_sin', val: 't_orbit' },
         { id: 'cos_orbit', op: 'math_cos', val: 't_orbit' },
-        { id: 'sc_x', op: 'math_mul', a: 'sin_orbit', b: 0.8 },
-        { id: 'sc_z', op: 'math_mul', a: 'cos_orbit', b: 0.8 },
-        { id: 't_bob', op: 'math_mul', a: 'val_time', b: 1.3 },
+        { id: 'sc_x', op: 'math_mul', a: 'sin_orbit', b: 'v_orbit_radius' },
+        { id: 'sc_z', op: 'math_mul', a: 'cos_orbit', b: 'v_orbit_radius' },
+        { id: 't_bob', op: 'math_mul', a: 'val_time', b: 'v_bob_speed' },
         { id: 'sin_bob', op: 'math_sin', val: 't_bob' },
-        { id: 'sc_y_wave', op: 'math_mul', a: 'sin_bob', b: 0.1 },
-        { id: 'sc_y', op: 'math_add', a: 'sc_y_wave', b: 0.15 },
+        { id: 'sc_y_wave', op: 'math_mul', a: 'sin_bob', b: 'v_bob_amplitude' },
+        { id: 'sc_y', op: 'math_add', a: 'sc_y_wave', b: 'v_bob_offset' },
         { id: 'sphere_center', op: 'float3', x: 'sc_x', y: 'sc_y', z: 'sc_z' },
         { id: 'sphere_radius', op: 'var_get', var: 'scale' },
-        { id: 'k_sm', op: 'literal', val: 0.4, comment: 'Smooth min blending radius' },
+        { id: 'k_sm', op: 'var_get', var: 'smooth_k', comment: 'Smooth min blending radius' },
 
         { id: 'c_march', op: 'comment', comment: 'Init loop variables and start march (80 steps).' },
         { id: 't_init', op: 'var_set', var: 't', val: 0.01, exec_out: 'hit_init' },
@@ -523,7 +551,7 @@ export const RAYMARCH_SHADER: IRDocument = {
         { id: 'normal', op: 'vec_normalize', a: 'blended_norm' },
 
         { id: 'c_surface', op: 'comment', comment: 'Surface color: warm orange sphere + checkerboard floor, blended by smin proximity.' },
-        { id: 'sphere_col', op: 'float3', x: 0.9, y: 0.45, z: 0.2 },
+        { id: 'sphere_col', op: 'var_get', var: 'sphere_color' },
         { id: 'floor_x', op: 'math_floor', val: 'hit_p.x', comment: 'Checkerboard: fract((floor(x) + floor(z)) * 0.5) * 2' },
         { id: 'floor_z', op: 'math_floor', val: 'hit_p.z' },
         { id: 'floor_sum', op: 'math_add', a: 'floor_x', b: 'floor_z' },
@@ -545,14 +573,17 @@ export const RAYMARCH_SHADER: IRDocument = {
         { id: 'half_dir', op: 'vec_normalize', a: 'half_raw' },
         { id: 'ndoth_raw', op: 'vec_dot', a: 'normal', b: 'half_dir' },
         { id: 'ndoth', op: 'math_max', a: 'ndoth_raw', b: 0.0 },
-        { id: 'spec_pow', op: 'math_pow', a: 'ndoth', b: 32.0 },
+        { id: 'v_spec_power', op: 'var_get', var: 'spec_power' },
+        { id: 'spec_pow', op: 'math_pow', a: 'ndoth', b: 'v_spec_power' },
         { id: 'specular', op: 'math_mul', a: 'spec_pow', b: 0.4 },
         { id: 'diff_contrib', op: 'math_mul', a: 'surface_col', b: 'ndotl', comment: 'Combine diffuse and specular' },
         { id: 'spec_vec', op: 'float3', xyz: 'specular' },
         { id: 'lit_color', op: 'math_add', a: 'diff_contrib', b: 'spec_vec' },
 
         { id: 'c_fog', op: 'comment', comment: 'Exponential distance fog blending to blue-grey sky.' },
-        { id: 'fog_neg', op: 'math_mul', a: 'final_t', b: -0.15 },
+        { id: 'v_fog_density', op: 'var_get', var: 'fog_density' },
+        { id: 'neg_fog_density', op: 'math_mul', a: 'v_fog_density', b: -1.0 },
+        { id: 'fog_neg', op: 'math_mul', a: 'final_t', b: 'neg_fog_density' },
         { id: 'fog_fac', op: 'math_exp', val: 'fog_neg' },
         { id: 'fog_col', op: 'float3', x: 0.55, y: 0.62, z: 0.78 },
         { id: 'fogged', op: 'math_mix', a: 'fog_col', b: 'lit_color', t: 'fog_fac' },
@@ -575,6 +606,14 @@ export const PARTICLE_SHADER: IRDocument = {
 
   inputs: [
     { id: 'particle_count', type: 'float', default: 1000, ui: { min: 1, max: 1000000, widget: 'slider' }, comment: 'Number of active particles (max 1M).' }
+  ],
+  tuningParams: [
+    { id: 'gravity', type: 'float', default: 0.05, ui: { min: 0.0, max: 0.5 }, comment: 'Gravitational acceleration.' },
+    { id: 'velocity_spread', type: 'float', default: 0.2, ui: { min: 0.0, max: 1.0 }, comment: 'Initial velocity randomness (±half).' },
+    { id: 'lifetime_base', type: 'float', default: 1.0, ui: { min: 0.1, max: 5.0 }, comment: 'Minimum particle lifetime (seconds).' },
+    { id: 'lifetime_range', type: 'float', default: 4.0, ui: { min: 0.0, max: 10.0 }, comment: 'Additional random lifetime range.' },
+    { id: 'quad_size', type: 'float', default: 0.01, ui: { min: 0.001, max: 0.05 }, comment: 'Particle quad half-size in clip space.' },
+    { id: 'particle_color', type: 'float3', default: [1.0, 0.7, 0.3], comment: 'Particle emission color.' },
   ],
 
   structs: [
@@ -704,14 +743,17 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'sc_r5', op: 'math_mul', a: 'sin_r5', b: 43758.5453 },
         { id: 'r5', op: 'math_fract', val: 'sc_r5' },
 
-        { id: 'c_resp_val', op: 'comment', comment: 'Respawn values: random position [0,1], velocity [-0.1,0.1] (X scaled by 1/aspect), lifetime [1,5]s.' },
+        { id: 'v_vel_spread', op: 'var_get', var: 'velocity_spread' },
+        { id: 'v_lt_base', op: 'var_get', var: 'lifetime_base' },
+        { id: 'v_lt_range', op: 'var_get', var: 'lifetime_range' },
+        { id: 'c_resp_val', op: 'comment', comment: 'Respawn values: random position [0,1], velocity (X scaled by 1/aspect), lifetime.' },
         { id: 'r3_c', op: 'math_sub', a: 'r3', b: 0.5 },
-        { id: 'resp_vx_raw', op: 'math_mul', a: 'r3_c', b: 0.2 },
+        { id: 'resp_vx_raw', op: 'math_mul', a: 'r3_c', b: 'v_vel_spread' },
         { id: 'resp_vx', op: 'math_mul', a: 'resp_vx_raw', b: 'inv_aspect' },
         { id: 'r4_c', op: 'math_sub', a: 'r4', b: 0.5 },
-        { id: 'resp_vy', op: 'math_mul', a: 'r4_c', b: 0.2 },
-        { id: 'lt_scale', op: 'math_mul', a: 'r5', b: 4.0 },
-        { id: 'resp_lt', op: 'math_add', a: 'lt_scale', b: 1.0 },
+        { id: 'resp_vy', op: 'math_mul', a: 'r4_c', b: 'v_vel_spread' },
+        { id: 'lt_scale', op: 'math_mul', a: 'r5', b: 'v_lt_range' },
+        { id: 'resp_lt', op: 'math_add', a: 'lt_scale', b: 'v_lt_base' },
 
         { id: 'c_drift', op: 'comment', comment: 'Drift noise: separate hash family for per-frame velocity perturbation.' },
         { id: 'drift_base', op: 'math_mul', a: 'gid_x_f', b: 73.7 },
@@ -730,7 +772,8 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'dvx', op: 'math_mul', a: 'dvx_scaled', b: 'dt' },
         { id: 'dvy_raw', op: 'math_sub', a: 'drift2', b: 0.5 },
         { id: 'dvy_drift', op: 'math_mul', a: 'dvy_raw', b: 'dt' },
-        { id: 'gravity_dt', op: 'math_mul', a: 0.05, b: 'dt' },
+        { id: 'v_gravity', op: 'var_get', var: 'gravity' },
+        { id: 'gravity_dt', op: 'math_mul', a: 'v_gravity', b: 'dt' },
         { id: 'dvy', op: 'math_sub', a: 'dvy_drift', b: 'gravity_dt' },
         { id: 'alive_vx', op: 'math_add', a: 'ld_vel.x', b: 'dvx' },
         { id: 'alive_vy', op: 'math_add', a: 'ld_vel.y', b: 'dvy' },
@@ -800,9 +843,10 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'clip_x', op: 'math_sub', a: 'cx_raw', b: 1.0 },
         { id: 'cy_raw', op: 'math_mul', a: 'p_pos.y', b: 2.0 },
         { id: 'clip_y', op: 'math_sub', a: 'cy_raw', b: 1.0 },
-        { id: 'ox_raw', op: 'math_mul', a: 'qx', b: 0.01 },
+        { id: 'v_quad_size', op: 'var_get', var: 'quad_size' },
+        { id: 'ox_raw', op: 'math_mul', a: 'qx', b: 'v_quad_size' },
         { id: 'ox', op: 'math_mul', a: 'ox_raw', b: 'inv_aspect' },
-        { id: 'oy', op: 'math_mul', a: 'qy', b: 0.01 },
+        { id: 'oy', op: 'math_mul', a: 'qy', b: 'v_quad_size' },
         { id: 'final_x', op: 'math_add', a: 'clip_x', b: 'ox' },
         { id: 'final_y', op: 'math_add', a: 'clip_y', b: 'oy' },
         { id: 'pos', op: 'float4', x: 'final_x', y: 'final_y', z: 0.0, w: 1.0 },
@@ -842,7 +886,7 @@ export const PARTICLE_SHADER: IRDocument = {
         { id: 'brightness', op: 'math_mul', a: 'inv_age', b: 'inv_age' },
 
         { id: 'fb', op: 'math_mul', a: 'falloff', b: 'brightness' },
-        { id: 'particle_col', op: 'float3', x: 1.0, y: 0.7, z: 0.3 },
+        { id: 'particle_col', op: 'var_get', var: 'particle_color' },
         { id: 'rgb', op: 'math_mul', a: 'particle_col', b: 'fb' },
         { id: 'out_color', op: 'float4', xyz: 'rgb', w: 'fb', comment: 'Alpha = combined falloff for softer edges under additive blending.' },
         { id: 'ret', op: 'func_return', val: 'out_color' }
@@ -1139,6 +1183,14 @@ export const FEEDBACK_SHADER: IRDocument = {
   inputs: [
     { id: 'input_visual', type: 'texture2d', format: 'rgba8', comment: 'Live input video stream.' }
   ],
+  tuningParams: [
+    { id: 'noise_speed', type: 'float', default: 17.3, ui: { min: 0.0, max: 50.0 }, comment: 'Hash noise animation speed.' },
+    { id: 'noise_displacement', type: 'float', default: 0.006, ui: { min: 0.0, max: 0.05 }, comment: 'UV displacement magnitude for whispy trails.' },
+    { id: 'zoom1', type: 'float', default: 0.996, ui: { min: 0.95, max: 1.0 }, comment: 'First feedback tap zoom level.' },
+    { id: 'zoom2', type: 'float', default: 0.992, ui: { min: 0.95, max: 1.0 }, comment: 'Second feedback tap zoom level.' },
+    { id: 'zoom3', type: 'float', default: 0.988, ui: { min: 0.95, max: 1.0 }, comment: 'Third feedback tap zoom level.' },
+    { id: 'decay', type: 'float', default: 0.317, ui: { min: 0.0, max: 0.5 }, comment: 'Per-tap decay factor (total = decay * 3 taps).' },
+  ],
 
   resources: [
     {
@@ -1190,7 +1242,8 @@ export const FEEDBACK_SHADER: IRDocument = {
         { id: 'c_noise', op: 'comment', comment: 'Hash noise for whispy UV offsets: fract(sin(dot(uv, magic) + time*17.3) * 43758.5453). Two channels for x/y displacement.' },
         { id: 'h_p1', op: 'float2', x: 127.1, y: 311.7 },
         { id: 'h_dot', op: 'vec_dot', a: 'nuv.xy', b: 'h_p1' },
-        { id: 'h_t', op: 'math_mul', a: 'time', b: 17.3 },
+        { id: 'v_noise_speed', op: 'var_get', var: 'noise_speed' },
+        { id: 'h_t', op: 'math_mul', a: 'time', b: 'v_noise_speed' },
         { id: 'h_in', op: 'math_add', a: 'h_dot', b: 'h_t' },
         { id: 'h_sin1', op: 'math_sin', val: 'h_in' },
         { id: 'h_sc1', op: 'math_mul', a: 'h_sin1', b: 43758.5453 },
@@ -1201,25 +1254,29 @@ export const FEEDBACK_SHADER: IRDocument = {
         { id: 'n2', op: 'math_fract', val: 'h_sc2' },
         { id: 'n1c', op: 'math_sub', a: 'n1', b: 0.5 },
         { id: 'n2c', op: 'math_sub', a: 'n2', b: 0.5 },
-        { id: 'nx', op: 'math_mul', a: 'n1c', b: 0.006 },
-        { id: 'ny', op: 'math_mul', a: 'n2c', b: 0.006 },
+        { id: 'v_noise_disp', op: 'var_get', var: 'noise_displacement' },
+        { id: 'nx', op: 'math_mul', a: 'n1c', b: 'v_noise_disp' },
+        { id: 'ny', op: 'math_mul', a: 'n2c', b: 'v_noise_disp' },
         { id: 'noise', op: 'float2', x: 'nx', y: 'ny' },
 
         { id: 'c_taps', op: 'comment', comment: '3 taps at increasing zoom levels (0.996, 0.992, 0.988) toward center. Each uses a different noise offset for organic, whispy trail movement.' },
         { id: 'cuv', op: 'math_sub', a: 'nuv.xy', b: 0.5 },
 
-        { id: 'z1', op: 'math_mul', a: 'cuv', b: 0.996 },
+        { id: 'v_zoom1', op: 'var_get', var: 'zoom1' },
+        { id: 'v_zoom2', op: 'var_get', var: 'zoom2' },
+        { id: 'v_zoom3', op: 'var_get', var: 'zoom3' },
+        { id: 'z1', op: 'math_mul', a: 'cuv', b: 'v_zoom1' },
         { id: 'u1r', op: 'math_add', a: 'z1', b: 0.5 },
         { id: 'u1', op: 'math_add', a: 'u1r', b: 'noise' },
         { id: 'fb1', op: 'texture_sample', tex: 'feedback_tex', coords: 'u1' },
 
-        { id: 'z2', op: 'math_mul', a: 'cuv', b: 0.992 },
+        { id: 'z2', op: 'math_mul', a: 'cuv', b: 'v_zoom2' },
         { id: 'u2r', op: 'math_add', a: 'z2', b: 0.5 },
         { id: 'neg_noise', op: 'math_mul', a: 'noise', b: -1.0 },
         { id: 'u2', op: 'math_add', a: 'u2r', b: 'neg_noise' },
         { id: 'fb2', op: 'texture_sample', tex: 'feedback_tex', coords: 'u2' },
 
-        { id: 'z3', op: 'math_mul', a: 'cuv', b: 0.988 },
+        { id: 'z3', op: 'math_mul', a: 'cuv', b: 'v_zoom3' },
         { id: 'u3r', op: 'math_add', a: 'z3', b: 0.5 },
         { id: 'rot_noise', op: 'float2', x: 'ny', y: 'nx' },
         { id: 'u3', op: 'math_add', a: 'u3r', b: 'rot_noise' },
@@ -1228,7 +1285,8 @@ export const FEEDBACK_SHADER: IRDocument = {
         { id: 'c_composite', op: 'comment', comment: 'Average 3 taps with 0.95 total decay (0.317 = 0.95/3). Then take max with input: brighter of feedback trail or live input wins. This naturally fades trails while keeping input crisp.' },
         { id: 'sum12', op: 'math_add', a: 'fb1', b: 'fb2' },
         { id: 'sum_all', op: 'math_add', a: 'sum12', b: 'fb3' },
-        { id: 'fb_avg', op: 'math_mul', a: 'sum_all', b: 0.317 },
+        { id: 'v_decay', op: 'var_get', var: 'decay' },
+        { id: 'fb_avg', op: 'math_mul', a: 'sum_all', b: 'v_decay' },
 
         { id: 'input_col', op: 'texture_sample', tex: 'input_visual', coords: 'nuv.xy' },
         { id: 'combined', op: 'math_max', a: 'fb_avg', b: 'input_col' },
@@ -1249,6 +1307,10 @@ export const UV_WARP_SHADER: IRDocument = {
   inputs: [
     { id: 'input_visual', type: 'texture2d', format: 'rgba8', comment: 'Input video stream.' },
     { id: 'strength', type: 'float', default: 0.0, ui: { min: -1.0, max: 1.0, widget: 'slider' }, comment: 'Warp strength: -1 = fisheye (outward), +1 = suck (inward).' }
+  ],
+  tuningParams: [
+    { id: 'warp_power', type: 'float', default: 2.0, ui: { min: 0.5, max: 8.0 }, comment: 'Quadratic scaling factor for radial warp.' },
+    { id: 'warp_clamp', type: 'float', default: 0.01, ui: { min: 0.001, max: 0.5 }, comment: 'Minimum warp factor (prevents UV inversion).' },
   ],
 
   resources: [
@@ -1293,9 +1355,11 @@ export const UV_WARP_SHADER: IRDocument = {
         { id: 'offset', op: 'math_sub', a: 'nuv.xy', b: 0.5 },
         { id: 'r2', op: 'vec_dot', a: 'offset', b: 'offset' },
         { id: 'sr2', op: 'math_mul', a: 'str', b: 'r2' },
-        { id: 'sr2x2', op: 'math_mul', a: 'sr2', b: 2.0 },
+        { id: 'v_warp_power', op: 'var_get', var: 'warp_power' },
+        { id: 'v_warp_clamp', op: 'var_get', var: 'warp_clamp' },
+        { id: 'sr2x2', op: 'math_mul', a: 'sr2', b: 'v_warp_power' },
         { id: 'warp_raw', op: 'math_add', a: 1.0, b: 'sr2x2' },
-        { id: 'warp', op: 'math_max', a: 'warp_raw', b: 0.01 },
+        { id: 'warp', op: 'math_max', a: 'warp_raw', b: 'v_warp_clamp' },
 
         { id: 'warped_off', op: 'math_mul', a: 'offset', b: 'warp' },
         { id: 'warped_uv', op: 'math_add', a: 'warped_off', b: 0.5 },
