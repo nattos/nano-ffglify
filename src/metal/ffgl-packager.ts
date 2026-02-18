@@ -49,15 +49,19 @@ export interface FFGLCompileOptions {
 /**
  * Generate bash commands to compile a Metal shader file to a metallib
  */
-export function generateMetalCompileCmds(shaderPath: string, outputDir: string): string[] {
+export function generateMetalCompileCmds(shaderPath: string, outputDir: string, includeDirs?: string[]): string[] {
   const shaderName = path.basename(shaderPath, '.metal');
   const airPath = path.join(outputDir, `${shaderName}.air`);
   const metallibPath = path.join(outputDir, `${shaderName}.metallib`);
 
+  const includeFlags = (includeDirs || []).map(d => `-I"${d}"`).join(' ');
+  const compileCmd = [`xcrun -sdk macosx metal -fno-fast-math`, includeFlags, `-c "${shaderPath}" -o "${airPath}"`]
+    .filter(Boolean).join(' ');
+
   return [
     `# Compile Metal Shader: ${shaderName}`,
     `mkdir -p "${outputDir}"`,
-    `xcrun -sdk macosx metal -fno-fast-math -c "${shaderPath}" -o "${airPath}"`,
+    compileCmd,
     `xcrun -sdk macosx metallib "${airPath}" -o "${metallibPath}"`
   ];
 }

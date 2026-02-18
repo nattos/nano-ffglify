@@ -37,12 +37,12 @@ export {
  * @param outputDir Directory to place compiled artifacts
  * @returns Paths to the compiled .air and .metallib files
  */
-export function compileMetalShader(shaderPath: string, outputDir: string): MetalCompileResult {
+export function compileMetalShader(shaderPath: string, outputDir: string, includeDirs?: string[]): MetalCompileResult {
   const shaderName = path.basename(shaderPath, '.metal');
   const airPath = path.join(outputDir, `${shaderName}.air`);
   const metallibPath = path.join(outputDir, `${shaderName}.metallib`);
 
-  const cmds = generateMetalCompileCmds(shaderPath, outputDir);
+  const cmds = generateMetalCompileCmds(shaderPath, outputDir, includeDirs);
   // Execute commands synchronously
   for (const cmd of cmds) {
     if (cmd.startsWith('#') || cmd.trim() === '') continue;

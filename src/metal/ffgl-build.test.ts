@@ -21,6 +21,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
   let pluginPath = path.join(buildDir, 'NanoFFGL.bundle');
   const runnerPath = path.join(buildDir, 'ffgl-runner');
   const generatedDir = path.join(repoRoot, 'src/metal/generated');
+  const metalSrcDir = path.join(repoRoot, 'src/metal');
 
   beforeAll(() => {
     if (!fs.existsSync(generatedDir)) {
@@ -76,7 +77,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     // We can use the helper to generate commands
     // Note: We need to manually handle the resulting .metallib path logic if we want to copy it later
     // or we can just rely on standard paths.
-    const metalCmds = generateMetalCompileCmds(shaderPath, buildDir);
+    const metalCmds = generateMetalCompileCmds(shaderPath, buildDir, [metalSrcDir]);
     steps.push(...metalCmds);
 
     // Step B: Compile FFGL Plugin
@@ -225,7 +226,7 @@ describe('FFGL Build Pipeline with Bash Script Generation', () => {
     steps.push(`mkdir -p "${buildPath}"`);
 
     // Metal
-    steps.push(...generateMetalCompileCmds(shaderPath, buildPath));
+    steps.push(...generateMetalCompileCmds(shaderPath, buildPath, [metalSrcDir]));
 
     // FFGL
     const bundlePath = path.join(buildPath, 'ScriptMixer.bundle');
