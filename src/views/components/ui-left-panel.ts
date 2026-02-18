@@ -14,7 +14,7 @@ import { DEMO_SCRIPT } from '../../domain/mock-responses';
 import { ALL_EXAMPLES } from '../../domain/example-ir';
 import { runScriptDebug } from '../../debug/script-runner';
 import { LLMLogEntry } from '../../domain/types';
-import { RuntimeInputType } from '../../runtime/runtime-manager';
+import { RuntimeInputType } from '../../runtime/runtime-proxy';
 import { runInAction } from 'mobx';
 
 const TAB_LABELS: Record<string, string> = {

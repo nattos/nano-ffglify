@@ -20,9 +20,8 @@ import { ALL_EXAMPLES } from '../domain/example-ir';
 import { historyManager } from './history';
 import { settingsManager } from './settings';
 import { validateIR } from '../ir/validator';
-import { getSharedDevice } from '../webgpu/gpu-device';
-import { ReplManager } from '../runtime/repl-manager';
-import { RuntimeManager, RuntimeInputType } from '../runtime/runtime-manager';
+import { CompilationProxy } from '../runtime/compilation-proxy';
+import { RuntimeProxy, RuntimeInputType } from '../runtime/runtime-proxy';
 import { CompileResult } from './entity-api';
 
 // Late-bound reference to avoid circular dependency (chat-handler imports controller)
@@ -40,8 +39,8 @@ export interface MutateTask {
 }
 
 export class AppController {
-  public readonly repl = new ReplManager();
-  public readonly runtime = new RuntimeManager();
+  public readonly repl = new CompilationProxy();
+  public readonly runtime = new RuntimeProxy();
 
   private lastCompiledIRJson: string | null = null;
   private activeCompileResolver: ((res: CompileResult) => void) | null = null;
@@ -589,9 +588,8 @@ export class AppController {
           this.repl.swap(artifacts);
 
           try {
-            const device = await getSharedDevice();
             const savedFileIds = await this.getSavedFileInputIds();
-            await this.runtime.setCompiled(artifacts, device, savedFileIds);
+            await this.runtime.setCompiled(artifacts, savedFileIds);
             await this.restoreSavedInputs();
           } catch (gpuError) {
             console.warn("[AppController] GPU environment not available for live update:", gpuError);
@@ -599,8 +597,8 @@ export class AppController {
 
           runInAction(() => {
             appState.local.compilationResult = {
-              js: artifacts.compiled.taskCode,
-              jsInit: artifacts.compiled.initCode,
+              js: artifacts.taskCode,
+              jsInit: artifacts.initCode,
               wgsl: artifacts.wgsl
             };
             appState.local.validationErrors = [];

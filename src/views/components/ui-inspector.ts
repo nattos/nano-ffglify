@@ -2,13 +2,13 @@ import './ui-icon';
 import { html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { MobxLitElement } from '../mobx-lit-element';
-import { RuntimeManager, RuntimeInputEntry, RuntimeInputType } from '../../runtime/runtime-manager';
+import { RuntimeProxy, RuntimeInputEntry, RuntimeInputType } from '../../runtime/runtime-proxy';
 import { appController } from '../../state/controller';
 import { appState } from '../../domain/state';
 
 @customElement('ui-inspector')
 export class UiInspector extends MobxLitElement {
-  @property({ type: Object }) runtime: RuntimeManager | null = null;
+  @property({ type: Object }) runtime: RuntimeProxy | null = null;
   @state() private draggingId: string | null = null;
   @state() private editingValueId: string | null = null;
 

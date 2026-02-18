@@ -12,6 +12,8 @@ import { BUILTIN_TYPES, BUILTIN_CPU_ALLOWED } from '../ir/builtin-schemas';
 export interface CompiledJitResult {
   initCode: string;
   taskCode: string;
+  finalInitCode: string;
+  finalTaskCode: string;
   init: CompiledInitFunction;
   task: CompiledTaskFunction;
 }
@@ -34,7 +36,7 @@ export class CpuJitCompiler {
       const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
       const task = new AsyncFunction('ctx', body);
       const init = new AsyncFunction('device', initBody);
-      return { taskCode: rawBody, initCode: rawInitBody, task, init };
+      return { taskCode: rawBody, initCode: rawInitBody, finalTaskCode: body, finalInitCode: initBody, task, init };
 
     } catch (e) {
       console.error("JIT Compilation Failed:\n", body);
