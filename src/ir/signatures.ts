@@ -399,6 +399,7 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   // Resources
   'resource_get_size': [{ inputs: { resource: 'string' }, output: 'float2' }],
   'resource_get_format': [{ inputs: { resource: 'string' }, output: 'int' }], // Fixed: id -> resource
+  'resource_is_bound': [{ inputs: { resource: 'string' }, output: 'boolean' }],
   'texture_sample': [
     { inputs: { tex: 'string', coords: 'float2' }, output: 'float4' }
   ],

@@ -48,6 +48,7 @@ const InputDefSchema = z.object({
   label: z.string().optional(),
   comment: z.string().optional(),
   default: z.any().optional(),
+  sidechannel: z.boolean().optional(),
   ui: z.object({
     min: z.number().optional(),
     max: z.number().optional(),

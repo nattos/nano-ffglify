@@ -281,7 +281,7 @@ export async function packageFFGLPlugin(vfs: IVirtualFileSystem, options: Packag
   const hash = (Array.from(name) as string[]).reduce((h: number, c: string) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0);
   const pluginId = Math.abs(hash).toString(16).slice(-4).toUpperCase().padStart(4, '0');
 
-  const textureInputCount = (ir.inputs || []).filter((i: any) => i.type === 'texture2d').length;
+  const textureInputCount = (ir.inputs || []).filter((i: any) => i.type === 'texture2d' && !i.sidechannel).length;
   const internalResourceCount = (ir.resources || []).filter((r: any) => !r.isOutput).length;
 
   // 1. Write Assets (SDK + Project Files)

@@ -678,6 +678,14 @@ export class MslGenerator {
         this.currentBufferSizeVars.set(resId, varName);
         offset += 2;
       }
+
+      // Unpack resource bound flags from the flat input buffer (auto-managed, for resource_is_bound op)
+      const texInputs = [...(this.ir?.inputs || []), ...(this.ir?.tuningParams || [])].filter(i => i.type === 'texture2d');
+      for (const tex of texInputs) {
+        const varName = `i_tex_bound_${this.sanitizeId(tex.id)}`;
+        lines.push(`    float ${varName} = inputs[${offset}];`);
+        offset += 1;
+      }
     } else {
       this.currentBufferSizeVars.clear();
     }
@@ -1396,6 +1404,11 @@ export class MslGenerator {
         return 'float2(1.0f, 1.0f)';
       }
 
+      case 'resource_is_bound': {
+        const resId = node['resource'];
+        return `(i_tex_bound_${this.sanitizeId(resId)} > 0.5f)`;
+      }
+
       case 'vec_get_element': {
         const vec = this.resolveArg(node, 'vec', func, allFunctions, varMap, resourceBindings, emitPure, edges);
         const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges);
@@ -1715,7 +1728,7 @@ export class MslGenerator {
       'static_cast_float2', 'static_cast_float3', 'static_cast_float4',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length',
-      'resource_get_size',
+      'resource_get_size', 'resource_is_bound',
       'texture_sample',
       'call_func',
       'mat_identity', 'mat_mul', 'mat_inverse',

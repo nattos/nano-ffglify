@@ -211,6 +211,14 @@ export class WgslGenerator {
         docInputs.push({ id: 'output_size', type: 'vec3<i32>' });
       }
 
+      // Automatically-managed resource bound flags in the uniform buffer.
+      // These are set by the runtime and read by the resource_is_bound op.
+      for (const inp of [...(fullIr.inputs || []), ...(fullIr.tuningParams || [])]) {
+        if (inp.type === 'texture2d') {
+          docInputs.push({ id: `tex_bound_${inp.id}`, type: 'float' });
+        }
+      }
+
       // Use ShaderLayout to determine order (sort=true for efficient packing)
       // This guarantees the struct layout matches the buffer packing.
       // Use std430 for storage buffers (Inputs)
@@ -1153,6 +1161,10 @@ export class WgslGenerator {
       // Formats are mostly static string metadata in IR, hard to represent in WGSL return value
       // but we return 0.0 or a dummy value.
       return `0.0`;
+    }
+    if (node.op === 'resource_is_bound') {
+      const resId = node['resource'];
+      return `(b_inputs.tex_bound_${resId} > 0.5)`;
     }
     if (node.op === 'buffer_load') {
       const bufferId = node['buffer'] as string;

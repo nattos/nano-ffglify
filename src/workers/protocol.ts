@@ -123,6 +123,7 @@ export interface RuntimeInputEntryMsg {
   max?: number;
   displayText?: string;
   isTuningParam?: boolean;
+  isSidechannel?: boolean;
 }
 
 export interface ReadyMsg { type: 'ready' }

@@ -30,6 +30,7 @@ let textureInputIds: string[] = [];
 let testCardRenderer = new TestCardRenderer();
 let testCardNumbers: Map<string, number> = new Map();
 let testCardInputIds: Set<string> = new Set();
+let sidechannelInputIds: Set<string> = new Set();
 
 let playing = false;
 let frameCount = 0;
@@ -115,16 +116,36 @@ self.onmessage = async (e: MessageEvent<RuntimeWorkerRequest>) => {
         testCardInputIds.delete(msg.id);
         inputBitmaps.set(msg.id, msg.bitmap);
         syncBitmapToGpu(msg.id, msg.bitmap);
+        inputs.set(`tex_bound_${msg.id}`, 1.0); // resource bound flag (for resource_is_bound op)
         break;
       }
 
       case 'reset-texture-to-test-card': {
         inputBitmaps.delete(msg.id);
-        testCardInputIds.add(msg.id);
-        const resource = resources.get(msg.id);
-        const number = testCardNumbers.get(msg.id) ?? 1;
-        if (resource?.gpuTexture && device) {
-          await testCardRenderer.render(device, resource.gpuTexture, number, elapsedTime);
+        if (sidechannelInputIds.has(msg.id)) {
+          // Sidechannel textures reset to black (zero-initialized GPU texture)
+          inputs.set(`tex_bound_${msg.id}`, 0.0);
+          const resource = resources.get(msg.id);
+          if (resource?.gpuTexture && device) {
+            // Clear to black by writing zeros
+            const bytesPerRow = resource.gpuTexture.width * 4 * 4; // RGBA32Float
+            const data = new Float32Array(resource.gpuTexture.width * resource.gpuTexture.height * 4);
+            device.queue.writeTexture(
+              { texture: resource.gpuTexture },
+              data,
+              { bytesPerRow },
+              { width: resource.gpuTexture.width, height: resource.gpuTexture.height }
+            );
+          }
+        } else {
+          // Normal textures reset to test card
+          testCardInputIds.add(msg.id);
+          inputs.set(`tex_bound_${msg.id}`, 1.0);
+          const resource = resources.get(msg.id);
+          const number = testCardNumbers.get(msg.id) ?? 1;
+          if (resource?.gpuTexture && device) {
+            await testCardRenderer.render(device, resource.gpuTexture, number, elapsedTime);
+          }
         }
         break;
       }
@@ -215,6 +236,7 @@ async function handleSetCompiled(ir: IRDocument, finalInitCode: string, finalTas
     inputs.clear();
     testCardNumbers.clear();
     testCardInputIds.clear();
+    sidechannelInputIds.clear();
 
     const inputEntries: RuntimeInputEntryMsg[] = [];
 
@@ -240,12 +262,21 @@ async function handleSetCompiled(ir: IRDocument, finalInitCode: string, finalTas
 
       if (inp.type === 'texture2d') {
         textureInputIds.push(inp.id);
-        const textureIdx = textureInputIds.length - 1;
-        const tcNumber = (textureIdx % 2) + 1;
-        testCardNumbers.set(inp.id, tcNumber);
-        testCardInputIds.add(inp.id);
         entry.currentValue = inp.id;
         inputs.set(inp.id, inp.id);
+        if (inp.sidechannel) {
+          // Sidechannel textures default to black (GPU textures are zero-initialized)
+          sidechannelInputIds.add(inp.id);
+          inputs.set(`tex_bound_${inp.id}`, 0.0); // resource bound flag (for resource_is_bound op)
+          entry.isSidechannel = true;
+        } else {
+          // Normal textures get a test card
+          const textureIdx = textureInputIds.length - 1;
+          const tcNumber = (textureIdx % 2) + 1;
+          testCardNumbers.set(inp.id, tcNumber);
+          testCardInputIds.add(inp.id);
+          inputs.set(`tex_bound_${inp.id}`, 1.0); // resource bound flag (for resource_is_bound op)
+        }
       } else if (inp.default !== undefined) {
         inputs.set(inp.id, inp.default);
       }

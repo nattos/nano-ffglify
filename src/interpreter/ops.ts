@@ -912,6 +912,11 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
     res.data[idx] = val;
   },
 
+  'resource_is_bound': (ctx, args) => {
+    // In the interpreter, all resources are considered bound
+    return true;
+  },
+
   // ----------------------------------------------------------------
   // Dispatch / Draw (Side Effects)
   // ----------------------------------------------------------------

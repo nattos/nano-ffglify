@@ -74,6 +74,7 @@ export interface InputDef {
   comment?: string;  // Description
   format?: string;   // For textures: 'rgba8', 'rgba32f', etc. hints for UI/Validation
   default?: any;     // Default value if not provided by host
+  sidechannel?: boolean; // Texture passed via back-channel, not counted as FFGL input
   ui?: {
     min?: number;
     max?: number;
@@ -365,6 +366,7 @@ export type BuiltinOp =
   | 'buffer_load' | 'buffer_store'
   | 'texture_sample' | 'texture_load' | 'texture_store'
   | 'resource_get_size' | 'resource_get_format'
+  | 'resource_is_bound'
 
   // Atomics
   | 'atomic_load' | 'atomic_store'

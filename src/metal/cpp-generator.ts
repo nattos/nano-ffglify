@@ -219,6 +219,14 @@ export class CppGenerator {
       // For now, standard 0..1 mapping.
       lines.push(`    ctx.inputs["${p.id}"] = GetFloatParameter(${idx});`);
     });
+    // Automatically-managed resource bound flags in the uniform buffer for the
+    // resource_is_bound op. Non-sidechannel textures are always bound in FFGL;
+    // sidechannel textures are always unbound (for now).
+    const textureInputs = ir.inputs.filter(i => i.type === 'texture2d');
+    for (const tex of textureInputs) {
+      const bound = tex.sidechannel ? '0.0f' : '1.0f';
+      lines.push(`    ctx.inputs["tex_bound_${tex.id}"] = ${bound};`);
+    }
     lines.push('}');
     lines.push('');
 
@@ -502,7 +510,7 @@ export class CppGenerator {
       'vec_get_element', 'call_func',
       'struct_construct', 'struct_extract',
       'array_construct', 'array_extract', 'array_length',
-      'resource_get_size', 'resource_get_format', 'builtin_get',
+      'resource_get_size', 'resource_get_format', 'resource_is_bound', 'builtin_get',
       'math_pi', 'math_e',
       'mat_identity', 'mat_mul', 'mat_inverse', 'mat_transpose',
       'quat', 'quat_identity', 'quat_mul', 'quat_rotate', 'quat_slerp', 'quat_to_float4x4',
@@ -871,12 +879,19 @@ export class CppGenerator {
           }
         }
 
+        // Resource bound flags (auto-managed, for resource_is_bound op)
+        const texInputs = [...(this.ir?.inputs || []), ...(this.ir?.tuningParams || [])].filter(i => i.type === 'texture2d');
+        for (const tex of texInputs) {
+          lines.push(`${indent}    _shader_args.push_back(ctx.getInput("tex_bound_${tex.id}"));`);
+        }
+
         lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
         lines.push(`${indent}}`);
       } else {
         // Check if shader still needs buffer sizes even without other args
         const bufferSizeResourcesNoArgs = this.collectBufferSizeResources(targetFunc);
-        if (bufferSizeResourcesNoArgs.length > 0) {
+        const texInputsNoArgs = [...(this.ir?.inputs || []), ...(this.ir?.tuningParams || [])].filter(i => i.type === 'texture2d');
+        if (bufferSizeResourcesNoArgs.length > 0 || texInputsNoArgs.length > 0) {
           const dispAllRes2 = this.getAllResources();
           lines.push(`${indent}{`);
           lines.push(`${indent}    std::vector<float> _shader_args;`);
@@ -884,6 +899,9 @@ export class CppGenerator {
             const resIdx = dispAllRes2.findIndex(r => r.id === resId);
             lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->width));`);
             lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->height));`);
+          }
+          for (const tex of texInputsNoArgs) {
+            lines.push(`${indent}    _shader_args.push_back(ctx.getInput("tex_bound_${tex.id}"));`);
           }
           lines.push(`${indent}    ctx.dispatchShader("${targetFunc}", ${dimX}, ${dimY}, ${dimZ}, _shader_args);`);
           lines.push(`${indent}}`);
@@ -935,6 +953,12 @@ export class CppGenerator {
           const resIdx = allRes.findIndex(r => r.id === resId);
           lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->width));`);
           lines.push(`${indent}    _shader_args.push_back(static_cast<float>(ctx.resources[${resIdx}]->height));`);
+        }
+
+        // Resource bound flags (auto-managed, for resource_is_bound op)
+        const drawTexInputs = [...(this.ir?.inputs || []), ...(this.ir?.tuningParams || [])].filter(i => i.type === 'texture2d');
+        for (const tex of drawTexInputs) {
+          lines.push(`${indent}    _shader_args.push_back(ctx.getInput("tex_bound_${tex.id}"));`);
         }
 
         const loadExisting1 = (node['pipeline']?.loadOp === 'load') ? 'true' : 'false';
@@ -1720,6 +1744,11 @@ export class CppGenerator {
         const fmt = resDef?.format ?? 'rgba8';
         const fmtId = formatMap[fmt] ?? 0;
         return `${this.formatFloat(fmtId)}`;
+      }
+
+      case 'resource_is_bound': {
+        const resId = node['resource'];
+        return `(ctx.getInput("tex_bound_${resId}") > 0.5f)`;
       }
 
       case 'builtin_get': {

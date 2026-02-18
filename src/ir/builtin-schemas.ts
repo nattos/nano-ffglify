@@ -187,6 +187,7 @@ export interface Float4Args { x: any; y: any; z: any; w: any;[key: string]: any;
 export interface BufferLoadArgs { buffer: string; index: any;[key: string]: any; }
 export interface BufferStoreArgs { buffer: string; index: any; value: any;[key: string]: any; }
 export interface ResourceMetaArgs { resource: string;[key: string]: any; }
+export interface ResourceIsBoundArgs { resource: string;[key: string]: any; }
 export interface MatMulArgs { a: any; b: any;[key: string]: any; }
 export interface MatUnaryArgs { val: any;[key: string]: any; }
 export interface QuatMulArgs { a: any; b: any;[key: string]: any; }
@@ -489,6 +490,11 @@ export const ResourceMetaDef = defineOp<ResourceMetaArgs>({
   args: { resource: { type: z.string(), doc: "ID of the resource", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true } }
 });
 
+export const ResourceIsBoundDef = defineOp<ResourceIsBoundArgs>({
+  doc: "Check if a resource input is bound (not in default/black state).",
+  args: { resource: { type: z.string(), doc: "Resource input ID", requiredRef: true, refType: 'resource', isIdentifier: true, isPrimaryResource: true } }
+});
+
 // --- Atomics ---
 
 export const AtomicLoadDef = defineOp<AtomicLoadArgs>({
@@ -788,6 +794,7 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'buffer_store': BufferStoreDef,
   'resource_get_size': ResourceMetaDef,
   'resource_get_format': ResourceMetaDef,
+  'resource_is_bound': ResourceIsBoundDef,
 
   // Atomics
   'atomic_load': AtomicLoadDef,
@@ -969,6 +976,7 @@ export type OpArgs = {
   'buffer_store': BufferStoreArgs;
   'resource_get_size': ResourceMetaArgs;
   'resource_get_format': ResourceMetaArgs;
+  'resource_is_bound': ResourceIsBoundArgs;
   'atomic_load': AtomicLoadArgs;
   'atomic_store': AtomicStoreArgs;
   'atomic_add': AtomicRmwArgs;

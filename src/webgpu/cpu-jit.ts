@@ -85,7 +85,7 @@ export class CpuJitCompiler {
       'array_construct', 'array_extract', 'array_length', 'array_set',
       'var_get', 'buffer_load', 'texture_load', 'texture_sample', 'call_func', 'vec_swizzle',
       'color_mix', 'vec_get_element', 'quat',
-      'resource_get_size', 'resource_get_format', 'builtin_get', 'const_get',
+      'resource_get_size', 'resource_get_format', 'resource_is_bound', 'builtin_get', 'const_get',
       'atomic_load', 'atomic_add', 'atomic_sub', 'atomic_min', 'atomic_max', 'atomic_exchange'
     ];
     return valueOps.includes(op);
@@ -799,6 +799,10 @@ require('./intrinsics.js');
           return res ? (res.def.format || 'rgba8') : 'rgba8';
         })('${resId}')`;
       }
+      case 'resource_is_bound': {
+        const resId = node['resource'];
+        return `(ctx.inputs.get('tex_bound_${resId}') > 0.5)`;
+      }
 
       case 'math_neg': return `_applyUnary(${val()}, v => -v)`;
       case 'math_abs': return `_applyUnary(${val()}, Math.abs)`;
@@ -1170,6 +1174,16 @@ require('./intrinsics.js');
           parts.push(`'${b}': ctx.builtins['${b}']`);
         }
       });
+    }
+
+    // Automatically-managed resource bound flags, forwarded to the uniform buffer
+    // for the resource_is_bound op.
+    if (this.ir) {
+      for (const inp of [...(this.ir.inputs || []), ...(this.ir.tuningParams || [])]) {
+        if (inp.type === 'texture2d') {
+          parts.push(`'tex_bound_${inp.id}': ctx.inputs.get('tex_bound_${inp.id}') ?? 0`);
+        }
+      }
     }
 
     return `{ ${parts.join(', ')} }`;

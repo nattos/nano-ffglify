@@ -37,6 +37,7 @@ export interface RuntimeInputEntry {
   max?: number;
   displayText?: string;
   isTuningParam?: boolean;
+  isSidechannel?: boolean;
 }
 
 interface InputSourceState {
@@ -291,6 +292,7 @@ export class RuntimeProxy {
         max: e.max,
         displayText: e.displayText,
         isTuningParam: e.isTuningParam,
+        isSidechannel: e.isSidechannel,
       };
       this.inputEntries.set(e.id, entry);
       if (e.type === 'texture') {

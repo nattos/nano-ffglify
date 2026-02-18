@@ -124,6 +124,16 @@ export class UiInspector extends MobxLitElement {
         border-style: solid;
     }
 
+    .sidechannel-chip {
+      font-size: 0.55rem;
+      color: #888;
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 3px;
+      padding: 0.05rem 0.3rem;
+      letter-spacing: 0.03em;
+    }
+
     /* Boolean Toggle Styles */
     .toggle {
       display: flex;
@@ -434,9 +444,12 @@ export class UiInspector extends MobxLitElement {
       <div class="input-item">
         <div class="label-row">
           <span class="label">${entry.label}</span>
-          <button class="reset-btn ${isFilled ? '' : 'disabled'}" @click=${() => this.handleResetTexture(entry)} title="Clear texture">
-            <ui-icon icon="la-undo" style="--icon-size: 0.7rem;"></ui-icon>
-          </button>
+          <span style="display:flex;align-items:center;gap:0.25rem;">
+            ${entry.isSidechannel ? html`<span class="sidechannel-chip">sidechannel</span>` : ''}
+            <button class="reset-btn ${isFilled ? '' : 'disabled'}" @click=${() => this.handleResetTexture(entry)} title="Clear texture">
+              <ui-icon icon="la-undo" style="--icon-size: 0.7rem;"></ui-icon>
+            </button>
+          </span>
         </div>
         <div
           class="texture-slot ${isFilled ? 'filled' : ''} ${isDragging ? 'dragging' : ''}"
