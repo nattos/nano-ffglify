@@ -878,7 +878,7 @@ export class WgslGenerator {
 
     // New logic: check global inputs from the IR document
     // We must check BOTH the function's own inputs AND the global inputs
-    const globalInput = options.fullIr?.inputs?.find((i: any) => i.id === varId);
+    const globalInput = options.fullIr?.inputs?.find((i: any) => i.id === varId) ?? options.fullIr?.tuningParams?.find((i: any) => i.id === varId);
     if (globalInput && options.inputBinding !== undefined) {
       const expr = `b_inputs.${varId}`;
       if (globalInput.type === 'bool') return `bool(${expr})`;
@@ -944,6 +944,7 @@ export class WgslGenerator {
           if (func.localVars.some(v => v.id === baseTid) ||
             func.inputs.some(i => i.id === baseTid) ||
             options.fullIr?.inputs?.some(i => i.id === baseTid) ||
+            options.fullIr?.tuningParams?.some(i => i.id === baseTid) ||
             options.varMap?.has(baseTid)) {
             return this.getVariableExpr(baseTid, func, options) + swizzleSuffix;
           }
@@ -1201,6 +1202,7 @@ export class WgslGenerator {
           targetIn?.type ||
           targetVar?.type ||
           options.fullIr?.inputs?.find(i => i.id === targetId)?.type ||
+          options.fullIr?.tuningParams?.find(i => i.id === targetId)?.type ||
           '';
         let t = rawType.toLowerCase();
 

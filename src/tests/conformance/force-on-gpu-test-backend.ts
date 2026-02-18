@@ -220,7 +220,7 @@ export const ForceOntoGPUTestBackend: TestBackend = {
           op: 'cmd_dispatch',
           func: gpuKernelId,
           dispatch: [1, 1, 1],
-          args: Object.fromEntries([...originalFunc.inputs, ...(ir.inputs || [])].map(i => [i.id, i.id]))
+          args: Object.fromEntries([...originalFunc.inputs, ...(ir.inputs || []), ...(ir.tuningParams || [])].map(i => [i.id, i.id]))
         },
         ...syncNodes
       ]

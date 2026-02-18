@@ -193,6 +193,18 @@ export function validateIR(json: unknown): ValidationResult {
     inputIds.add(i.id);
   });
 
+  // Check Duplicates: Tuning Params
+  (doc.tuningParams || []).forEach((i, idx) => {
+    if (inputIds.has(i.id)) {
+      semanticErrors.push({
+        path: ['tuningParams', idx.toString(), 'id'],
+        message: `Duplicate Tuning Param ID '${i.id}'.`,
+        code: 'semantic_error'
+      });
+    }
+    inputIds.add(i.id);
+  });
+
   // Check Duplicates: Resources
   doc.resources.forEach((r, idx) => {
     if (resourceIds.has(r.id)) {

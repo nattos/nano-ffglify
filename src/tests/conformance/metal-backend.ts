@@ -230,7 +230,7 @@ export const MetalBackend: TestBackend = {
 
     // Include shader function inputs in our iteration
     const shaderFunc = ir.functions.find(f => f.id === mslEntryPoint);
-    const combinedInputDefs = [...(ir.inputs || []), ...(shaderFunc?.inputs || [])];
+    const combinedInputDefs = [...(ir.inputs || []), ...(ir.tuningParams || []), ...(shaderFunc?.inputs || [])];
 
     for (const inputDef of combinedInputDefs) {
       const val = allInputs.get(inputDef.id);

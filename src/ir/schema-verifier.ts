@@ -277,6 +277,9 @@ function checkReferenceExists(id: string, ir?: IRDocument, func?: FunctionDef): 
   // 2. Check Inputs
   if (ir?.inputs?.some(i => i.id === baseId)) return true;
 
+  // 2b. Check Tuning Params
+  if (ir?.tuningParams?.some(i => i.id === baseId)) return true;
+
   // 3. Check Function Locals
   if (func?.localVars?.some(v => v.id === baseId)) return true;
 
