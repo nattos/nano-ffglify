@@ -441,7 +441,12 @@ export class UiInspector extends MobxLitElement {
     const isDragging = this.draggingId === entry.id;
 
     return html`
-      <div class="input-item">
+      <div class="input-item"
+        data-drop-target
+        @dragover=${(e: DragEvent) => this.handleDragOver(e, entry.id)}
+        @dragleave=${() => this.draggingId = null}
+        @drop=${(e: DragEvent) => this.handleDrop(e, entry.id)}
+      >
         <div class="label-row">
           <span class="label">${entry.label}</span>
           <span style="display:flex;align-items:center;gap:0.25rem;">
@@ -451,12 +456,7 @@ export class UiInspector extends MobxLitElement {
             </button>
           </span>
         </div>
-        <div
-          class="texture-slot ${isFilled ? 'filled' : ''} ${isDragging ? 'dragging' : ''}"
-          @dragover=${(e: DragEvent) => this.handleDragOver(e, entry.id)}
-          @dragleave=${() => this.draggingId = null}
-          @drop=${(e: DragEvent) => this.handleDrop(e, entry.id)}
-        >
+        <div class="texture-slot ${isFilled ? 'filled' : ''} ${isDragging ? 'dragging' : ''}">
           ${entry.displayText || 'Drag & drop image/video...'}
         </div>
       </div>

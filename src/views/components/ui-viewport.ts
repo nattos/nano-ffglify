@@ -142,6 +142,7 @@ export class UiViewport extends MobxLitElement {
     const hasRuntime = !!this.runtime;
     return html`
       <canvas
+        data-drop-target
         @dragover=${this.handleDragOver}
         @dragleave=${this.handleDragLeave}
         @drop=${this.handleDrop}

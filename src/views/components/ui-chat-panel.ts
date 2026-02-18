@@ -470,6 +470,7 @@ export class UiChatPanel extends MobxLitElement {
       </div>
 
       <div class="chat-history"
+        data-drop-target
         @scroll=${() => this.handleScroll()}
         @dragover=${(e: DragEvent) => this.handleDragOver(e)}
         @dragleave=${(e: DragEvent) => this.handleDragLeave(e)}

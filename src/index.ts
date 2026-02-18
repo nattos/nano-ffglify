@@ -143,9 +143,9 @@ export class App extends MobxLitElement {
       this.showApiKeyDialog = true;
     }
 
-    window.addEventListener('dragover', this.handleGlobalDragOver);
+    window.addEventListener('dragover', this.handleGlobalDragOver, true);
     window.addEventListener('dragleave', this.handleGlobalDragLeave);
-    window.addEventListener('drop', this.handleGlobalDrop);
+    window.addEventListener('drop', this.handleGlobalDrop, true);
   }
 
   // --- Drag resize ---
@@ -216,8 +216,12 @@ export class App extends MobxLitElement {
 
   private handleGlobalDragOver = (e: DragEvent) => {
     e.preventDefault();
-    this.isGlobalDragging = true;
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    // Hide global overlay when hovering a specific drop target (viewport, texture slot)
+    const hasSpecificTarget = e.composedPath().some(
+      el => el instanceof HTMLElement && el.hasAttribute('data-drop-target')
+    );
+    this.isGlobalDragging = !hasSpecificTarget;
   };
 
   private handleGlobalDragLeave = (e: DragEvent) => {
@@ -229,6 +233,11 @@ export class App extends MobxLitElement {
   private handleGlobalDrop = (e: DragEvent) => {
     e.preventDefault();
     this.isGlobalDragging = false;
+    // If a specific drop target handled this, let it deal with the file
+    const hasSpecificTarget = e.composedPath().some(
+      el => el instanceof HTMLElement && el.hasAttribute('data-drop-target')
+    );
+    if (hasSpecificTarget) return;
     const file = e.dataTransfer?.files[0];
     if (file) {
       if (file.name.endsWith('.json') || file.type === 'application/json') {
@@ -260,9 +269,9 @@ export class App extends MobxLitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    window.removeEventListener('dragover', this.handleGlobalDragOver);
+    window.removeEventListener('dragover', this.handleGlobalDragOver, true);
     window.removeEventListener('dragleave', this.handleGlobalDragLeave);
-    window.removeEventListener('drop', this.handleGlobalDrop);
+    window.removeEventListener('drop', this.handleGlobalDrop, true);
     window.removeEventListener('pointermove', this.onWindowPointerMove);
     window.removeEventListener('pointerup', this.onWindowPointerUp);
   }
