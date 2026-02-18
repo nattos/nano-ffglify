@@ -167,6 +167,30 @@ export const IRSchema = defineSchema<IRDocument>({
         }
       }
     },
+    tuningParams: {
+      type: 'array',
+      description: 'Tuning parameters: adjustable during development, hardcoded as literals in production builds. NOT exposed as host plugin parameters. Use for internal fine-tuning constants.',
+      required: false,
+      items: {
+        type: 'object',
+        description: 'Tuning parameter definition',
+        properties: {
+          id: { type: 'string', description: 'Variable name', required: true },
+          type: { type: 'string', description: 'Data type', required: true },
+          label: { type: 'string', description: 'UI Label', required: false },
+          comment: { type: 'string', description: 'Description', required: false },
+          format: { type: 'string', description: 'Format hint', required: false },
+          default: { type: 'any_value', description: 'Default value', required: false },
+          ui: {
+            type: 'object', description: 'UI Hint', required: false, properties: {
+              min: { type: 'number', description: 'Minimum value', required: false },
+              max: { type: 'number', description: 'Maximum value', required: false },
+              widget: { type: 'string', description: 'Widget type', enum: ['slider', 'color_picker', 'text', 'toggle', 'file'], required: false }
+            }
+          }
+        }
+      }
+    },
     resources: {
       type: 'array',
       description: 'Resource definitions (buffers/textures)',

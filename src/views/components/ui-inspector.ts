@@ -185,6 +185,15 @@ export class UiInspector extends MobxLitElement {
     }
 
     /* Reset button styles */
+    .section-heading {
+      color: #777;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 0.3rem 0 0 0;
+    }
+
     .reset-all-row {
       display: flex;
       justify-content: flex-end;
@@ -284,9 +293,16 @@ export class UiInspector extends MobxLitElement {
       return html`<div style="padding: 1rem; color: var(--app-text-muted, #888); font-size: 0.85rem; text-align: center;">${'\u2661'} No parameters yet</div>`;
     }
 
+    const params = entries.filter(e => !e.isTuningParam);
+    const tuning = entries.filter(e => e.isTuningParam);
+
     return html`
       <div class="input-list">
-        ${entries.map(entry => this.renderInput(entry))}
+        ${params.map(entry => this.renderInput(entry))}
+        ${tuning.length > 0 ? html`
+          <div class="section-heading">Tuning</div>
+          ${tuning.map(entry => this.renderInput(entry))}
+        ` : nothing}
       </div>
     `;
   }
@@ -496,7 +512,8 @@ export class UiInspector extends MobxLitElement {
     const value = entry.currentValue;
     const serialized = Array.isArray(value) ? [...value] : value;
     appController.mutate('Set input default', 'user', (draft) => {
-      const inp = draft.ir.inputs?.find(i => i.id === entry.id);
+      const inp = draft.ir.inputs?.find(i => i.id === entry.id)
+               ?? draft.ir.tuningParams?.find(i => i.id === entry.id);
       if (inp) {
         inp.default = serialized;
       }

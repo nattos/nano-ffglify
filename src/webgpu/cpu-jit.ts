@@ -253,7 +253,7 @@ require('./intrinsics.js');
       lines.push(`  resourceInfos.set('${res.id}', ${JSON.stringify(info)});`);
     });
     // Also precompute for texture inputs
-    ir.inputs.forEach(inp => {
+    [...ir.inputs, ...(ir.tuningParams || [])].forEach(inp => {
       if (inp.type === 'texture2d') {
         const info = precomputeResourceLayout({ ...inp, type: 'texture2d' }, ir.structs);
         lines.push(`  resourceInfos.set('${inp.id}', ${JSON.stringify(info)});`);
@@ -622,7 +622,7 @@ require('./intrinsics.js');
           };
           if (func.localVars.some(v => v.id === baseS)) return applySwizzle(sanitizeId(baseS, 'var'));
           if (func.inputs.some(i => i.id === baseS)) return applySwizzle(sanitizeId(baseS, 'input'));
-          if (this.ir?.inputs.some((i: any) => i.id === baseS)) return applySwizzle(`ctx.inputs.get('${baseS}')`);
+          if (this.ir?.inputs.some((i: any) => i.id === baseS) || this.ir?.tuningParams?.some((i: any) => i.id === baseS)) return applySwizzle(`ctx.inputs.get('${baseS}')`);
           const targetNode = func.nodes.find(n => n.id === baseS);
           if (targetNode && targetNode.id !== node.id) return applySwizzle(this.compileExpression(targetNode, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, false, emitPure, edges));
         }

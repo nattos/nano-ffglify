@@ -177,8 +177,8 @@ export class WgslGenerator {
     // For shaders, we use both the function's own inputs AND global inputs.
     // This allows shaders to access top-level graph parameters.
     const inputSource = entryFunc.type === 'shader'
-      ? [...(fullIr.inputs || []), ...entryFunc.inputs]
-      : (fullIr.inputs || []);
+      ? [...(fullIr.inputs || []), ...(fullIr.tuningParams || []), ...entryFunc.inputs]
+      : [...(fullIr.inputs || []), ...(fullIr.tuningParams || [])];
 
     // Deduplicate inputs by ID
     const uniqueInputsMap = new Map();
@@ -333,7 +333,7 @@ export class WgslGenerator {
     if (!options.resourceDefs) {
       options.resourceDefs = new Map<string, any>(ir.resources.map(r => [r.id, r]));
       // Also include texture-inputs as resources so resource_get_size works for them
-      ir.inputs.forEach(input => {
+      [...ir.inputs, ...(ir.tuningParams || [])].forEach(input => {
         if (input.type === 'texture2d') {
           if (!options.resourceDefs!.has(input.id)) {
             options.resourceDefs!.set(input.id, { ...input, type: 'texture2d' } as any);
@@ -350,7 +350,7 @@ export class WgslGenerator {
         options.resourceBindings!.set(res.id, bindingIdx++);
       });
       // Detect texture-inputs and treat them as resources (consistent with WebGpuExecutor)
-      ir.inputs.forEach(input => {
+      [...ir.inputs, ...(ir.tuningParams || [])].forEach(input => {
         if ((input.type === 'texture2d') && !options.resourceBindings!.has(input.id)) {
           options.resourceBindings!.set(input.id, bindingIdx++);
         }
@@ -1659,7 +1659,7 @@ export class WgslGenerator {
           if (v) t = v.type;
         }
         if (!t) {
-          const gi = ir.inputs?.find(i => i.id === val);
+          const gi = ir.inputs?.find(i => i.id === val) ?? ir.tuningParams?.find(i => i.id === val);
           if (gi) t = gi.type;
         }
         // Fallback: Check node op if reachable
@@ -1689,7 +1689,7 @@ export class WgslGenerator {
                 if (fi) return fi.type;
                 const lv = func.localVars.find(v => v.id === argVal);
                 if (lv) return lv.type;
-                const gi = ir.inputs?.find(i => i.id === argVal);
+                const gi = ir.inputs?.find(i => i.id === argVal) ?? ir.tuningParams?.find(i => i.id === argVal);
                 if (gi) return gi.type;
                 const nn = func.nodes.find(n => n.id === argVal);
                 if (nn && (nn.op === 'loop_index' || nn.op === 'array_length')) return 'int';
@@ -1814,7 +1814,7 @@ export class WgslGenerator {
 
   public static findUsedResources(func: FunctionDef, ir: IRDocument | ResourceDef[]): Set<string> {
     const resources = new Set<string>();
-    const allResources = Array.isArray(ir) ? ir : [...(ir.resources || []), ...ir.inputs];
+    const allResources = Array.isArray(ir) ? ir : [...(ir.resources || []), ...ir.inputs, ...(ir.tuningParams || [])];
     const resourceIds = new Set(allResources.map(r => r.id));
 
     func.nodes.forEach(node => {

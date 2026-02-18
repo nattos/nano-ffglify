@@ -43,6 +43,7 @@ export interface IRDocument {
   resources: ResourceDef[];
   globals?: any[]; // Globals for inter-node communication
   structs?: StructDef[]; // Shared struct type definitions
+  tuningParams?: InputDef[];
   functions: FunctionDef[];
   comment?: string;
 }

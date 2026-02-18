@@ -218,7 +218,12 @@ async function handleSetCompiled(ir: IRDocument, finalInitCode: string, finalTas
 
     const inputEntries: RuntimeInputEntryMsg[] = [];
 
-    ir.inputs.forEach(inp => {
+    const allInputDefs = [
+      ...(ir.inputs || []).map(inp => ({ ...inp, _isTuning: false })),
+      ...(ir.tuningParams || []).map(inp => ({ ...inp, _isTuning: true })),
+    ];
+
+    allInputDefs.forEach(inp => {
       const type = mapDataTypeToRuntimeType(inp.type);
       if (!type) return;
 
@@ -230,6 +235,7 @@ async function handleSetCompiled(ir: IRDocument, finalInitCode: string, finalTas
         defaultValue: inp.default,
         min: inp.ui?.min,
         max: inp.ui?.max,
+        isTuningParam: inp._isTuning,
       };
 
       if (inp.type === 'texture2d') {

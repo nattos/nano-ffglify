@@ -27,7 +27,8 @@ export const validateStaticLogic = (doc: IRDocument): LogicValidationError[] => 
   // Global Context for Type Resolution
   const resourceIds = new Set([
     ...(doc.resources || []).map(r => r.id),
-    ...(doc.inputs || []).map(i => i.id)
+    ...(doc.inputs || []).map(i => i.id),
+    ...(doc.tuningParams || []).map(i => i.id)
   ]);
 
   // Check Entry Point
@@ -67,7 +68,8 @@ export const inferFunctionTypes = (func: FunctionDef, ir: IRDocument): InferredT
 export const analyzeFunction = (func: FunctionDef, ir: IRDocument): FunctionAnalysis => {
   const resourceIds = new Set([
     ...(ir.resources || []).map(r => r.id),
-    ...(ir.inputs || []).map(i => i.id)
+    ...(ir.inputs || []).map(i => i.id),
+    ...(ir.tuningParams || []).map(i => i.id)
   ]);
   const cache: InferredTypes = new Map();
   const usedBuiltins = new Set<string>();
@@ -195,7 +197,7 @@ const resolveNodeType = (
           const baseId = propVal.substring(0, dotIdx);
           const localVar = func.localVars?.find(v => v.id === baseId);
           const funcInput = func.inputs?.find(i => i.id === baseId);
-          const globalInput = doc.inputs?.find(i => i.id === baseId);
+          const globalInput = doc.inputs?.find(i => i.id === baseId) ?? doc.tuningParams?.find(i => i.id === baseId);
           if (localVar) srcType = localVar.type as ValidationType;
           else if (funcInput) srcType = funcInput.type as ValidationType;
           else if (globalInput) srcType = globalInput.type as ValidationType;
@@ -251,7 +253,7 @@ const resolveNodeType = (
       const refNode = func.nodes.find(n => n.id === baseVal);
       const refInput = func.inputs.find(i => i.id === baseVal);
       const refLocal = func.localVars.find(v => v.id === baseVal);
-      const refGlobal = doc.inputs?.find(i => i.id === baseVal);
+      const refGlobal = doc.inputs?.find(i => i.id === baseVal) ?? doc.tuningParams?.find(i => i.id === baseVal);
 
       let baseType: ValidationType | undefined;
 
@@ -525,7 +527,7 @@ const resolveNodeType = (
     if (node.op === 'var_get') {
       const varId = node['var'];
       const localVar = func.localVars.find(v => v.id === varId);
-      const globalVar = doc.inputs?.find(i => i.id === varId);
+      const globalVar = doc.inputs?.find(i => i.id === varId) ?? doc.tuningParams?.find(i => i.id === varId);
       const funcInput = func.inputs.find(i => i.id === varId);
       const type = localVar?.type || funcInput?.type || globalVar?.type || 'float';
       const vType = type as ValidationType;
@@ -837,7 +839,7 @@ export const validateResources = (doc: IRDocument, errors: LogicValidationError[
 };
 
 export const validateInputs = (doc: IRDocument, errors: LogicValidationError[]) => {
-  (doc.inputs || []).forEach(input => {
+  [...(doc.inputs || []), ...(doc.tuningParams || [])].forEach(input => {
     validateDataType(input.type, doc, errors, `Input '${input.id}'`);
 
     const def = input.default;
@@ -951,6 +953,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
     ...func.inputs.map(i => i.id),
     ...func.localVars.map(v => v.id),
     ...(doc.inputs || []).map(i => i.id),
+    ...(doc.tuningParams || []).map(i => i.id),
     ...(doc.resources || []).map(r => r.id)
   ]);
 
@@ -982,7 +985,7 @@ const validateFunction = (func: FunctionDef, doc: IRDocument, resourceIds: Set<s
     if (node.op === 'var_get' || node.op === 'var_set') {
       const varId = node['var'];
       const isLocal = func.localVars.some(v => v.id === varId);
-      const isGlobal = (doc.inputs || []).some(i => i.id === varId);
+      const isGlobal = (doc.inputs || []).some(i => i.id === varId) || (doc.tuningParams || []).some(i => i.id === varId);
       // Also check function arguments (inputs)
       const isArg = func.inputs.some(i => i.id === varId);
 

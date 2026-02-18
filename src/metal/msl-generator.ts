@@ -73,8 +73,8 @@ export class MslGenerator {
     let varOffset = 0;
 
     // Allocate space for inputs.
-    // Use IR-global inputs and entry point inputs.
-    const inputs = [...(ir.inputs || [])];
+    // Use IR-global inputs, tuning params, and entry point inputs.
+    const inputs = [...(ir.inputs || []), ...(ir.tuningParams || [])];
     if (entryFunc.type === 'shader' && entryFunc.inputs) {
       for (const inp of entryFunc.inputs) {
         if (!inputs.some(i => i.id === inp.id)) inputs.push(inp);
@@ -128,7 +128,7 @@ export class MslGenerator {
       }
     }
     // 2. Texture inputs second
-    for (const input of ir.inputs || []) {
+    for (const input of [...(ir.inputs || []), ...(ir.tuningParams || [])]) {
       if (input.type === 'texture2d' && !resourceBindings.has(input.id)) {
         resourceBindings.set(input.id, bindingCounter++);
       }
@@ -201,7 +201,7 @@ export class MslGenerator {
         }
       }
       // 2. Texture inputs second
-      for (const input of ir.inputs || []) {
+      for (const input of [...(ir.inputs || []), ...(ir.tuningParams || [])]) {
         if (input.type === 'texture2d' && !resourceBindings.has(input.id)) {
           resourceBindings.set(input.id, bindingCounter++);
         }
@@ -231,7 +231,7 @@ export class MslGenerator {
 
       // Allocate varMap for inputs and local vars (same as compile())
       // Use shader's own inputs if present, otherwise use IR globals
-      const funcInputs = (entryFunc.type === 'shader' ? entryFunc.inputs : ir.inputs) || [];
+      const funcInputs = (entryFunc.type === 'shader' ? entryFunc.inputs : [...(ir.inputs || []), ...(ir.tuningParams || [])]) || [];
       for (const input of funcInputs) {
         if (!varMap.has(input.id)) {
           varMap.set(input.id, varOffset);
@@ -239,7 +239,7 @@ export class MslGenerator {
         }
       }
       // Also allocate IR global inputs for input inheritance (var_get on globals)
-      for (const input of ir.inputs || []) {
+      for (const input of [...(ir.inputs || []), ...(ir.tuningParams || [])]) {
         if (!varMap.has(input.id)) {
           varMap.set(input.id, varOffset);
           varOffset += this.getTypeSize(input.type);
@@ -372,6 +372,7 @@ export class MslGenerator {
     return [
       ...this.ir.resources.filter(r => r.isOutput),
       ...this.ir.inputs.filter(i => i.type === 'texture2d'),
+      ...(this.ir.tuningParams || []).filter(i => i.type === 'texture2d'),
       ...this.ir.resources.filter(r => !r.isOutput)
     ];
   }
@@ -449,7 +450,7 @@ export class MslGenerator {
     }
 
     // Collect global inputs that might be accessed via var_get
-    const inputs = (this.ir?.inputs || []).filter(i => i.type !== 'texture2d');
+    const inputs = [...(this.ir?.inputs || []), ...(this.ir?.tuningParams || [])].filter(i => i.type !== 'texture2d');
     const hasGlobalInputs = inputs.length > 0;
 
     // Pre-detect if output_size is used by any function in the shader
@@ -475,7 +476,8 @@ export class MslGenerator {
     // Add resource bindings (textures, buffers) starting at binding 1+
     for (const [resId, binding] of resourceBindings) {
       const res = this.ir?.resources.find(r => r.id === resId) ||
-        this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d');
+        this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d') ||
+        this.ir?.tuningParams?.find(i => i.id === resId && i.type === 'texture2d');
       if (!res) continue;
 
       if ('type' in res && res.type === 'buffer') {
@@ -568,20 +570,21 @@ export class MslGenerator {
     const bufferParams: string[] = [];
 
     // Combine IR-global and shader-specific inputs
-    const inputs = [...(this.ir?.inputs || [])];
+    const inputs = [...(this.ir?.inputs || []), ...(this.ir?.tuningParams || [])];
     if (func.type === 'shader' && func.inputs) {
       for (const inp of func.inputs) {
         if (!inputs.some(i => i.id === inp.id)) inputs.push(inp);
       }
     }
 
-    const hasShaderInputs = (func.type === 'shader' || (this.ir?.inputs && this.ir.inputs.length > 0)) && inputs.length > 0;
+    const hasShaderInputs = (func.type === 'shader' || inputs.length > 0) && inputs.length > 0;
 
     bufferParams.push('device float* b_globals [[buffer(0)]]');
 
     for (const [resId, binding] of resourceBindings) {
       const res = this.ir?.resources.find(r => r.id === resId) ||
-        this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d');
+        this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d') ||
+        this.ir?.tuningParams?.find(i => i.id === resId && i.type === 'texture2d');
       if (!res) continue;
 
       if ('type' in res && res.type === 'atomic_counter') {
@@ -1369,7 +1372,8 @@ export class MslGenerator {
       case 'resource_get_size': {
         const resId = node['resource'];
         const resDef = this.ir?.resources.find(r => r.id === resId) ||
-          this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d');
+          this.ir?.inputs.find(i => i.id === resId && i.type === 'texture2d') ||
+          this.ir?.tuningParams?.find(i => i.id === resId && i.type === 'texture2d');
 
         if (resDef && (resDef.type === 'texture2d')) {
           // For textures in shader context, use runtime Metal calls
@@ -1577,8 +1581,8 @@ export class MslGenerator {
 
   private getVariableExpr(varId: string, func: FunctionDef, varMap: Map<string, number>): string {
     // Check if it's a shader function input or an IR global input - use the unpacked local variable
-    if ((func.type === 'shader' || this.ir?.inputs?.length) &&
-      (func.inputs?.some(i => i.id === varId) || this.ir?.inputs?.some(i => i.id === varId))) {
+    if ((func.type === 'shader' || this.ir?.inputs?.length || this.ir?.tuningParams?.length) &&
+      (func.inputs?.some(i => i.id === varId) || this.ir?.inputs?.some(i => i.id === varId) || this.ir?.tuningParams?.some(i => i.id === varId))) {
       return this.sanitizeId(varId);
     }
 

@@ -175,6 +175,11 @@ export class CppGenerator {
         const argExpr = `ctx.getInput("${input.id}")`;
         this.emitArgFlattening('    ', argExpr, irType, lines);
       }
+      for (const input of (this.ir!.tuningParams || [])) {
+        const irType = input.type || 'float';
+        const argExpr = `ctx.getInput("${input.id}")`;
+        this.emitArgFlattening('    ', argExpr, irType, lines);
+      }
       // Dispatch with default 1,1,1 for test harness
       lines.push(`    ctx.dispatchShader("${entryPointId}", 1, 1, 1, _shader_args);`);
       lines.push('}');
@@ -309,6 +314,7 @@ export class CppGenerator {
     return [
       ...this.ir.resources.filter(r => r.isOutput),
       ...this.ir.inputs.filter(i => i.type === 'texture2d'),
+      ...(this.ir.tuningParams || []).filter(i => i.type === 'texture2d'),
       ...this.ir.resources.filter(r => !r.isOutput)
     ];
   }
@@ -804,7 +810,7 @@ export class CppGenerator {
       const hasExplicitInputs = targetFuncDef?.inputs && targetFuncDef.inputs.length > 0;
 
       // If shader has no explicit inputs but IR has global inputs, serialize those
-      const hasGlobalInputs = !hasExplicitInputs && this.ir?.inputs && this.ir.inputs.length > 0;
+      const hasGlobalInputs = !hasExplicitInputs && this.ir?.inputs && (this.ir.inputs.length > 0 || (this.ir.tuningParams || []).length > 0);
 
       // Collect CPU-allowed builtins used by the target shader
       const shaderAnalysis = this.functionAnalysis.get(targetFunc);
@@ -833,6 +839,10 @@ export class CppGenerator {
         } else if (hasGlobalInputs) {
           // No explicit function inputs — serialize IR global inputs instead
           for (const input of this.ir!.inputs!) {
+            const irType = input.type || 'float';
+            this.emitGlobalInputFlattening(`${indent}    `, input.id, irType, lines, []);
+          }
+          for (const input of (this.ir!.tuningParams || [])) {
             const irType = input.type || 'float';
             this.emitGlobalInputFlattening(`${indent}    `, input.id, irType, lines, []);
           }
@@ -899,12 +909,13 @@ export class CppGenerator {
       const drawBufferSizeResources = this.collectBufferSizeResources(vertex, fragment);
 
       // Build args for global inputs (accessible via var_get in vertex/fragment shaders)
-      const hasGlobalInputs = this.ir?.inputs && this.ir.inputs.filter(i => i.type !== 'texture2d').length > 0;
+      const allGlobalInputs = [...(this.ir?.inputs || []), ...(this.ir?.tuningParams || [])];
+      const hasGlobalInputs = allGlobalInputs.filter(i => i.type !== 'texture2d').length > 0;
       if (hasGlobalInputs || drawNeedsOutputSize || drawBufferSizeResources.length > 0) {
         lines.push(`${indent}{`);
         lines.push(`${indent}    std::vector<float> _shader_args;`);
         if (hasGlobalInputs) {
-          for (const input of this.ir!.inputs!) {
+          for (const input of allGlobalInputs) {
             if (input.type === 'texture2d') continue;
             const irType = input.type || 'float';
             this.emitGlobalInputFlattening(`${indent}    `, input.id, irType, lines, []);
@@ -1001,9 +1012,9 @@ export class CppGenerator {
         if (func.localVars.some(v => v.id === baseVal)) return applySwizzle(this.sanitizeId(baseVal, 'var'), getElemType(baseVal));
         if (func.inputs.some(i => i.id === baseVal)) return applySwizzle(this.sanitizeId(baseVal, 'input'), getElemType(baseVal));
         // Check IR global inputs (input inheritance)
-        if (this.ir?.inputs?.some(i => i.id === baseVal)) {
+        if (this.ir?.inputs?.some(i => i.id === baseVal) || this.ir?.tuningParams?.some(i => i.id === baseVal)) {
           const varId = baseVal;
-          const inputDef = this.ir.inputs.find(i => i.id === varId)!;
+          const inputDef = (this.ir.inputs.find(i => i.id === varId) ?? this.ir.tuningParams?.find(i => i.id === varId))!;
           let baseExpr: string;
           if (inputDef.type === 'float2') {
             baseExpr = `std::array<float, 2>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1")}`;
@@ -1160,8 +1171,8 @@ export class CppGenerator {
         const varId = node['var'];
         if (func.localVars.some(v => v.id === varId)) return this.sanitizeId(varId, 'var');
         if (func.inputs.some(i => i.id === varId)) return this.sanitizeId(varId, 'input');
-        if (this.ir?.inputs?.some(i => i.id === varId)) {
-          const inputDef = this.ir.inputs.find(i => i.id === varId)!;
+        if (this.ir?.inputs?.some(i => i.id === varId) || this.ir?.tuningParams?.some(i => i.id === varId)) {
+          const inputDef = (this.ir.inputs.find(i => i.id === varId) ?? this.ir.tuningParams?.find(i => i.id === varId))!;
           if (inputDef.type === 'float2') {
             return `std::array<float, 2>{ctx.getInput("${varId}_0"), ctx.getInput("${varId}_1")}`;
           }

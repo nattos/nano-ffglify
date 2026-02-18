@@ -122,6 +122,7 @@ export interface RuntimeInputEntryMsg {
   min?: number;
   max?: number;
   displayText?: string;
+  isTuningParam?: boolean;
 }
 
 export interface ReadyMsg { type: 'ready' }
