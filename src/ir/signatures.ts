@@ -444,4 +444,16 @@ export const OpSignatures: Partial<Record<BuiltinOp, OpSignature[]>> = {
   'atomic_min':      [{ inputs: { counter: 'string', index: 'int', value: 'int' }, output: 'int' }],
   'atomic_max':      [{ inputs: { counter: 'string', index: 'int', value: 'int' }, output: 'int' }],
   'atomic_exchange': [{ inputs: { counter: 'string', index: 'int', value: 'int' }, output: 'int' }],
+
+  // PRNG
+  'prng_make': [
+    { inputs: { seed: 'float' }, output: 'any' },
+    { inputs: { seed: 'int' }, output: 'any' },
+    { inputs: {}, output: 'any' },
+  ],
+  'prng_next': [
+    { inputs: { prng: 'string' }, output: 'any' },
+    { inputs: { prng: 'string', type: 'string' }, output: 'any' },
+    { inputs: { prng: 'string', type: 'string', min: 'float', max: 'float' }, output: 'any' },
+  ],
 };

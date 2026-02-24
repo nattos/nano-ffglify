@@ -149,3 +149,16 @@ fn color_mix_impl(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   if (outA < 1e-6) { return vec4<f32>(0.0); }
   return vec4<f32>((src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / outA, outA);
 }
+
+fn _prng_hash(x_in: i32) -> i32 {
+  var x = bitcast<u32>(x_in);
+  x ^= x >> 16u;
+  x *= 0x45d9f3bu;
+  x ^= x >> 16u;
+  x *= 0x45d9f3bu;
+  x ^= x >> 16u;
+  return bitcast<i32>(x);
+}
+fn _prng_hash_to_float(x: i32) -> f32 {
+  return f32(bitcast<u32>(_prng_hash(x))) / 4294967295.0;
+}

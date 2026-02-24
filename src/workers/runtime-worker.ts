@@ -339,7 +339,7 @@ async function executeFrame(time: number) {
   const rawDeltaMs = lastFrameTime > 0 ? (time - lastFrameTime) : 0;
   const deltaTime = Math.min(rawDeltaMs / 1000, 0.1);
   elapsedTime += deltaTime;
-  executor.setBuiltins({ time: elapsedTime, delta_time: deltaTime });
+  executor.setBuiltins({ time: elapsedTime, delta_time: deltaTime, prng_seed: Math.random() });
 
   try {
     // Re-render animated test cards

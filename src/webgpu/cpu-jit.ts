@@ -86,7 +86,8 @@ export class CpuJitCompiler {
       'var_get', 'buffer_load', 'texture_load', 'texture_sample', 'call_func', 'vec_swizzle',
       'color_mix', 'vec_get_element', 'quat',
       'resource_get_size', 'resource_get_format', 'resource_is_bound', 'builtin_get', 'const_get',
-      'atomic_load', 'atomic_add', 'atomic_sub', 'atomic_min', 'atomic_max', 'atomic_exchange'
+      'atomic_load', 'atomic_add', 'atomic_sub', 'atomic_min', 'atomic_max', 'atomic_exchange',
+      'prng_make', 'prng_next'
     ];
     return valueOps.includes(op);
   }
@@ -336,6 +337,7 @@ require('./intrinsics.js');
         else if (t === 'float3x3') init = '[0,0,0,0,0,0,0,0,0]';
         else if (t === 'float4x4') init = '[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]';
         else if (t === 'bool' || t === 'boolean') init = 'false';
+        else if (t === 'prng') init = '0';
         else init = '0';
       }
       lines.push(`  let ${sanitizeId(v.id, 'var')
@@ -387,7 +389,8 @@ require('./intrinsics.js');
     const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
       op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' ||
       op === 'cmd_resize_resource' || op === 'cmd_draw' || op === 'cmd_dispatch' ||
-      op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange';
+      op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange' ||
+      op === 'prng_next';
 
     if (isSideEffecting) return true;
 
@@ -570,6 +573,47 @@ require('./intrinsics.js');
         const x = Math.floor(coords[0]), y = Math.floor(coords[1]);
         if (x >= 0 && x < res.width && y >= 0 && y < res.height) res.data[y * res.width + x] = val;
       })(${coords}, ${val});`);
+    }
+    else if (node.op === 'prng_next') {
+      const varId = node['prng'];
+      const outputType = node['type'] || 'float';
+      const varExpr = sanitizeId(varId, 'var');
+      // Compute number of hash calls needed
+      const componentCount: Record<string, number> = { float: 1, int: 1, float2: 2, float3: 3, float4: 4, int2: 2, int3: 3, int4: 4 };
+      const count = componentCount[outputType] || 1;
+      const isInt = outputType === 'int' || outputType.startsWith('int');
+
+      if (count === 1 && !isInt) {
+        // Single float [0,1]
+        lines.push(`${indent}${varExpr} = (${varExpr} + 1) | 0;`);
+        lines.push(`${indent}${nodeResId(node.id)} = _prng_hash_to_float(${varExpr});`);
+      } else if (count === 1 && isInt) {
+        // Single int with optional min/max
+        lines.push(`${indent}${varExpr} = (${varExpr} + 1) | 0;`);
+        const hasMin = node['min'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'min' && e.type === 'data');
+        const hasMax = node['max'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'max' && e.type === 'data');
+        if (hasMin && hasMax) {
+          const minExpr = this.resolveArg(node, 'min', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+          const maxExpr = this.resolveArg(node, 'max', func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, emitPure, edges);
+          lines.push(`${indent}${nodeResId(node.id)} = (Math.trunc(${minExpr}) + (((_prng_hash(${varExpr}) >>> 0) % (Math.trunc(${maxExpr}) - Math.trunc(${minExpr}) + 1)) | 0)) | 0;`);
+        } else {
+          lines.push(`${indent}${nodeResId(node.id)} = _prng_hash(${varExpr});`);
+        }
+      } else {
+        // Vector output: advance counter by count, then use offset arithmetic
+        lines.push(`${indent}${varExpr} = (${varExpr} + ${count}) | 0;`);
+        const parts: string[] = [];
+        for (let i = 0; i < count; i++) {
+          const offset = count - 1 - i;
+          const argExpr = offset > 0 ? `(${varExpr} - ${offset}) | 0` : varExpr;
+          if (isInt) {
+            parts.push(`_prng_hash(${argExpr})`);
+          } else {
+            parts.push(`_prng_hash_to_float(${argExpr})`);
+          }
+        }
+        lines.push(`${indent}${nodeResId(node.id)} = [${parts.join(', ')}];`);
+      }
     }
     else if (this.hasResult(node.op)) {
       lines.push(`${indent}${nodeResId(node.id)} = ${this.compileExpression(node, func, sanitizeId, nodeResId, funcName, allFunctions, inferredTypes, true, emitPure, edges)};`);
@@ -1083,6 +1127,17 @@ require('./intrinsics.js');
         return `ctx.builtins['${name}']`;
       }
 
+      case 'prng_make': {
+        const hasSeed = node['seed'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'seed' && e.type === 'data');
+        if (hasSeed) {
+          const seed = a('seed');
+          return `_prng_hash(Math.trunc(${seed}))`;
+        }
+        // Auto-seed: hash of prng_seed builtin + compile-time function name hash
+        const funcHash = this.hashString(func.id);
+        return `_prng_hash((Math.trunc(ctx.builtins['prng_seed'] * 2147483647.0) + ${funcHash}) | 0)`;
+      }
+
       default: return '0';
     }
   }
@@ -1159,6 +1214,14 @@ require('./intrinsics.js');
     return 'float';
   }
 
+  private hashString(s: string): number {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+    }
+    return h;
+  }
+
   private generateArgsObject(node: Node, func: FunctionDef, sanitizeId: (id: string, type?: any) => string, nodeResId: (id: string) => string, funcName: (id: string) => string, allFunctions: FunctionDef[], inferredTypes: InferredTypes, emitPure: (id: string) => void, edges: Edge[]): string {
     const targetId = node['func'] as string;
     const targetFunc = allFunctions.find(f => f.id === targetId);
@@ -1174,12 +1237,18 @@ require('./intrinsics.js');
     // Automatically inject used built-ins
     const analysis = this.functionAnalysis.get(targetId);
     if (analysis && targetFunc.type === 'shader') {
-      const standardBuiltins = ['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'];
+      const standardBuiltins = ['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta', 'prng_seed'];
+      const injected = new Set<string>();
       analysis.usedBuiltins.forEach(b => {
         if (standardBuiltins.includes(b)) {
           parts.push(`'${b}': ctx.builtins['${b}']`);
+          injected.add(b);
         }
       });
+      // Auto-inject prng_seed if shader has prng_make nodes (auto-seed needs it)
+      if (!injected.has('prng_seed') && targetFunc.nodes.some(n => n.op === 'prng_make')) {
+        parts.push(`'prng_seed': ctx.builtins['prng_seed']`);
+      }
     }
 
     // Automatically-managed resource bound flags, forwarded to the uniform buffer

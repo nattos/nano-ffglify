@@ -79,6 +79,11 @@ export class WgslGenerator {
       this.allUsedBuiltins.add('global_invocation_id');
     }
 
+    // Auto-inject prng_seed if any function uses prng_make (auto-seed needs it)
+    functions.forEach(f => {
+      if (f.nodes.some(n => n.op === 'prng_make')) this.allUsedBuiltins.add('prng_seed');
+    });
+
     const fullIr: IRDocument = {
       version: '1.0',
       meta: { name: 'generated' },
@@ -198,7 +203,7 @@ export class WgslGenerator {
         docInputs.push({ id: 'u_dispatch_size', type: 'vec3<u32>' });
 
         // Standard built-ins supported via uniform/storage buffer
-        const standardBuiltins = ['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'];
+        const standardBuiltins = ['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta', 'prng_seed'];
         standardBuiltins.forEach(b => {
           if (this.allUsedBuiltins.has(b)) {
             docInputs.push({ id: b, type: 'float' });
@@ -605,7 +610,7 @@ export class WgslGenerator {
   }
 
   private isExecutable(op: string, edges: Edge[], nodeId: string) {
-    const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' || op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' || op === 'vec_set_element' || op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange';
+    const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' || op === 'buffer_store' || op === 'texture_store' || op === 'call_func' || op === 'func_return' || op === 'array_set' || op === 'vec_set_element' || op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange' || op === 'prng_next';
 
     if (isSideEffecting) return true;
 
@@ -724,6 +729,39 @@ export class WgslGenerator {
         'atomic_exchange': 'atomicExchange'
       };
       lines.push(`${indent}let v_${node.id} = ${wgslOp[node.op]}(&${bufVar}.data[u32(${idx})], i32(${val}));`);
+    } else if (node.op === 'prng_next') {
+      const varId = node['prng'];
+      const outputType = (node['type'] || 'float') as string;
+      const componentCount: Record<string, number> = { float: 1, int: 1, float2: 2, float3: 3, float4: 4, int2: 2, int3: 3, int4: 4 };
+      const count = componentCount[outputType] || 1;
+      const isInt = outputType === 'int' || outputType.startsWith('int');
+
+      if (count === 1 && !isInt) {
+        lines.push(`${indent}l_${varId} = l_${varId} + 1;`);
+        lines.push(`${indent}let v_${node.id} = _prng_hash_to_float(l_${varId});`);
+      } else if (count === 1 && isInt) {
+        lines.push(`${indent}l_${varId} = l_${varId} + 1;`);
+        const hasMin = node['min'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'min' && e.type === 'data');
+        const hasMax = node['max'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'max' && e.type === 'data');
+        if (hasMin && hasMax) {
+          const minExpr = this.resolveArg(node, 'min', func, options, ir, 'int', edges);
+          const maxExpr = this.resolveArg(node, 'max', func, options, ir, 'int', edges);
+          lines.push(`${indent}let v_${node.id} = i32(${minExpr}) + i32(bitcast<u32>(_prng_hash(l_${varId})) % u32(i32(${maxExpr}) - i32(${minExpr}) + 1));`);
+        } else {
+          lines.push(`${indent}let v_${node.id} = _prng_hash(l_${varId});`);
+        }
+      } else {
+        // Vector output: advance state count times
+        lines.push(`${indent}l_${varId} = l_${varId} + ${count};`);
+        const parts: string[] = [];
+        for (let i = 0; i < count; i++) {
+          const offset = count - 1 - i;
+          const stateExpr = offset === 0 ? `l_${varId}` : `(l_${varId} - ${offset})`;
+          parts.push(isInt ? `_prng_hash(${stateExpr})` : `_prng_hash_to_float(${stateExpr})`);
+        }
+        const vecType = isInt ? `vec${count}<i32>` : `vec${count}<f32>`;
+        lines.push(`${indent}let v_${node.id} = ${vecType}(${parts.join(', ')});`);
+      }
     } else if (node.op === 'call_func') {
       const targetFunc = ir.functions.find(f => f.id === node['func']);
       if (targetFunc) {
@@ -916,7 +954,7 @@ export class WgslGenerator {
             break;
           }
         }
-        if (src.op === 'call_func' || src.op === 'atomic_add' || src.op === 'atomic_sub' || src.op === 'atomic_min' || src.op === 'atomic_max' || src.op === 'atomic_exchange') return `v_${src.id}` + edgeSwizzle;
+        if (src.op === 'call_func' || src.op === 'atomic_add' || src.op === 'atomic_sub' || src.op === 'atomic_min' || src.op === 'atomic_max' || src.op === 'atomic_exchange' || src.op === 'prng_next') return `v_${src.id}` + edgeSwizzle;
         if (src.op === 'var_get') return this.getVariableExpr(src['var'], func, options) + edgeSwizzle;
         return this.compileExpression(src, func, options, ir, targetType, edges) + edgeSwizzle;
       }
@@ -1255,6 +1293,19 @@ export class WgslGenerator {
       if (!member) return `${struct}.undefined_member`;
       return `${struct}.${member}`;
     }
+    if (node.op === 'prng_make') {
+      const hasSeed = node['seed'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'seed' && e.type === 'data');
+      if (hasSeed) {
+        const seed = this.resolveArg(node, 'seed', func, options, ir, 'float', edges);
+        return `_prng_hash(i32(${seed}))`;
+      }
+      // Auto-seed: hash of prng_seed + compile-time function name hash + gid
+      const funcHash = this.hashString(func.id);
+      if (options.stage === 'compute') {
+        return `_prng_hash(i32(b_inputs.prng_seed * 2147483647.0) + ${funcHash} + GlobalInvocationID.x + GlobalInvocationID.y * 65536)`;
+      }
+      return `_prng_hash(i32(b_inputs.prng_seed * 2147483647.0) + ${funcHash})`;
+    }
     if (node.op === 'builtin_get') {
       const name = node['name'];
       const outType = options.nodeTypes?.get(node.id) || 'float3';
@@ -1271,7 +1322,7 @@ export class WgslGenerator {
       else if (name === 'vertex_index') expr = 'VertexIndex';
       else if (name === 'instance_index') expr = 'InstanceIndex';
       else if (name === 'output_size') expr = 'b_inputs.output_size';
-      else if (['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'].includes(name)) expr = `b_inputs.${name}`;
+      else if (['time', 'delta_time', 'bpm', 'beat_number', 'beat_delta', 'prng_seed'].includes(name)) expr = `b_inputs.${name}`;
 
       // Built-ins in WGSL are often u32 or vecN<u32>.
       // Our IR often expects floats for generic math, or ints for integer math.
@@ -1574,6 +1625,7 @@ export class WgslGenerator {
     if (type === 'float4') return 'vec4<f32>';
     if (type === 'float3x3') return 'mat3x3<f32>';
     if (type === 'float4x4') return 'mat4x4<f32>';
+    if (type === 'prng') return 'i32';
     if (type === 'string') throw new Error('Shaders do not support string type');
     if (type === 'texture2d') return 'texture_2d<f32>';
     if (type === 'sampler') return 'sampler';
@@ -1824,6 +1876,14 @@ export class WgslGenerator {
     if (t.startsWith('vec')) return `${t}(0.0)`;
     if (t.startsWith('mat')) return `${t}()`;
     return `${t}()`;
+  }
+
+  private hashString(s: string): number {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+    }
+    return h;
   }
 
   public static findUsedResources(func: FunctionDef, ir: IRDocument | ResourceDef[]): Set<string> {

@@ -17,7 +17,8 @@ export class WebGpuHostExecutor {
     delta_time: 0,
     bpm: 0,
     beat_number: 0,
-    beat_delta: 0
+    beat_delta: 0,
+    prng_seed: 0
   };
 
   constructor(init: {

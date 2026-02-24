@@ -562,6 +562,23 @@ const resolveNodeType = (
       return 'int';
     }
 
+    // PRNG ops
+    if (node.op === 'prng_make') {
+      cache.set(nodeId, 'prng' as ValidationType);
+      return 'prng' as ValidationType;
+    }
+    if (node.op === 'prng_next') {
+      const outputType = (node['type'] || 'float') as ValidationType;
+      const validTypes = ['float', 'int', 'float2', 'float3', 'float4', 'int2', 'int3', 'int4'];
+      if (!validTypes.includes(outputType)) {
+        errors.push({ nodeId, functionId, message: `Invalid prng_next output type '${outputType}'. Valid: ${validTypes.join(', ')}`, severity: 'error' });
+        cache.set(nodeId, 'float');
+        return 'float';
+      }
+      cache.set(nodeId, outputType);
+      return outputType;
+    }
+
     if (node.op === 'array_extract') {
       const arrayType = inputTypes['array'];
       if (!arrayType || arrayType === 'any') {

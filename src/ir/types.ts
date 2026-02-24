@@ -3,6 +3,7 @@ export type DataType =
   | 'float2' | 'float3' | 'float4'
   | 'int2' | 'int3' | 'int4'
   | 'float3x3' | 'float4x4'
+  | 'prng' // PRNG state (internally an int counter)
   | 'string' // logic only, usually
   | 'texture2d' // resource handle
   | 'sampler'
@@ -13,6 +14,7 @@ export const PRIMITIVE_TYPES = [
   'float2', 'float3', 'float4',
   'int2', 'int3', 'int4',
   'float3x3', 'float4x4',
+  'prng',
   'string',
   'texture2d',
   'sampler'
@@ -30,6 +32,7 @@ export const BLITTABLE_TYPES: DataType[] = [
   'int4',
   'float3x3',
   'float4x4',
+  'prng',
 ];
 
 // ------------------------------------------------------------------
@@ -373,6 +376,9 @@ export type BuiltinOp =
   | 'atomic_add' | 'atomic_sub'
   | 'atomic_min' | 'atomic_max'
   | 'atomic_exchange'
+
+  // PRNG
+  | 'prng_make' | 'prng_next'
 
   // Commands
   | 'cmd_dispatch' | 'cmd_resize_resource' | 'cmd_draw'

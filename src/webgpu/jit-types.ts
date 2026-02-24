@@ -7,6 +7,7 @@ export interface Builtins {
   bpm: number;
   beat_number: number;
   beat_delta: number;
+  prng_seed: number;
 }
 
 export interface JitContext {

@@ -4,6 +4,20 @@
 inline float int_bits_to_float(int v) { float f; std::memcpy(&f, &v, 4); return f; }
 inline int float_bits_to_int(float f) { int v; std::memcpy(&v, &f, 4); return v; }
 
+// PRNG hash (lowbias32)
+inline int _prng_hash(int x_in) {
+  uint32_t x = static_cast<uint32_t>(x_in);
+  x ^= x >> 16u;
+  x *= 0x45d9f3bu;
+  x ^= x >> 16u;
+  x *= 0x45d9f3bu;
+  x ^= x >> 16u;
+  return static_cast<int>(x);
+}
+inline float _prng_hash_to_float(int x) {
+  return static_cast<float>(static_cast<uint32_t>(_prng_hash(x))) / 4294967295.0f;
+}
+
 template <typename T, typename F> inline auto applyUnary(T val, F fn) {
   return fn(val);
 }

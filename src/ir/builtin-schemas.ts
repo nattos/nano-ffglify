@@ -197,6 +197,27 @@ export interface StructConstructArgs { type: string; values?: Record<string, any
 export interface CmdDispatchArgs { func: string; threads?: any; args?: Record<string, any>; }
 export interface CallFuncArgs { func: string; args?: Record<string, any>; }
 
+// --- PRNG ---
+export interface PrngMakeArgs { seed?: any; [key: string]: any; }
+export const PrngMakeDef = defineOp<PrngMakeArgs>({
+  doc: "Create a PRNG state. Optionally provide an explicit seed; if omitted, auto-seeds from thread ID and frame entropy.",
+  args: {
+    seed: { type: z.number(), doc: "Explicit seed value", refable: true, optional: true }
+  }
+});
+
+export interface PrngNextArgs { prng: string; type?: string; min?: any; max?: any; [key: string]: any; }
+export const PrngNextDef = defineOp<PrngNextArgs>({
+  doc: "Advance PRNG state and produce a random value. Output type defaults to float [0,1]. Supports float, int, float2, float3, float4, int2, int3, int4. For int output, use min/max to specify range.",
+  isExecutable: true,
+  args: {
+    prng: { type: z.string(), doc: "Local variable name holding the PRNG state", refType: 'var', isIdentifier: true },
+    type: { type: z.string(), doc: "Output type: float (default), int, float2, float3, float4, int2, int3, int4", optional: true, isIdentifier: true },
+    min: { type: z.number(), doc: "Minimum value for int range output", refable: true, optional: true },
+    max: { type: z.number(), doc: "Maximum value for int range output", refable: true, optional: true }
+  }
+});
+
 // --- Atomics ---
 export interface AtomicLoadArgs { counter: string; index: any; [key: string]: any; }
 export interface AtomicStoreArgs { counter: string; index: any; value: any; [key: string]: any; }
@@ -649,11 +670,12 @@ export const BUILTIN_TYPES: Record<string, string> = {
   'bpm': 'float',
   'beat_number': 'float',
   'beat_delta': 'float',
-  'output_size': 'int3'
+  'output_size': 'int3',
+  'prng_seed': 'float'
 };
 
 export const BUILTIN_CPU_ALLOWED = [
-  'time', 'delta_time', 'bpm', 'beat_number', 'beat_delta'
+  'time', 'delta_time', 'bpm', 'beat_number', 'beat_delta', 'prng_seed'
 ];
 
 export const BuiltinNameSchema = z.enum([
@@ -677,7 +699,8 @@ export const BuiltinNameSchema = z.enum([
   'bpm',
   'beat_number',
   'beat_delta',
-  'output_size'
+  'output_size',
+  'prng_seed'
 ]);
 
 export interface BuiltinGetArgs { name: string;[key: string]: any; }
@@ -804,6 +827,10 @@ export const OpDefs: Record<BuiltinOp, OpDef<any>> = {
   'atomic_min': AtomicRmwDef,
   'atomic_max': AtomicRmwDef,
   'atomic_exchange': AtomicRmwDef,
+
+  // PRNG
+  'prng_make': PrngMakeDef,
+  'prng_next': PrngNextDef,
 
   // Matrices
   'float3x3': Mat3x3Def,
@@ -984,6 +1011,8 @@ export type OpArgs = {
   'atomic_min': AtomicRmwArgs;
   'atomic_max': AtomicRmwArgs;
   'atomic_exchange': AtomicRmwArgs;
+  'prng_make': PrngMakeArgs;
+  'prng_next': PrngNextArgs;
   'float3x3': Mat3x3Args;
   'float4x4': Mat4x4Args;
   'mat_identity': MatIdentityArgs;

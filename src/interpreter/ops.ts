@@ -1,5 +1,5 @@
 import { IRDocument, BuiltinOp, TextureFormat, TextureFormatValues, TextureFormatFromId } from '../ir/types';
-import { AtomicLoadArgs, AtomicStoreArgs, AtomicRmwArgs, CmdSyncToCpuArgs, CmdWaitCpuSyncArgs, CmdCopyBufferArgs, CmdCopyTextureArgs, OpArgs } from '../ir/builtin-schemas';
+import { AtomicLoadArgs, AtomicStoreArgs, AtomicRmwArgs, CmdSyncToCpuArgs, CmdWaitCpuSyncArgs, CmdCopyBufferArgs, CmdCopyTextureArgs, PrngMakeArgs, PrngNextArgs, OpArgs } from '../ir/builtin-schemas';
 import { EvaluationContext, RuntimeValue, VectorValue } from './context';
 
 export type OpHandler<K extends BuiltinOp> = (ctx: EvaluationContext, args: OpArgs[K]) => RuntimeValue | void;
@@ -1019,5 +1019,13 @@ export const OpRegistry: { [K in BuiltinOp]: OpHandler<K> } = {
   },
   'cmd_copy_texture': function (ctx: EvaluationContext, args: CmdCopyTextureArgs): RuntimeValue | void {
     throw new Error('cmd_copy_texture not implemented in interpreter');
+  },
+
+  // PRNG ops — interpreter is disabled but stubs needed for type completeness
+  'prng_make': function (ctx: EvaluationContext, args: PrngMakeArgs): RuntimeValue | void {
+    throw new Error('prng_make not implemented in interpreter');
+  },
+  'prng_next': function (ctx: EvaluationContext, args: PrngNextArgs): RuntimeValue | void {
+    throw new Error('prng_next not implemented in interpreter');
   },
 };

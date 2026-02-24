@@ -135,6 +135,20 @@ inline float4x4 quat_to_mat4(float4 q) {
     float4(0, 0, 0, 1));
 }
 
+// PRNG hash (lowbias32)
+inline int _prng_hash(int x_in) {
+  uint x = as_type<uint>(x_in);
+  x ^= x >> 16u;
+  x *= 0x45d9f3bu;
+  x ^= x >> 16u;
+  x *= 0x45d9f3bu;
+  x ^= x >> 16u;
+  return as_type<int>(x);
+}
+inline float _prng_hash_to_float(int x) {
+  return float(as_type<uint>(_prng_hash(x))) / 4294967295.0f;
+}
+
 // Color mix (alpha-over compositing: dst=a, src=b)
 inline float4 color_mix_impl(float4 dst, float4 src) {
   float outA = src.w + dst.w * (1.0f - src.w);

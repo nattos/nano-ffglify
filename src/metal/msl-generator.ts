@@ -68,6 +68,14 @@ export class MslGenerator {
       analysis.usedBuiltins.forEach(b => allUsedBuiltins.add(b));
     }
 
+    // Auto-inject prng_seed if any function uses prng_make (auto-seed needs it)
+    for (const func of allFunctions) {
+      if (func.nodes.some(n => n.op === 'prng_make')) {
+        allUsedBuiltins.add('prng_seed');
+        break;
+      }
+    }
+
     // Analyze variables for globals buffer allocation
     const varMap = options.varMap || new Map<string, number>();
     let varOffset = 0;
@@ -1040,6 +1048,40 @@ export class MslGenerator {
       const coords = this.resolveArg(node, 'coords', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       const val = this.resolveArg(node, 'value', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       lines.push(`${indent}${this.sanitizeId(texId)}_tex.write(${val}, uint2(${coords}));`);
+    } else if (node.op === 'prng_next') {
+      const varId = node['prng'];
+      const outputType = (node['type'] || 'float') as string;
+      const componentCount: Record<string, number> = { float: 1, int: 1, float2: 2, float3: 3, float4: 4, int2: 2, int3: 3, int4: 4 };
+      const count = componentCount[outputType] || 1;
+      const isInt = outputType === 'int' || outputType.startsWith('int');
+      const varExpr = this.sanitizeId(varId);
+
+      if (count === 1 && !isInt) {
+        lines.push(`${indent}${varExpr} = ${varExpr} + 1;`);
+        lines.push(`${indent}float ${this.nodeResId(node.id)} = _prng_hash_to_float(${varExpr});`);
+      } else if (count === 1 && isInt) {
+        lines.push(`${indent}${varExpr} = ${varExpr} + 1;`);
+        const hasMin = node['min'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'min' && e.type === 'data');
+        const hasMax = node['max'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'max' && e.type === 'data');
+        if (hasMin && hasMax) {
+          const minExpr = this.resolveArg(node, 'min', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+          const maxExpr = this.resolveArg(node, 'max', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+          lines.push(`${indent}int ${this.nodeResId(node.id)} = int(${minExpr}) + int(as_type<uint>(_prng_hash(${varExpr})) % uint(int(${maxExpr}) - int(${minExpr}) + 1));`);
+        } else {
+          lines.push(`${indent}int ${this.nodeResId(node.id)} = _prng_hash(${varExpr});`);
+        }
+      } else {
+        // Vector output: advance state count times
+        lines.push(`${indent}${varExpr} = ${varExpr} + ${count};`);
+        const parts: string[] = [];
+        for (let i = 0; i < count; i++) {
+          const offset = count - 1 - i;
+          const stateExpr = offset === 0 ? varExpr : `(${varExpr} - ${offset})`;
+          parts.push(isInt ? `_prng_hash(${stateExpr})` : `_prng_hash_to_float(${stateExpr})`);
+        }
+        const vecType = isInt ? `int${count}` : `float${count}`;
+        lines.push(`${indent}${vecType} ${this.nodeResId(node.id)} = ${vecType}(${parts.join(', ')});`);
+      }
     } else if (this.hasResult(node.op)) {
       const expr = this.compileExpression(node, func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
       lines.push(`${indent}auto ${this.nodeResId(node.id)} = ${expr};`);
@@ -1167,6 +1209,19 @@ export class MslGenerator {
         const counterId = node['counter'];
         const idx = this.resolveArg(node, 'index', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
         return `atomic_load_explicit(&${this.sanitizeId(counterId, 'buffer')}[int(${idx})], memory_order_relaxed)`;
+      }
+
+      case 'prng_make': {
+        const hasSeed = node['seed'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'seed' && e.type === 'data');
+        if (hasSeed) {
+          const seed = this.resolveArg(node, 'seed', func, allFunctions, varMap, resourceBindings, emitPure, edges, inferredTypes);
+          return `_prng_hash(int(${seed}))`;
+        }
+        // Auto-seed: hash of prng_seed + compile-time function name hash + gid
+        const funcHash = this.hashString(func.id);
+        const prngSeedOffset = varMap.get('prng_seed');
+        const prngSeedExpr = prngSeedOffset !== undefined ? `int(b_globals[${prngSeedOffset}] * 2147483647.0f)` : '0';
+        return `_prng_hash(${prngSeedExpr} + ${funcHash} + int(gid.x) + int(gid.y) * 65536)`;
       }
 
       // Vector constructors
@@ -1734,7 +1789,8 @@ export class MslGenerator {
       'mat_identity', 'mat_mul', 'mat_inverse',
       'quat_mul', 'quat_rotate', 'quat_slerp', 'quat_to_float4x4',
       'color_mix',
-      'atomic_load', 'atomic_add', 'atomic_sub', 'atomic_min', 'atomic_max', 'atomic_exchange'
+      'atomic_load', 'atomic_add', 'atomic_sub', 'atomic_min', 'atomic_max', 'atomic_exchange',
+      'prng_make', 'prng_next'
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
@@ -1742,7 +1798,7 @@ export class MslGenerator {
   private isExecutable(op: string, edges: Edge[], nodeId: string): boolean {
     const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
       op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set' ||
-      op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange';
+      op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange' || op === 'prng_next';
 
     if (isSideEffecting) return true;
 
@@ -1772,6 +1828,14 @@ export class MslGenerator {
     return `n_${id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
   }
 
+  private hashString(s: string): number {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+    }
+    return h;
+  }
+
   private irTypeToMsl(irType: string | undefined): string {
     if (!irType) return 'float';
     switch (irType) {
@@ -1784,6 +1848,7 @@ export class MslGenerator {
       case 'int2': return 'int2';
       case 'int3': return 'int3';
       case 'int4': return 'int4';
+      case 'prng': return 'int';
       case 'float3x3': return 'float3x3';
       case 'float4x4': return 'float4x4';
       default:
@@ -1861,7 +1926,7 @@ export class MslGenerator {
    */
   private getTypeFlatSize(irType: string): number {
     switch (irType) {
-      case 'float': case 'int': case 'bool': return 1;
+      case 'float': case 'int': case 'bool': case 'prng': return 1;
       case 'float2': case 'int2': return 2;
       case 'float3': case 'int3': return 3;
       case 'float4': case 'quat': case 'int4': return 4;
@@ -1935,6 +2000,7 @@ export class MslGenerator {
         lines.push(`    float ${varName} = inputs[${offset}];`);
         return offset + 1;
       case 'int':
+      case 'prng':
         lines.push(`    int ${varName} = int(inputs[${offset}]);`);
         return offset + 1;
       case 'bool':

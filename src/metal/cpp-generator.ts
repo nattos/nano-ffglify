@@ -404,6 +404,7 @@ export class CppGenerator {
     switch (irType) {
       case 'float': case 'f32': return 'float';
       case 'int': case 'i32': return 'int';
+      case 'prng': return 'int';
 
       case 'bool': return 'bool';
       case 'float2': return 'std::array<float, 2>';
@@ -428,6 +429,14 @@ export class CppGenerator {
 
   private nodeResId(id: string): string {
     return `n_${id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+  }
+
+  private hashString(s: string): number {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+    }
+    return h;
   }
 
   private emitFunction(
@@ -516,6 +525,7 @@ export class CppGenerator {
       'quat', 'quat_identity', 'quat_mul', 'quat_rotate', 'quat_slerp', 'quat_to_float4x4',
       'color_mix', 'texture_sample',
       'atomic_load', 'atomic_add', 'atomic_sub', 'atomic_min', 'atomic_max', 'atomic_exchange',
+      'prng_make', 'prng_next',
     ];
     return valueOps.includes(op) || op.startsWith('math_') || op.startsWith('vec_');
   }
@@ -523,7 +533,7 @@ export class CppGenerator {
   private isExecutable(op: string, edges: Edge[], nodeId: string): boolean {
     const isSideEffecting = op.startsWith('cmd_') || op.startsWith('flow_') || op === 'var_set' ||
       op === 'buffer_store' || op === 'texture_store' || op === 'func_return' || op === 'call_func' || op === 'array_set' ||
-      op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange';
+      op === 'atomic_store' || op === 'atomic_add' || op === 'atomic_sub' || op === 'atomic_min' || op === 'atomic_max' || op === 'atomic_exchange' || op === 'prng_next';
 
     if (isSideEffecting) return true;
 
@@ -823,6 +833,10 @@ export class CppGenerator {
       // Collect CPU-allowed builtins used by the target shader
       const shaderAnalysis = this.functionAnalysis.get(targetFunc);
       const usedBuiltins = shaderAnalysis ? [...shaderAnalysis.usedBuiltins].filter(b => BUILTIN_CPU_ALLOWED.includes(b)) : [];
+      // Auto-inject prng_seed if shader has prng_make nodes (auto-seed needs it)
+      if (!usedBuiltins.includes('prng_seed') && targetFuncDef?.nodes.some(n => n.op === 'prng_make')) {
+        usedBuiltins.push('prng_seed');
+      }
       const needsOutputSize = shaderAnalysis ? shaderAnalysis.usedBuiltins.has('output_size') : false;
 
       if (hasExplicitInputs || hasGlobalInputs || usedBuiltins.length > 0 || needsOutputSize) {
@@ -967,6 +981,40 @@ export class CppGenerator {
       } else {
         const loadExisting2 = (node['pipeline']?.loadOp === 'load') ? 'true' : 'false';
         lines.push(`${indent}ctx.draw(${targetIdx}, "${vertex}", "${fragment}", static_cast<int>(${count}), {}, ${loadExisting2});`);
+      }
+    } else if (node.op === 'prng_next') {
+      const varId = node['prng'];
+      const outputType = (node['type'] || 'float') as string;
+      const componentCount: Record<string, number> = { float: 1, int: 1, float2: 2, float3: 3, float4: 4, int2: 2, int3: 3, int4: 4 };
+      const count = componentCount[outputType] || 1;
+      const isInt = outputType === 'int' || outputType.startsWith('int');
+      const varExpr = this.sanitizeId(varId, 'var');
+
+      if (count === 1 && !isInt) {
+        lines.push(`${indent}${varExpr} = ${varExpr} + 1;`);
+        lines.push(`${indent}float ${this.nodeResId(node.id)} = _prng_hash_to_float(${varExpr});`);
+      } else if (count === 1 && isInt) {
+        lines.push(`${indent}${varExpr} = ${varExpr} + 1;`);
+        const hasMin = node['min'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'min' && e.type === 'data');
+        const hasMax = node['max'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'max' && e.type === 'data');
+        if (hasMin && hasMax) {
+          const minExpr = this.resolveArg(node, 'min', func, allFunctions, emitPure, edges, inferredTypes);
+          const maxExpr = this.resolveArg(node, 'max', func, allFunctions, emitPure, edges, inferredTypes);
+          lines.push(`${indent}int ${this.nodeResId(node.id)} = static_cast<int>(${minExpr}) + static_cast<int>(static_cast<uint32_t>(_prng_hash(${varExpr})) % static_cast<uint32_t>(static_cast<int>(${maxExpr}) - static_cast<int>(${minExpr}) + 1));`);
+        } else {
+          lines.push(`${indent}int ${this.nodeResId(node.id)} = _prng_hash(${varExpr});`);
+        }
+      } else {
+        // Vector output: advance state count times
+        lines.push(`${indent}${varExpr} = ${varExpr} + ${count};`);
+        const elemType = isInt ? 'int' : 'float';
+        const parts: string[] = [];
+        for (let i = 0; i < count; i++) {
+          const offset = count - 1 - i;
+          const stateExpr = offset === 0 ? varExpr : `(${varExpr} - ${offset})`;
+          parts.push(isInt ? `_prng_hash(${stateExpr})` : `_prng_hash_to_float(${stateExpr})`);
+        }
+        lines.push(`${indent}std::array<${elemType}, ${count}> ${this.nodeResId(node.id)} = {${parts.join(', ')}};`);
       }
     } else if (this.hasResult(node.op)) {
       // Executable nodes with results (like call_func) need auto declarations
@@ -1759,6 +1807,17 @@ export class CppGenerator {
         throw new Error(`C++ Generator: GPU Built-in '${name}' is not available in CPU context`);
       }
 
+      case 'prng_make': {
+        const hasSeed = node['seed'] !== undefined || edges.some(e => e.to === node.id && e.portIn === 'seed' && e.type === 'data');
+        if (hasSeed) {
+          const seed = a('seed');
+          return `_prng_hash(static_cast<int>(${seed}))`;
+        }
+        // Auto-seed: hash of prng_seed + compile-time function name hash
+        const funcHash = this.hashString(func.id);
+        return `_prng_hash(static_cast<int>(ctx.getInput("prng_seed") * 2147483647.0f) + ${funcHash})`;
+      }
+
       default:
         throw new Error(`C++ Generator: Unsupported op '${node.op}'`);
     }
@@ -1887,7 +1946,7 @@ export class CppGenerator {
     } else if (irType === 'int2') {
       lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[0]));`);
       lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}[1]));`);
-    } else if (irType === 'int' || irType === 'boolean') {
+    } else if (irType === 'int' || irType === 'boolean' || irType === 'prng') {
       lines.push(`${indent}_shader_args.push_back(static_cast<float>(${argExpr}));`);
     } else {
       // float or unknown

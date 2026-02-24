@@ -78,6 +78,15 @@ const _quat_to_mat4 = (q) => {
     0, 0, 0, 1
   ];
 };
+const _prng_hash = (x) => {
+  x = x | 0;
+  x = Math.imul(x ^ (x >>> 16), 0x45d9f3b) | 0;
+  x = Math.imul(x ^ (x >>> 16), 0x45d9f3b) | 0;
+  x = (x ^ (x >>> 16)) | 0;
+  return x;
+};
+const _prng_hash_to_float = (x) => (((_prng_hash(x) | 0) >>> 0) / 4294967295.0);
+
 const _getVar = (ctx, id) => {
   if (ctx.inputs.has(id)) return ctx.inputs.get(id);
   throw new Error("Variable '" + id + "' is not defined");
