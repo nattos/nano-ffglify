@@ -292,6 +292,13 @@ export class AppController {
     this.saveSettings();
   }
 
+  public setLLMModel(model: string | undefined) {
+    runInAction(() => {
+      appState.local.settings.llmModel = model || undefined;
+    });
+    this.saveSettings();
+  }
+
   public setUseZipExport(useZip: boolean) {
     runInAction(() => {
       appState.local.settings.useZipExport = useZip;

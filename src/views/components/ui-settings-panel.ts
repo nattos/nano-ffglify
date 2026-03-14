@@ -174,8 +174,20 @@ export class UiSettingsPanel extends MobxLitElement {
         </div>
 
         <div class="setting-row">
-          <div class="setting-label">Model</div>
-          <div class="info">${DEFAULT_LLM_MODEL}</div>
+          <div>
+            <div class="setting-label">Model</div>
+            <div class="setting-description">Default: ${DEFAULT_LLM_MODEL}</div>
+          </div>
+          <input
+            type="text"
+            .value=${settings.llmModel || ''}
+            placeholder=${DEFAULT_LLM_MODEL}
+            style="width: 200px; padding: 0.3rem; background: #222; color: var(--app-text-main); border: 1px solid var(--app-border); border-radius: 4px; font-family: monospace; font-size: 0.85rem;"
+            @change=${(e: any) => {
+              appController.setLLMModel(e.target.value.trim());
+              llmManager.reinitialize();
+            }}
+          />
         </div>
 
         <div class="setting-row">

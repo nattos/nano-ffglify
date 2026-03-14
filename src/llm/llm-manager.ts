@@ -132,9 +132,10 @@ export class GoogleGenAIManager implements LLMManager {
       return;
     }
 
+    const modelName = appState.local.settings.llmModel || DEFAULT_LLM_MODEL;
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.model = this.genAI.getGenerativeModel({
-      model: DEFAULT_LLM_MODEL,
+      model: modelName,
       systemInstruction: this.systemInstruction,
       tools: [{ functionDeclarations: this.tools }]
     });

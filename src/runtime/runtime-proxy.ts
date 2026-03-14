@@ -224,10 +224,24 @@ export class RuntimeProxy {
   private startTickLoop() {
     const tick = () => {
       if (this.transportState !== 'playing') return;
+      this.captureVideoFrames();
       this.worker.postMessage({ type: 'tick', time: performance.now() } as RuntimeWorkerRequest);
       this.frameId = requestAnimationFrame(tick);
     };
     this.frameId = requestAnimationFrame(tick);
+  }
+
+  private captureVideoFrames() {
+    for (const state of this.inputSources.values()) {
+      if (!state.videoElement || state.videoElement.readyState < 2 || state.videoElement.paused) continue;
+      try {
+        const frame = new VideoFrame(state.videoElement);
+        const msg: RuntimeWorkerRequest = { type: 'set-video-frame', id: state.id, frame };
+        this.worker.postMessage(msg, [frame]);
+      } catch {
+        // Video may not be ready yet
+      }
+    }
   }
 
   private stopTickLoop() {

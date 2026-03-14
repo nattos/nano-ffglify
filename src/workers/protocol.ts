@@ -86,6 +86,12 @@ export interface SetTextureInputMsg {
   bitmap: ImageBitmap;
 }
 
+export interface SetVideoFrameMsg {
+  type: 'set-video-frame';
+  id: string;
+  frame: VideoFrame;
+}
+
 export interface ResetTextureMsg {
   type: 'reset-texture-to-test-card';
   id: string;
@@ -106,6 +112,7 @@ export type RuntimeWorkerRequest =
   | TickMsg
   | SetInputMsg
   | SetTextureInputMsg
+  | SetVideoFrameMsg
   | ResetTextureMsg
   | CaptureScreenshotMsg;
 

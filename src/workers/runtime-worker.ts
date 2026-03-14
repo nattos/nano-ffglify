@@ -120,6 +120,12 @@ self.onmessage = async (e: MessageEvent<RuntimeWorkerRequest>) => {
         break;
       }
 
+      case 'set-video-frame': {
+        syncVideoFrameToGpu(msg.id, msg.frame);
+        msg.frame.close();
+        break;
+      }
+
       case 'reset-texture-to-test-card': {
         inputBitmaps.delete(msg.id);
         if (sidechannelInputIds.has(msg.id)) {
@@ -512,6 +518,36 @@ function initBlitPipeline(dev: GPUDevice) {
     size: 32,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Texture upload (from VideoFrame — zero-copy GPU path where available)
+// ---------------------------------------------------------------------------
+function syncVideoFrameToGpu(id: string, frame: VideoFrame) {
+  if (!device) return;
+
+  const resource = resources.get(id);
+  if (!resource?.gpuTexture) return;
+
+  const width = frame.displayWidth;
+  const height = frame.displayHeight;
+
+  const tempTex = device.createTexture({
+    label: `TempVideoUpload: ${id}`,
+    size: [width, height],
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING |
+           GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+
+  device.queue.copyExternalImageToTexture(
+    { source: frame },
+    { texture: tempTex },
+    [width, height],
+  );
+
+  blitTextureToResource(device, tempTex, resource.gpuTexture);
+  tempTex.destroy();
 }
 
 // ---------------------------------------------------------------------------
