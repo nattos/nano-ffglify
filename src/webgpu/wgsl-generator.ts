@@ -190,7 +190,10 @@ export class WgslGenerator {
     inputSource.forEach(i => uniqueInputsMap.set(i.id, i));
     const uniqueInputsList = Array.from(uniqueInputsMap.values());
 
-    const nonBuiltinInputs = uniqueInputsList.filter((i: any) => !i.builtin && i.type !== 'texture2d' && !options.varMap?.has(i.id));
+    // In vertex/fragment stages, struct-typed inputs are stage IO (varyings from rasterizer), not buffer data
+    const isStageIO = options.stage === 'fragment' || options.stage === 'vertex';
+    const structIds = isStageIO ? new Set((ir?.structs ?? []).map((s: any) => s.id)) : undefined;
+    const nonBuiltinInputs = uniqueInputsList.filter((i: any) => !i.builtin && i.type !== 'texture2d' && !options.varMap?.has(i.id) && !structIds?.has(i.type));
 
     let inputLayout: BufferBlockLayout | undefined;
     const layout = new ShaderLayout(ir?.structs || []);

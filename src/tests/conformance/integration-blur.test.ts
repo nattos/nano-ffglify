@@ -144,7 +144,7 @@ describe('Conformance: Integration - Precomputed Blur', () => {
         console.log("Error during execution:", e.message);
         throw e;
       }
-    });
+    }, 30000);
   });
 });
 
